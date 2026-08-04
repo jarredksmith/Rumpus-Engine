@@ -2386,6 +2386,11 @@ function groundMood(gnd, rough, metal) {
   const y = 0.2126 * gnd[0] + 0.7152 * gnd[1] + 0.0722 * gnd[2];
   return { floorColor: skyHex(gnd), floorRough: rough != null ? rough : 0.95, floorMetal: metal != null ? metal : 0.05,
     wallColor: skyHex(gnd.map((v) => v * 0.55)), wallRough: 0.85, wallMetal: 0.08,
+    // build 1378: the mood OWNS the ground's appearance, so it has to state the texture slots too. The
+    // stock level now ships a concrete albedo by default, and a mood that named only the colour would
+    // leave that texture multiplying a theme's ground - 0.37x darker than the value the bake assumed.
+    // Stating '' is the rule 1143 exists for: name it here, or it drifts.
+    floorTex: '', floorTexN: '', floorTexR: '', wallTex: '', wallTexN: '', wallTexR: '',
     bounce: +Math.max(0.05, Math.min(1.0, 0.0535 / Math.max(1e-4, y))).toFixed(2) };
   // build 1151: the upper clamp is 1.0, not 0.8. Once `gnd` became the albedo actually DRAWN, garden's
   // ground measured Y 0.056 (dark grass) and asked for 0.96 to deliver the standard fill; 0.8 held it

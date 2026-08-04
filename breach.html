@@ -9740,6 +9740,14 @@ function _procSet(repeat){
 // crate. Every caller therefore passes the surface's world SPAN and the tiling is derived from it,
 // quantised to a short ladder so the clone cache stays a handful of entries rather than one per prop.
 const PROC_TILE_M = 2.2;                                  // metres per tile of grain
+// build 1378: the same idea one layer up. A surface texture's repeat count is not a size — build 1139
+// established that for the grain and the auto-tiling above it never got the message: the floor's repeat
+// was `ARENA/4` and the wall's `ARENA/8`, both ratios of the arena's own extent, so the metres covered
+// by one tile GREW with the level and a wall 140 m wide by 8 m tall took the SAME repeat on both axes
+// (a 17:1 stretch on the one texture a creator can put on the boundary). Auto tiling is now a physical
+// span divided by this, per axis, so a tile is the same size in metres in every level and on every face.
+const SURF_TILE_M = 4;                                    // metres per tile of authored surface texture
+function _surfRepeat(spanM){ return Math.max(1, Math.round((+spanM || 1) / SURF_TILE_M)); }
 const _PROC_STEPS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128];
 function _procRepeatFor(span){
   const want = Math.max(1, (+span || 1) / PROC_TILE_M);
@@ -20245,7 +20253,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
 // the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
 // crushed red channel survives the restaging.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x403d39, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x3a454b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -20598,7 +20606,7 @@ function applyWorldCfg(){
     floorMat.envMapIntensity = _envInten(floorMat.metalness, worldCfg.skyBright);   // build 1144: metal drives REFLECTION strength, but never below the floor every surface needs to see the sky at all
     floorMat.specularIntensity = floorMat.metalness;   // metal 0 => no dielectric sun-sheen (truly matte)
     if(+worldCfg.floorTile>0 && !(+worldCfg.floorTileU>0) && !(+worldCfg.floorTileV>0)){ worldCfg.floorTileU=worldCfg.floorTileV=+worldCfg.floorTile; worldCfg.floorTile=0; }   // migrate legacy uniform tile
-    const fAuto = Math.max(2, Math.round(ARENA/4));
+    const fAuto = _surfRepeat(ARENA*2);   // build 1378: the ground plane is ARENA*2 across, UV 0..1 — so this is metres, not a ratio
     const fu = +worldCfg.floorTileU>0 ? +worldCfg.floorTileU : fAuto, fv = +worldCfg.floorTileV>0 ? +worldCfg.floorTileV : fAuto;
     applySurfaceTexture(floorMat, worldCfg.floorTex, '_floorTexUrl', fu, fv, worldCfg.floorTexN, worldCfg.floorTexR, (+worldCfg.floorRot||0)*Math.PI/180);
   }
@@ -20610,8 +20618,10 @@ function applyWorldCfg(){
     wallMat.envMapIntensity = _envInten(wallMat.metalness, worldCfg.skyBright);   // build 1144
     wallMat.specularIntensity = wallMat.metalness;   // metal 0 => matte (no sun-sheen)
     if(+worldCfg.wallTile>0 && !(+worldCfg.wallTileU>0) && !(+worldCfg.wallTileV>0)){ worldCfg.wallTileU=worldCfg.wallTileV=+worldCfg.wallTile; worldCfg.wallTile=0; }   // migrate legacy uniform tile
-    const wAuto = Math.max(2, Math.round(ARENA/8));
-    const wu = +worldCfg.wallTileU>0 ? +worldCfg.wallTileU : wAuto, wv = +worldCfg.wallTileV>0 ? +worldCfg.wallTileV : wAuto;
+    // build 1378: a boundary wall's wide face is ARENA*2 by H, so ONE repeat for both axes stretched the
+    // texture by the aspect ratio (17:1 at the default). Derived per axis from the real span instead.
+    const wuAuto = _surfRepeat(ARENA*2), wvAuto = _surfRepeat(H);
+    const wu = +worldCfg.wallTileU>0 ? +worldCfg.wallTileU : wuAuto, wv = +worldCfg.wallTileV>0 ? +worldCfg.wallTileV : wvAuto;
     applySurfaceTexture(wallMat, worldCfg.wallTex, '_wallTexUrl', wu, wv, worldCfg.wallTexN, worldCfg.wallTexR, (+worldCfg.wallRot||0)*Math.PI/180);
   }
   for(const w of arenaWalls){ w.visible = worldCfg.wallsVisible !== false; }   // toggle the boundary walls' look; their colliders stay either way
@@ -32371,7 +32381,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1377 · 2026-08-04';
+const BUILD_VERSION = 'build 1378 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

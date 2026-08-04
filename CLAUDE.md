@@ -967,6 +967,77 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The stock level has an albedo (build 1378)
+
+Every one of the six AAA critics named this first, in different words: *"a very good engine with no art
+department"*, *"technically literate and it still does not read as a real place"*. The cause is one line of
+data — `floorTex:''` and `wallTex:''` in `DEFAULT_WORLD`. The ground plane and the four boundary walls, which
+between them are most of the pixels in the first frame anybody sees, were **flat colour**. No lighting change
+can fix that, and none of builds 1126–1377's rendering work could show on a surface with no detail in it.
+
+The generator has shipped a procedural texture library the whole time (`node tools/levelgen.mjs tex <id>
+<out.png>`, build 1110's fast-iteration path). Nothing had ever pointed the engine's own two surfaces at it.
+
+**The url is the trivial half. The value structure is the build.** An albedo `map` MULTIPLIES the material
+colour — build 1139 measured that and recorded *"an albedo map cannot be exposure-neutral… it only darkens"*
+— so dropping concrete (linear mean **0.366**) onto build 1360's tuned floor would have taken 63% of the
+frame's ground albedo away and silently invalidated everything derived from it: the exposure, 1149's bounce
+factor, 1156's horizon match, and the auto-exposure that would then have lifted the whole frame back up and
+flattened it. So the base colours are **compensated**, `newColour_linear = oldColour_linear / textureMean`:
+
+```
+              tuned (1360)   texture mean          now      drawn albedo   error
+floor  0x403d39  0.0513/0.0467/0.0409   0.366/0.367/0.356   0x69645f   0.0517/0.0468/0.0407   +0.9/+0.2/-0.5%
+wall   0x3a454b  0.0423/0.0595/0.0704   0.355/0.355/0.343   0x61727d   0.0424/0.0597/0.0703   +0.3/+0.3/-0.0%
+```
+
+**Within 1% per channel, so build 1360's staging is preserved exactly and the surface gains its variation for
+free.** The compensation has headroom to exist at all only because those albedos are dark: the compensated
+floor sits at 0.140 linear, well under 1.0. On a bright surface this trade is not available, which is the
+other half of 1139's finding.
+
+`test-1378` **re-derives that from the PNGs that ship** — decoding them and linearising per pixel before
+averaging (1151's rule: `toBytes` writes the sRGB fraction with no transfer and the map is sRGB-tagged) — and
+asserts the product lands on 1360's numbers. Regenerating a texture at a different brightness without
+re-deriving the colour fails there rather than silently re-exposing the first frame of the game.
+
+### Tiling is a size, and the wall was stretched 17:1
+
+Build 1139: *"UV tiling is not a physical size."* The auto repeats never got that message — the floor's was
+`ARENA/4` and the wall's `ARENA/8`, **ratios of the arena's own extent**, so one tile covered proportionally
+more metres in a bigger level. Worse, a boundary wall's wide face is `ARENA*2 × H` = **140 m by 8 m** and both
+axes took the same repeat: any creator who had ever put a texture on the boundary got it stretched 17:1.
+
+`SURF_TILE_M = 4` is named once and `_surfRepeat(spanM)` divides a real span by it, per axis — floor from
+`ARENA*2`, wall U from `ARENA*2` and wall V from `H`. A tile is now the same size in metres in every level and
+on every face. This corrects existing levels that used auto tiling *and* a texture; the floor moves 17.5 → 35
+repeats and the wall's V axis 8.75 → 2, which is the stretch going away.
+
+**The mood had to state it too.** `groundMood` (levelgen) owns a generated theme's ground — that is build
+1143's whole point — and it named only the colours. With the stock world now carrying a texture, generating an
+arena would have left concrete multiplying a theme's ground, 0.37× darker than the albedo the lightmap bake
+integrated. It states `floorTex:''`/`wallTex:''` explicitly now. Naming a value once is not the same as
+deriving it; the six slots are asserted in `test-1378`.
+
+**Two harnesses failed and both were right to.** 1156 and 1360 read `DEFAULT_WORLD.floorColor` as *the floor's
+albedo*, which it stopped being the moment a map multiplied it. Every luminance claim in them is about the
+albedo the surface **draws**, so both now derive it — through one shared `tests/albedo.mjs`, because three
+copies of a derivation is how the thing being derived stops agreeing with itself. Their assertions are
+untouched in intent and are now stronger: they test the frame rather than a factor of it.
+
+### Two process failures, both mine, one destructive
+
+- **`open(path,'w').write(rep(path,…))` EMPTIES THE FILE.** Python opens (and truncates) the target before it
+  evaluates the argument that reads it, so `tools/levelgen.mjs` went to **0 bytes**. It is tracked, so
+  `git checkout --` cost nothing — but the same shape against an untracked file is unrecoverable. Compute the
+  new text into a variable **first**, then open for writing. The scripted-edit convention in this file exists
+  for exactly this class and did not cover it; it does now.
+- **The eleventh container rollback, and the first to land mid-session.** The tree reverted from 1377 to 1353
+  between two of my own commands. `git fetch` + `reset --hard FETCH_HEAD` restored everything, because every
+  build is pushed the moment it lands. What did NOT survive were **uncommitted probe tools** — the capture
+  rig had to be rebuilt once already for this reason. Anything worth using twice belongs in a commit, not in
+  the working tree.
+
 ## Texture memory is visible, and the AO sweep stopped allocating (build 1353)
 
 **1. The cost a creator could not discover.** Build 1257 made the LIGHT count visible on the grounds that it
