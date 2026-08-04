@@ -46,7 +46,8 @@ Self-hosters point their copy elsewhere with
    `public_html/community/` — the `.htaccess` inside it makes the catalog readable
    cross-origin so the GitHub Pages copy of the game shares the same live library.
 4. **Get alerted about new submissions** (optional, recommended): near the bottom of
-   `api/submit.php`, inside `notifyModerator()`, set either or both:
+   `api/_community_lib.php` (it lived in `api/submit.php` until build 1346, when `report.php`
+   became a second caller), inside `notifyModerator()`, set either or both:
    - `$NOTIFY_EMAIL` — any address; sent via the server's mail() as `noreply@rumpusengine.com`.
      Check your spam folder for the first one and mark it Not Spam.
    - `$NOTIFY_DISCORD` — a Discord channel webhook URL (in Discord: Server Settings →
@@ -58,7 +59,8 @@ Self-hosters point their copy elsewhere with
    **Load queue**. Each submission has **▶ Test play** (opens the actual level in the game),
    **Approve** (publishes: writes `community/levels/<slug>.json`, updates `index.json`,
    thumbnail lifted into the gallery) and **Reject**. Published levels can be **Unpublish**ed
-   later. Nothing goes live without you pressing Approve.
+   later. Nothing goes live without you pressing Approve. The same page carries player reports
+   (see the report section below), unlisted games and uploaded assets.
 
 Hardening: submissions are fully validated at the door (decode, 500 KB level cap, shape
 check, name/author sanitization) so junk never enters the queue; per-IP limits (30s between
@@ -68,6 +70,60 @@ per IP); the level slug and file writes are whitelisted patterns under flock.
 Back up `public_html/community/` now and then — with submissions moving here, GoDaddy holds
 the master copy of the library (levels also remain in the GitHub repo up to the point you
 switched, and you can commit new ones there whenever you like as an archive).
+
+## Deploying player reports (`api/report.php`) — build 1346
+
+Players can report a chat line, a level, a game page or another player from inside the game; the
+report lands in the same review queue as level submissions and shows up in a **REPORTS** section
+at the top of `admin.php`.
+
+1. Upload `api/report.php` into `public_html/api/` (beside `submit.php`).
+2. **Re-upload `api/_community_lib.php` and `api/submit.php` at the same time.** The moderator
+   alert (`notifyModerator()`) moved out of `submit.php` into the shared library in this build so
+   both endpoints use one copy — an old `submit.php` against the new library, or the reverse, is a
+   fatal PHP error on the next submission. These three files go up together.
+3. **Re-upload `api/admin.php`** — it gains the REPORTS section and the Dismiss action.
+4. Alerts: if you already set `$NOTIFY_EMAIL` / `$NOTIFY_DISCORD`, they now live near the bottom of
+   `api/_community_lib.php` instead of in `submit.php` — **move your values across** or alerts go
+   quiet. Reports arrive flagged 🚩 with the reason, the target and the reported text; level
+   submissions still arrive 🕹️ exactly as before.
+
+Nothing else to configure — no database, no new folder. Reports are stored as `rep_*.json` in
+`public_html/api/pending/` beside the level submissions (the existing `api/.htaccess` already
+blocks direct reads of every `.json`).
+
+Smoke test: `curl -X POST -H 'content-type: application/json' -d '{"kind":"chat","reason":"spam","text":"buy gold at example.com","room":"ab12cd"}' https://www.rumpusengine.com/api/report.php`
+should return `{"ok":true,"id":"rep_…"}`. Open `admin.php`, **Load queue** — it appears at the top
+with the reported line quoted. **Dismiss** closes the report (and only the report; it does not
+touch what the report named — use Unpublish / Delete for that).
+
+The endpoint takes `POST` JSON `{kind, reason, target, note, text, room}`:
+
+| field | required | notes |
+|---|---|---|
+| `kind` | yes | `chat` \| `level` \| `game` \| `player` — anything else is a 400 |
+| `reason` | no (defaults `other`) | `harassment` \| `sexual` \| `violence` \| `hate` \| `spam` \| `other` |
+| `target` | yes, **except** for `chat` | the level file, game slug or player name — 120 chars |
+| `text` | **yes for `chat`** | the reported message itself — 300 chars |
+| `note` | no | the reporter's own words — 500 chars |
+| `room` | no | lobby code it happened in; a malformed one is dropped, not fatal |
+
+**Why a chat report must carry the message.** Multiplayer chat here is peer-to-peer — the line
+never touches this server, so there is no log to look up and no message id to quote. A chat report
+that arrives without the text is an accusation the moderator cannot act on, so the endpoint refuses
+it at the door rather than storing something unactionable.
+
+Hardening: `kind` and `reason` are whitelists; every text field goes through the same `plain()`
+sanitizer the library uses, with caps; the reporter is identified only by the salted `ipHash()`
+shared with `lobbies.php`/`plays.php` (a raw IP is never stored and never returned — the admin page
+shows an 8-character fingerprint so you can spot one person spamming the queue); 20s between
+reports per reporter and 20 open reports each; 4 KB request bodies; atomic writes under flock. The
+queue is capped at 500 reports and **drops the oldest to make room rather than refusing the newest**
+— refusing (the 503 `submit.php` returns when its queue is full) would let a flood of junk reports
+silence real ones.
+
+Tuning: `RUMPUS_REPORT_INTERVAL` in the PHP environment sets the seconds between reports per
+reporter (default 20; `0` really does mean none here).
 
 ## Deploying unlisted game pages (`api/publish.php` + `game.php`) — build 972
 

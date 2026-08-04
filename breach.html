@@ -7202,7 +7202,45 @@ let _prScale = 1;                       // adaptive multiplier on top of the bas
 const _PR_FLOOR = IS_COARSE ? 0.5 : 0.66;   // never blurrier than this
 const _PR_STEPS = IS_COARSE ? [1, 0.85, 0.72, 0.6, 0.5] : [1, 0.85, 0.72, 0.66];
 let _prStepI = 0;
-function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); }
+// ---- build 1350: THE SUN SHADOW JOINS THE LADDER ----------------------------------------------------
+// Build 1346 raised the near cascade to 4096 because the corner leak is a fixed number of TEXELS wide and
+// halving the texel halved it — measured, and worth its ~12% of frame time on a machine that has it.
+// What that build did NOT do is give the cost a way OUT: `SUN_SHADOW_PX` was a constant, so the adaptive
+// ladder could shed motion blur, then MSAA and SSAO, then a third of the pixels, and the biggest single
+// draw in the frame stayed at 4096 the whole way down. That is build 1263's lesson from the other side —
+// a perf change may not remove work something else relied on, and it may not ADD work with no shed path.
+//
+// The shadow map is a texture, not a light: resizing it changes no light COUNT and cannot trip the
+// recompile freeze of builds 636/977/1153/1155 (which is exactly why 1348 could not do the same thing for
+// point shadows — `castShadow` is a #define, `mapSize` is an allocation). Disposing the old map forces
+// three to reallocate on the next shadow render, which is the same rebuild-targets-not-materials shape
+// build 880 established for the post chain.
+//
+// `moonFar` is deliberately NOT shed. Its texel is already 4x coarser by design, it covers distant
+// geometry where a corner artifact is under a pixel, and dropping its `castShadow` WOULD change the
+// shadow-light count. Halving its map buys little and risks the thing this comment exists to avoid.
+const _SUN_PX_STEP = [1.0, 0.5, 0.5, 0.25];   // multiplier of SUN_SHADOW_PX per resolution rung
+function _sunShadowPxFor(step){
+  const m = _SUN_PX_STEP[Math.max(0, Math.min(_SUN_PX_STEP.length-1, step|0))];
+  return Math.max(512, Math.round(SUN_SHADOW_PX * m));
+}
+// `_applyPixelRatio()` runs at BOOT, ~1,500 lines before `moon` and `SUN_SHADOW_PX` are declared. A
+// `typeof` guard does NOT protect a temporal dead zone (build 1127 lost the sky for eight builds to
+// exactly that, behind a catch that hid it), so this uses an explicit READY FLAG set where the light is
+// built. The try/catch stays as a backstop, but it is not what makes this correct.
+let _sunShadowReady = false;
+function _syncSunShadowRes(){
+  if(!_sunShadowReady) return;
+  try{
+    if(!moon || !moon.shadow) return;
+    const want = _sunShadowPxFor(typeof _prStepI!=='undefined' ? _prStepI : 0);
+    if(moon.shadow.mapSize.x === want) return;            /* the common case: nothing moved, nothing costs */
+    moon.shadow.mapSize.set(want, want);
+    if(moon.shadow.map){ moon.shadow.map.dispose(); moon.shadow.map = null; }   /* three reallocates */
+    if(typeof _dirtyShadows==='function') _dirtyShadows(2);
+  }catch(e){}
+}
+function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); _syncSunShadowRes(); }
 _applyPixelRatio();
 // Rolling frame-time monitor (always on, ~free). Targets ~50fps; if we miss it for a stretch, drop a
 // step; if we beat ~58fps comfortably for longer, climb back. Asymmetric: quick to relieve, slow to push.
@@ -8733,6 +8771,7 @@ moon.castShadow = true;
 // 8192 is measured above and it is not worth its cost.
 const SUN_SHADOW_PX = IS_COARSE ? 1024 : 4096;
 moon.shadow.mapSize.set(SUN_SHADOW_PX, SUN_SHADOW_PX);
+_sunShadowReady = true;   /* build 1350: from here the ladder may resize this map — see _syncSunShadowRes */
 moon.shadow.camera.near = 1; moon.shadow.camera.far = 260;
 // build 1120: the shadow volume FOLLOWS THE CAMERA instead of being a fixed box at the world origin.
 // It was +/-80 on a 2048 map — 7.8 cm a texel — and nailed to (0,0), while worldCfg.arena goes to
@@ -31145,7 +31184,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1349 · 2026-08-04';
+const BUILD_VERSION = 'build 1350 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

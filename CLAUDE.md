@@ -967,6 +967,59 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The sun shadow joins the ladder (build 1350 — debt build 1346 created)
+
+Build 1346 raised the near cascade to 4096 for a measured reason: the corner leak is a fixed number of
+TEXELS wide, so halving the texel halved it, at ~12% of frame time. What that build did **not** do is give
+the cost a way out. `SUN_SHADOW_PX` was a constant, so the adaptive ladder could shed motion blur, then
+MSAA and SSAO, then a third of the pixels — while the biggest single draw in the frame stayed at 4096 the
+whole way down.
+
+That is **build 1263's lesson from the other side**: a perf change may not remove work something else
+relies on, and it may not ADD work with no shed path. 1346 is the same author making the second mistake a
+few builds after recording the first.
+
+Measured live, sweeping the rung and reading the real light list:
+
+```
+rung            0      1      2      3      0
+sun map      4096   2048   2048   1024   4096
+lights         35     35     35     35     35     <- never moves
+dir casters     2      2      2      2      2     <- never moves
+programs (warm) 69     69     69     69     69
+```
+
+**Resizing a shadow map compiles nothing, and the control is what proves it.** With the resize neutered and
+the map pinned, the program count still climbed 66 → 69 on a cold cache; with the resize live and the cache
+warm it is flat at 69 across every rung. So the growth was warm-up, not the change.
+
+Three things it must never touch, and the test asserts all three:
+- **`castShadow`** — that is `NUM_DIR_LIGHT_SHADOWS`, a `#define`, and flipping it recompiles every
+  material. It is precisely why build 1348 could *not* do this for point lights: `mapSize` is an
+  allocation, `castShadow` is a program variant.
+- **`.visible`** — build 977's trap; an invisible light is still uncounted, so toggling it moves the count.
+- **`moonFar`** — its texel is 4× coarser by design and it covers geometry where a corner artifact is under
+  a pixel. Shedding it would change the caster count for nothing.
+
+**The temporal dead zone here was handled explicitly rather than behind a catch.** `_applyPixelRatio()`
+runs at BOOT, ~1,500 lines before `moon` and `SUN_SHADOW_PX` are declared, and `typeof` does **not** guard
+a TDZ — build 1127 lost the sky for eight builds to exactly that, behind a `catch` that hid it. My first
+draft had the identical shape (`typeof moon==='undefined'` inside a `try`). It is a `_sunShadowReady` flag
+raised where the light is actually built; the catch remains only as a backstop and is not what makes it
+correct.
+
+Hooked into `_applyPixelRatio` because that function *already means* "the rung moved" — it is called on
+every downshift, every climb and the adaptive-off restore, so there is no second list of call sites to keep
+in step. Two pins moved (50, 123), both of which quoted that function's whole body.
+
+### A process correction to build 1349's record
+
+Build 1349's commit `c058885` also contains `server/api/report.php`, `_community_lib.php`, `submit.php` and
+`admin.php` — the moderation backend — because a `git add -A` swept them in while they were being written
+alongside. The code in that commit is the finished, tested version and nothing needs reverting, but the
+commit message describes none of it. Recorded here rather than by rewriting pushed history. **The lesson is
+the ordinary one: `git add -A` is not safe when anything else is writing to the tree.**
+
 ## The Sketchfab token is lent by choice, not by default (build 1349 — multiplayer audit G6)
 
 The multiplayer audit's sharpest verified own-goal, and it is a one-condition fix. The host's **personal
