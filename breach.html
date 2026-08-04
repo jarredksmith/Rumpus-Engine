@@ -7942,7 +7942,7 @@ let _bloomMips=[], _matBloomDown=null, _matBloomUp=null;
 // build 1126: screen-space ambient occlusion + FXAA. _aoRT holds the raw AO term at half
 // resolution, _aoRT2 the horizontally blurred one; the vertical blur lands back in _aoRT.
 let _aoGeoRT=null, _aoRT=null, _aoRT2=null, _matAOGeo=null, _matAO=null, _matAOBlur=null, _matFXAA=null;
-const _AO_GEO_MAXSTEP = 2;   /* build 1218: the G-buffer prepass survives the top 3 quality rungs (100/85/72%) so soft particles/shorelines outlast the common downshift; the AO sample stays on rung 0 */
+const _AO_GEO_MAXSTEP = 2;   /* build 1218: the G-buffer prepass survives the top 3 quality rungs (100/85/72%) so soft particles/shorelines outlast the common downshift; build 1364: the AO sample rides the same rungs (6 taps below rung 0) — only SSR stays rung-0-only */
 // build 1183: SOFT PARTICLES. A flipbook quad slicing through world geometry drew a hard line across the
 // intersection — the classic billboard artifact. The AO G-buffer (build 1126) already holds the scene's
 // view distance at half res, swept clean of everything that doesn't write depth (1152/1158) — including
@@ -7975,6 +7975,16 @@ function _softSprite(mat, band){
   return mat;
 }
 let _ssaoAmt = 0.9, _ssaoRadius = 0.9;   // driven by worldCfg.ssao / worldCfg.ssaoRadius
+// build 1364: the reduced-cost AO tap count for rungs 1-2. Rendering critic #3 measured SSAO as
+// 100% of the contact darkening at four wall feet (AO on = 13-15% darker at the foot, AO shed =
+// 2-4% BRIGHTER) while bloom, god rays, fog and the grade all survive to lower rungs — and the
+// median player sits on rung 1, so the one cue that seats objects on the floor was off for most
+// players. The kernel loop keeps its compile-time bound of 12 and takes uSamples as a DYNAMIC break
+// bound — a uniform, never a per-rung recompile (the 636/977/1153 freeze by another door). The kernel
+// packs its near taps first (w grows with i below), so the first 6 are the near-field half: exactly
+// the contact term the reduced mode exists to keep. 6 taps is noisier; the existing bilateral blur
+// absorbs it — deliberately no new knobs, and rung 0 sets 12 so the full-quality frame is unchanged.
+const _AO_TAPS_LITE = 6;
 // 12 points in a hemisphere around +z, clustered toward the origin (cubic falloff) so most samples
 // land where occlusion actually varies. Fixed, not random: the per-pixel rotation is what breaks
 // up the pattern, and a fixed set keeps the AO stable frame to frame instead of boiling.
@@ -8133,7 +8143,8 @@ function ensurePost(){
   // ground — walls would mirror at full strength with no material to say otherwise. The up test is
   // done in view space against the world up transformed by the camera. Fresnel-ish grazing weight so
   // reflections strengthen at shallow angles like a real dielectric floor. Rides the top adaptive
-  // rung only, like the AO sample — but it keeps the G-buffer PREPASS alive on its own when AO is
+  // rung only (build 1364: STRICTER than the AO sample, which now rides all three prepass rungs at
+  // a reduced tap count) — but it keeps the G-buffer PREPASS alive on its own when AO is
   // authored off (the _geoWant gate gained `|| _postSSR`).
   _matSSR=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
     uniforms:{ tScene:{value:null}, tGeo:{value:null}, uProjScale:{value:new THREE.Vector2(1,1)},
@@ -8361,12 +8372,12 @@ function ensurePost(){
   _matAO=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
     uniforms:{ tGeo:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uFar:{value:400},
       uRadius:{value:_ssaoRadius}, uBias:{value:0.025},
-      uProjScale:{value:new THREE.Vector2(1,1)}, uProj:{value:new THREE.Matrix4()}, uKern:{value:_AO_KERNEL} },
+      uProjScale:{value:new THREE.Vector2(1,1)}, uProj:{value:new THREE.Matrix4()}, uKern:{value:_AO_KERNEL}, uSamples:{value:12} },
     vertexShader:vert, fragmentShader:[
       'varying vec2 vUv;',
       'uniform sampler2D tGeo; uniform vec2 uTexel; uniform float uFar;',
       'uniform float uRadius; uniform float uBias; uniform vec2 uProjScale;',
-      'uniform mat4 uProj; uniform vec3 uKern[12];',
+      'uniform mat4 uProj; uniform vec3 uKern[12]; uniform int uSamples;',
       'vec3 vpos(vec2 uv, float z){ vec2 n=uv*2.0-1.0; return vec3(n.x*uProjScale.x*z, n.y*uProjScale.y*z, -z); }',
       // "nothing was drawn on this pixel" has to be a GEOMETRIC test, not a magic depth value.
       // The clear leaves the target at an alpha that is near zero but measurably not zero, so
@@ -8386,6 +8397,10 @@ function ensurePost(){
       '  float ca=cos(a), sa=sin(a);',
       '  float occ = 0.0;',
       '  for(int i=0;i<12;i++){',
+      // build 1364: uSamples is a DYNAMIC break bound inside the fixed compile-time loop — legal in
+      // ES GLSL (only the loop header must be constant; a data-dependent break is not restricted),
+      // and it costs no recompile when the rung moves. 12 on rung 0, _AO_TAPS_LITE (6) on rungs 1-2.
+      '    if(i>=uSamples) break;',
       '    vec3 k = uKern[i];',
       '    vec3 s = vec3(k.x*ca - k.y*sa, k.x*sa + k.y*ca, k.z);',
       '    if(dot(s, n) < 0.0) s = -s;',                       // fold the hemisphere onto the real normal
@@ -8398,7 +8413,9 @@ function ensurePost(){
       '    float range = smoothstep(0.0, 1.0, uRadius / max(1e-4, abs(z - sz)));',   // an occluder far outside the radius is not one
       '    occ += step(uBias, (-sp.z) - sz) * range;',
       '  }',
-      '  gl_FragColor = vec4(vec3(clamp(1.0 - occ/12.0, 0.0, 1.0)), 1.0); }'
+      // build 1364: normalise by the LIVE tap count — dividing by the compile-time 12 would silently
+      // halve the AO strength at 6 taps. At uSamples 12 this is exactly the old divide-by-12.
+      '  gl_FragColor = vec4(vec3(clamp(1.0 - occ/float(uSamples), 0.0, 1.0)), 1.0); }'
     ].join('\n') });
   // separable blur, weighted by depth so AO cannot bleed across a silhouette
   _matAOBlur=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
@@ -8546,8 +8563,13 @@ function _renderPostFX(scn, cam){
   // and the grade. They are decoupled now: the prepass (which feeds the soft-particle/shoreline fade via
   // the view distance in _aoGeoRT.a) runs across the top THREE rungs; only the expensive AO kernel+blur is
   // shed, and only on the very first downshift. At the deepest rungs everything is soft anyway.
+  // build 1364: that first-downshift shed was itself the wrong trade — measured at four wall feet, SSAO
+  // is 100% of the contact darkening (on = 13-15% darker at the foot, shed = 2-4% BRIGHTER), and the
+  // median player sits on rung 1. The AO sample now rides the SAME rungs as the prepass, at a reduced
+  // uniform-bound tap count (12 on rung 0 — the identical look — 6 below), so only rung 3 loses the
+  // grounding cue. SSR and the velocity pass keep their own rung-0 gates, deliberately.
   const _geoWant = (_ssaoAmt > 0.001 || _postSSR > 0.001) && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam.isPerspectiveCamera;   /* build 1245: SSR marches this buffer too */
-  const _aoWant = _geoWant && _ssaoAmt > 0.001 && _prStepI === 0;   /* the AO SAMPLE stays on the top rung; the G-buffer it needs is wider */
+  const _aoWant = _geoWant && _ssaoAmt > 0.001;   /* build 1364: the AO sample lives wherever its G-buffer lives (rungs 0-2, at 6 taps below rung 0); the _ssaoAmt term stays because _geoWant can be true from SSR alone */
   _SOFT_P.value.x = _geoWant ? 1 : 0; _SOFT_P.value.z = w; _SOFT_P.value.w = h;   /* build 1183/1218: soft particles ride the PREPASS, not the AO sample */
   if(_aoGeoRT) _SOFT_GEO.value = _aoGeoRT.texture;
   if(_geoWant){
@@ -8607,10 +8629,11 @@ function _renderPostFX(scn, cam){
     if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
     renderer.shadowMap.autoUpdate=_sa;
   }
-  if(_aoWant){   /* build 1218: the AO SAMPLE (kernel + bilateral blur) — sheds on the first downshift while the prepass above keeps the soft-particle fade alive */
+  if(_aoWant){   /* build 1218/1364: the AO SAMPLE (kernel + bilateral blur) — rides the prepass rungs now: 12 taps on rung 0, 6 on rungs 1-2, gone with the G-buffer on rung 3 */
     const au=_matAO.uniforms;
     au.tGeo.value=_aoGeoRT.texture; au.uTexel.value.set(1/hw,1/hh);
     au.uFar.value=cam.far; au.uRadius.value=_ssaoRadius;
+    au.uSamples.value = _prStepI===0 ? 12 : _AO_TAPS_LITE;   /* build 1364: a per-frame uniform, never a recompile */
     au.uProj.value.copy(cam.projectionMatrix);
     const _t=Math.tan(cam.fov*Math.PI/360); au.uProjScale.value.set(_t*cam.aspect, _t);
     _postQuad.material=_matAO; renderer.setRenderTarget(_aoRT); renderer.render(_postScene,_postCam);
@@ -8622,7 +8645,8 @@ function _renderPostFX(scn, cam){
     renderer.setRenderTarget(_aoRT); renderer.render(_postScene,_postCam);
   }
   // 1c) build 1245: screen-space reflections — march the G-buffer, sample the scene at the hit.
-  // Top rung only (same shed as the AO sample). uUpView is the world up in view space: column 1 of
+  // Top rung only (build 1364: DELIBERATELY unlike the AO sample, which now rides the prepass rungs —
+  // SSR is the more expensive march for the less load-bearing cue). uUpView is the world up in view space: column 1 of
   // the camera's matrixWorldInverse rotation, current because the scene render above updated it.
   const _ssrWant = _geoWant && _postSSR > 0.001 && _prStepI === 0 && _ssrRT && _matSSR;
   if(_ssrWant){
@@ -31774,7 +31798,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1363 · 2026-08-04';
+const BUILD_VERSION = 'build 1364 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

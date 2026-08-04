@@ -5,7 +5,8 @@
 // same flag — so the FIRST adaptive downshift (85% res, a common mid-range steady state) shed SSAO, soft
 // particles AND soft shorelines at once, and the image most players actually see lost its grounding while
 // still paying for bloom, fog and the grade. Now `_geoWant` runs the prepass across the top three rungs
-// (soft particles ride it); `_aoWant` keeps the AO SAMPLE on rung 0 only.
+// (soft particles ride it). build 1364: `_aoWant` now rides the SAME rungs at a reduced tap count —
+// the decoupling this test pins became "the sample outlives rung 0"; only rung 3 sheds both.
 import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
@@ -14,15 +15,15 @@ const src = gameSource();
   const MAX = +src.match(/const _AO_GEO_MAXSTEP = (\d+);/)[1];
   eq(MAX, 2, 'the prepass survives the top 3 rungs (0/1/2 = 100/85/72% resolution)');
   const geo = (ssao, step) => ssao > 0.001 && step <= MAX && true /* rt + perspective */;
-  const ao = (ssao, step) => geo(ssao, step) && step === 0;
+  const ao = (ssao, step) => geo(ssao, step) && ssao > 0.001;   // build 1364: no rung-0 term any more
 
-  // rung 0: both on (unchanged from before)
+  // rung 0: both on (unchanged from before — and at 12 taps, so the frame is byte-identical)
   assert(geo(0.9, 0) && ao(0.9, 0), 'rung 0: prepass AND AO sample both run — the full-quality frame is unchanged');
-  // rung 1 (the common downshift): prepass stays, AO sample sheds
-  assert(geo(0.9, 1) && !ao(0.9, 1), 'rung 1 (85%): the prepass runs so SOFT PARTICLES survive, but the AO kernel is shed');
-  assert(geo(0.9, 2) && !ao(0.9, 2), 'rung 2 (72%): still keeps soft particles');
+  // build 1364: the sample no longer sheds on the first downshift — it rides the prepass at 6 taps
+  assert(geo(0.9, 1) && ao(0.9, 1), 'rung 1 (85%): the prepass runs AND the AO sample survives, at the reduced tap count');
+  assert(geo(0.9, 2) && ao(0.9, 2), 'rung 2 (72%): still both — soft particles AND the contact darkening hold');
   // deepest rung: everything sheds (soft anyway)
-  assert(!geo(0.9, 3) && !ao(0.9, 3), 'rung 3 (66%): even the prepass goes — the whole frame is soft there');
+  assert(!geo(0.9, 3) && !ao(0.9, 3), 'rung 3 (66%): prepass AND sample both go — the whole frame is soft there');
   // AO off entirely: neither runs (a creator who disabled AO gets no depth effects, as before)
   assert(!geo(0, 0) && !ao(0, 0), 'AO turned off: no prepass, no sample — the depth effects are opt-out');
 }
@@ -32,8 +33,8 @@ const src = gameSource();
   const fn = extractFunction('_renderPostFX');
   assert(/const _geoWant = \(_ssaoAmt > 0\.001 \|\| _postSSR > 0\.001\) && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam\.isPerspectiveCamera;/.test(fn),
     'the G-buffer prepass gate spans the top rungs');
-  assert(/const _aoWant = _geoWant && _ssaoAmt > 0\.001 && _prStepI === 0;/.test(fn),
-    'the AO sample gate is a STRICT subset — rung 0 only');
+  assert(/const _aoWant = _geoWant && _ssaoAmt > 0\.001;/.test(fn),
+    'the AO sample gate is a subset of the prepass gate — it lives and dies with its G-buffer (build 1364)');
   assert(/_SOFT_P\.value\.x = _geoWant \? 1 : 0;/.test(fn),
     'soft particles ride the prepass gate (the buffer they read), not the AO sample');
 
@@ -57,4 +58,4 @@ const src = gameSource();
     'the AO sample still does NOT die with MSAA (build 1135) — it rides the resolution step, not the FX rung');
 }
 
-done('build 1218: the AO prepass and sample are decoupled — evaluated across the rungs proving the prepass (and with it soft particles/shorelines) survives the common first downshift while only the AO kernel sheds, the deepest rung drops both, AO-off opts out of everything, and the split is structural (prepass render in _geoWant, kernel in a later _aoWant, composite reads AO only when sampled); build 1135\'s below-MSAA intent is preserved');
+done('build 1218: the AO prepass and sample are decoupled — evaluated across the rungs proving the prepass (and with it soft particles/shorelines) survives the common first downshift — and since build 1364 the AO sample survives with it at a reduced tap count (test-1364 owns that half) — the deepest rung drops both, AO-off opts out of everything, and the split is structural (prepass render in _geoWant, kernel in a later _aoWant, composite reads AO only when sampled); build 1135\'s below-MSAA intent is preserved');
