@@ -53,7 +53,7 @@ await withGame(async (P, page) => {
     /* 0) wipe the STOCK level's props first — the first capture superimposed the arena on the default
        level's crates and slabs, which is not what "Place in level" produces on a fresh level and not
        what a showcase frame should contain. */
-    await P(`(()=>{ for(let i=propModels.length-1;i>=0;i--){ try{ removeProp(propModels[i]); }catch(e){} } return propModels.length; })()`);
+    await P(`(()=>{ for(let i=propModels.length-1;i>=0;i--){ try{ removeProp(i); }catch(e){} }   /* removeProp takes an INDEX — passing the object early-returned silently and the stock props leaked into every arena frame */ return propModels.length; })()`);
     // 1) the model, through the real spawnProp, waiting for the load rather than guessing
     const loaded = await P(`new Promise(res=>{
       spawnProp(${JSON.stringify(b.url)}, [0,0,0, 0,0,0, 1], ()=>res('ok'), null, 'loop', null, (e)=>res('ERR '+e));
@@ -76,7 +76,7 @@ await withGame(async (P, page) => {
     meta.push({ theme: b.theme, kb: b.kb, file, loaded, place: JSON.parse(info), frame: JSON.parse(shot) });
     console.log(b.theme.padEnd(11), loaded, JSON.parse(shot).draws + ' draws', JSON.parse(shot).tris + ' tris', '->', file);
     // clear before the next theme, or every arena stacks on the last
-    await P(`(()=>{ for(let i=propModels.length-1;i>=0;i--){ try{ removeProp(propModels[i]); }catch(e){} } return propModels.length; })()`);
+    await P(`(()=>{ for(let i=propModels.length-1;i>=0;i--){ try{ removeProp(i); }catch(e){} }   /* removeProp takes an INDEX — passing the object early-returned silently and the stock props leaked into every arena frame */ return propModels.length; })()`);
   }
 }, { viewport: { width: W, height: H }, settleMs: 5000, port: PORT, dir: DIR });
 
