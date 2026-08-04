@@ -31633,7 +31633,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1360 · 2026-08-04';
+const BUILD_VERSION = 'build 1361 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36105,6 +36105,15 @@ const MANTLE_MIN = 1.55, MANTLE_MAX = 2.05, MANTLE_DUR = 0.42;
 // build 644: grabbing a ledge HANGS you (ledgeHang anim); from the hang you PULL UP (Space / hold forward, anim
 // ledgeUp) or DROP DOWN (Ctrl / back, anim ledgeDrop). _ledge holds the phase + the hang/top positions.
 const LEDGE_PULL_DUR = 0.5, LEDGE_DROP_DUR = 0.3, LEDGE_HANG_AUTO = 2.5;
+// build 1361: the mantle was a FULL STOP (feel audit #9) — velocity zeroed every frame of hang+pull, a
+// 0.25 s wait before a held-forward pull started, and an exit at exactly 0 m/s: ~0.75 s of no control that
+// deleted sprint speed. The hang STAYS stationary (a hang is stationary by definition; the per-frame
+// zeroing is untouched), but the horizontal speed the player ARRIVED with is captured at the grab
+// (vx0/vz0 on the record) and returned at the pull-up EXIT, scaled by LEDGE_EXIT_KEEP along the pull
+// direction — a sprint mantle now exits at a run instead of at a standstill. The held-forward pull delay
+// drops 0.25 -> 0.08 s: enough to distinguish a deliberate hang from a climb-through, not a quarter
+// second of dead input.
+const LEDGE_EXIT_KEEP = 0.7;
 // build 1239: REPORTED FROM PLAY — "the ledge hang positions the chest/belly at the edge, torso/arms/
 // head way over the top, clinging to thin air." Build 966's hang height put the avatar's HEAD TOP
 // exactly at the lip (hy = lip + EYE - avatarHeight*1.02 -> head at lip by construction, whatever the
@@ -37278,8 +37287,24 @@ function loop(){
     const _mvIn = (wish.x !== 0 || wish.z !== 0);
     const _k = player.onGround ? (_mvIn ? MOVE_ACCEL_K : MOVE_BRAKE_K) : (_mvIn ? MOVE_AIR_K : MOVE_AIR_BRAKE_K);
     const _f = Math.min(1, _k * dt);
-    player.vel.x += (_tx - player.vel.x) * _f;
-    player.vel.z += (_tz - player.vel.z) * _f;
+    // build 1361: air control must never BRAKE the player (feel audit #4). The lerp pulls velocity toward
+    // wish*sp, and sp is walk/sprint speed — so whenever the player was FASTER than that (a slide-jump at
+    // 21 m/s, a blast-jump at 30) holding forward actively DECELERATED them: measured, a slide-jump landed
+    // at 12.4 m/s held vs 14.8 released. Quake-derived projection: airborne WITH input, when the speed
+    // ALONG the wish already meets the target, the parallel term is ZERO (never negative) and only the
+    // perpendicular component keeps easing at the air rate — course correction still turns the arc, and
+    // steering trades perpendicular speed, but the speed along the wish is never reduced. Below the target
+    // the else branch is TEXTUALLY the old lerp (a walk-speed jump is byte-identical), and it also carries
+    // the grounded model and AIR_BRAKE untouched — releasing the keys still bleeds speed exactly as tuned.
+    const _vAlong = _mvIn ? (player.vel.x*wish.x + player.vel.z*wish.z) : 0;
+    if(!player.onGround && _mvIn && _vAlong >= sp){
+      const _ppx = player.vel.x - wish.x*_vAlong, _ppz = player.vel.z - wish.z*_vAlong;   // perpendicular part of the velocity
+      player.vel.x = wish.x*_vAlong + _ppx*(1-_f);   // parallel component KEPT; perpendicular eases exactly as before
+      player.vel.z = wish.z*_vAlong + _ppz*(1-_f);
+    } else {
+      player.vel.x += (_tx - player.vel.x) * _f;
+      player.vel.z += (_tz - player.vel.z) * _f;
+    }
   }
   // build 874: side-scroll lane hold — kill off-lane velocity and ease back onto the lane (knockback
   // and slides can push off it; the lane is captured at deploy by _updateViewAim). Cars roam free.
@@ -37347,7 +37372,7 @@ function loop(){
       const _gap=0.34, _hx=player.pos.x+_gFwd.x*(_fd-_gap), _hz=player.pos.z+_gFwd.z*(_fd-_gap);
       const _gy=(typeof groundHeightAt==='function')?groundHeightAt(player.pos.x, player.pos.z, player.pos.y-EYE):0;   /* build 1243 */
       const _hy=Math.max(_lt + EYE - LEDGE_REACH, _gy + EYE - 0.12);   /* build 1289: the PLAYER's reach, not the drawn body's — same in every camera. Full-extension hang, but never feet-through-the-floor: on a ledge near the bottom of the window the body stands at the wall base, arms up to the lip */
-      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:Math.atan2(-_gFwd.x, -_gFwd.z), fy0:player.pos.y, hy:_hy, tx:_fx + _gFwd.x*0.35, tz:_fz + _gFwd.z*0.35, ty:_lt+EYE, lip:_lt, gy:_gy, gx:_gFwd.x, gz:_gFwd.z };   /* build 1290: face the wall this grab found (in the twin-stick views player.yaw points at the CURSOR, which is not the wall), and remember the direction so the drop steps back off it */   /* build 1289: lip + ground ride along so the VISUAL can place a body of any height against them */
+      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:Math.atan2(-_gFwd.x, -_gFwd.z), fy0:player.pos.y, hy:_hy, tx:_fx + _gFwd.x*0.35, tz:_fz + _gFwd.z*0.35, ty:_lt+EYE, lip:_lt, gy:_gy, gx:_gFwd.x, gz:_gFwd.z, vx0:player.vel.x, vz0:player.vel.z };   /* build 1290: face the wall this grab found (in the twin-stick views player.yaw points at the CURSOR, which is not the wall), and remember the direction so the drop steps back off it */   /* build 1289: lip + ground ride along so the VISUAL can place a body of any height against them */
       player.vel.x=0; player.vel.y=0; player.vel.z=0; sliding=false; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); }
   }
   // build 1160: same pattern as the slide buffer (926). Grounded refreshes the coyote window; a press
@@ -37387,7 +37412,7 @@ function loop(){
       if(_ledge.hx!=null){ player.pos.x = _ledge.sx + (_ledge.hx-_ledge.sx)*_e; player.pos.z = _ledge.sz + (_ledge.hz-_ledge.sz)*_e; }   // build 966: chest a fixed gap off the wall face
       _climbAnim = 'ledgeHang';
       const _wantDrop = (keys[BINDS.crouch]||(BINDS.crouch==='ControlLeft'&&keys['ControlRight'])||padCrouch||touchCrouch||keys[BINDS.back]);
-      const _wantUp = _jPressed || (keys[BINDS.fwd] && _ledge.t>0.25) || _ledge.t>LEDGE_HANG_AUTO;
+      const _wantUp = _jPressed || (keys[BINDS.fwd] && _ledge.t>0.08) || _ledge.t>LEDGE_HANG_AUTO;   /* build 1361: 0.08, was 0.25 — see LEDGE_EXIT_KEEP */
       if(_wantDrop){ _ledge.ph='drop'; _ledge.t=0; }
       else if(_wantUp){ _ledge.ph='pull'; _ledge.t=0; _ledge.sx=player.pos.x; _ledge.sz=player.pos.z; _ledge.fy0=player.pos.y; }
     } else if(_ledge.ph==='pull'){
@@ -37397,7 +37422,7 @@ function loop(){
       player.pos.x = _ledge.sx + (_ledge.tx-_ledge.sx)*_fw;
       player.pos.z = _ledge.sz + (_ledge.tz-_ledge.sz)*_fw;
       _climbAnim = 'ledgeUp';
-      if(_mt>=1){ player.pos.x=_ledge.tx; player.pos.y=_ledge.ty; player.pos.z=_ledge.tz; player.onGround=true; _ledge=null; _climbAnim=0; }
+      if(_mt>=1){ const _mvKeep=Math.hypot(_ledge.vx0||0,_ledge.vz0||0)*LEDGE_EXIT_KEEP; player.vel.x=(_ledge.gx||0)*_mvKeep; player.vel.z=(_ledge.gz||0)*_mvKeep; player.pos.x=_ledge.tx; player.pos.y=_ledge.ty; player.pos.z=_ledge.tz; player.onGround=true; _ledge=null; _climbAnim=0; }   /* build 1361: the mantle is no longer a full stop — a pre-1361 record ({}||0) degrades to the old 0 m/s exit, never NaN */
     } else {   // drop
       _ledge.t += dt; _climbAnim = 'ledgeDrop';
       if(_ledge.t >= LEDGE_DROP_DUR){ player.pos.x -= (_ledge.gx!=null?_ledge.gx:forward.x)*0.25; player.pos.z -= (_ledge.gz!=null?_ledge.gz:forward.z)*0.25; player.vel.y = -1; _ledge=null; _climbAnim=0; }   /* build 1290: back off the wall that was GRABBED, not wherever the basis points this frame */

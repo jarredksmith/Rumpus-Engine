@@ -50,6 +50,10 @@ await withGame(async (P, page) => {
   // pin the top rung — this sandbox otherwise reviews the shed-everything path (build 1141/1342)
   await P(`(()=>{ _adaptOn=false; _prStepI=0; _prScale=1; _applyPixelRatio(); _hiFxOn=true; _hiFxFails=0; _mbShed=false; _mbFails=0; return 1; })()`);
   for (const b of built) {
+    /* 0) wipe the STOCK level's props first — the first capture superimposed the arena on the default
+       level's crates and slabs, which is not what "Place in level" produces on a fresh level and not
+       what a showcase frame should contain. */
+    await P(`(()=>{ for(let i=propModels.length-1;i>=0;i--){ try{ removeProp(propModels[i]); }catch(e){} } return propModels.length; })()`);
     // 1) the model, through the real spawnProp, waiting for the load rather than guessing
     const loaded = await P(`new Promise(res=>{
       spawnProp(${JSON.stringify(b.url)}, [0,0,0, 0,0,0, 1], ()=>res('ok'), null, 'loop', null, (e)=>res('ERR '+e));
@@ -59,11 +63,11 @@ await withGame(async (P, page) => {
       const sp=${JSON.stringify(b.spawn)};
       if(sp && sp.length){ playerSpawn.x=+sp[0][0]||0; playerSpawn.z=+sp[0][1]||0; playerSpawn.y=0;
         playerSpawn.yaw=Math.atan2(playerSpawn.x, playerSpawn.z);
-        player.pos.set(playerSpawn.x, 2.0, playerSpawn.z); player.yaw=playerSpawn.yaw; player.pitch=-0.04; player.vel.set(0,0,0); }
+        player.pos.set(playerSpawn.x, 1.9, playerSpawn.z); player.yaw=playerSpawn.yaw; player.pitch=-0.04; player.vel.set(0,0,0); }
       ${b.world ? `Object.assign(worldCfg, ${JSON.stringify(b.world)}); applyWorldCfg();` : ''}
       return JSON.stringify({ props:propModels.length, spawn:[playerSpawn.x, playerSpawn.z] }); })()`);
     const shot = await P(`new Promise(r=>{ let n=0; const t=()=>{
-        player.pos.set(playerSpawn.x, 2.0, playerSpawn.z); player.yaw=playerSpawn.yaw; player.pitch=-0.04; player.vel.set(0,0,0);
+        player.pos.set(playerSpawn.x, 1.9, playerSpawn.z); player.yaw=playerSpawn.yaw; player.pitch=-0.04; player.vel.set(0,0,0);
         if(++n>18) return r(JSON.stringify({ draws:renderer.info.render.calls, tris:renderer.info.render.triangles,
           exposure:+renderer.toneMappingExposure.toFixed(3), aa:_aaState().aa, lights:_lightLoad(_lightCensus()) }));
         requestAnimationFrame(t); }; requestAnimationFrame(t); })`);
