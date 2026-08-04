@@ -967,6 +967,53 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A way to report something (build 1351 — platform audit G2)
+
+The platform audit's named blocker for a public release with minors, and the cheapest high-value item in
+it: **there was no report affordance anywhere in the product.** Chat had build 1178's 11-word filter applied
+at render and a per-session `/mute`, and that was the entire safety surface — a player who saw something
+worse had no way to tell anybody, and a moderator had no queue to read.
+
+The server half is `server/api/report.php` (written alongside; see the correction under build 1350 for how
+it reached the tree). This is the half a person can reach.
+
+**A chat report must carry the message.** Chat is peer-to-peer, so the server has **no copy** of the line
+being reported — a report naming only a player is an unactionable accusation. `report.php` refuses a chat
+report with no `text` for exactly that reason, and the client sends the line and the room code. This is the
+one design point that makes the feature real rather than decorative.
+
+**It must fail loudly when there is no backend.** Reports go to the founder's host, which a self-hoster or
+an offline session does not have. *"Could not reach the moderation service — your report was NOT sent"* is
+the whole point: a silent swallow is worse than no button, because the reporter believes they have been
+heard. Success also requires BOTH `r.ok` and `j.ok` — an HTML error page served with status 200 is not a
+delivered report.
+
+Verified live against a stubbed endpoint through every branch:
+
+```
+sent        {kind:chat, reason:harassment, target:"Griefer", text:"something awful", room:"ab12cd"}
+            -> "Reported — thank you. A moderator will look at it."
+429         -> "You have reported very recently — try again in 37s"   (retry comes from the server)
+400         -> "Could not send the report: bad kind"
+no backend  -> "Could not reach the moderation service — your report was NOT sent"
+cancel      -> zero requests
+your own chat line -> no flag at all
+```
+
+`uiPromptForm` gained an options-driven `<select>`, additively: a field with no `options` builds exactly
+the text input every existing caller already gets, and both land in the same `inputs` array so the
+callback's value-order contract is unchanged. A free-text "reason" would have been useless to a moderator
+and `report.php` whitelists it anyway. **I nearly shipped a dialog that assumed a select and named keys —
+`uiPromptForm` had neither.** Reading the helper before calling it is what caught it.
+
+**Seven times.** Three harnesses (852, 854, 857) broke on `{0,9500}` character-budget slices of the
+community gallery, every assertion still true. All three were anchored at BOTH ends on named functions, so
+the budget was never doing anything except waiting to expire; they are unbounded lazy matches now. That is
+the trap CLAUDE.md records under build 1149, hit for the seventh time in this session alone.
+
+**Still open on G2:** the report button exists on chat lines and community levels; the published `/game/`
+page and in-match players do not have one yet.
+
 ## The sun shadow joins the ladder (build 1350 — debt build 1346 created)
 
 Build 1346 raised the near cascade to 4096 for a measured reason: the corner leak is a fixed number of

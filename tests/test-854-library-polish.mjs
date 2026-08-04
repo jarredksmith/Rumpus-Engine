@@ -33,7 +33,11 @@ assert(v3.ok && !v3.entry.sketchfab && !v3.entry.thumb, 'no false flags on a pla
 
 // gallery rendering
 // build 970 split the gallery into renderCommunity -> _commRenderUI -> _commRenderRows; span all three
-const gal = src.match(/async function renderCommunity\(\)\{[\s\S]{0,9500}?\nasync function _commLoad/)[0];
+// build 1351: this slice was capped at 9,500 characters and broke when the gallery row gained a report
+// button, with every assertion below still true — the character-budget trap CLAUDE.md records under
+// build 1149, now for the seventh time this session. The slice is ANCHORED at both ends (a named
+// function on each side), so the budget was never doing anything except expiring.
+const gal = src.match(/async function renderCommunity\(\)\{[\s\S]*?\nasync function _commLoad/)[0];
 assert(/L\.thumb && \/\^data:image\\\/\(jpeg\|png\);base64,\/\.test\(L\.thumb\)/.test(gal), 'gallery only renders data-URI image thumbs');
 assert(/charAt\(0\)\.toUpperCase\(\)/.test(gal), 'entries without a thumb get a monogram placeholder');
 assert(/needs Sketchfab token/.test(gal), 'the Sketchfab badge renders');

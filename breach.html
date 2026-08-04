@@ -10411,7 +10411,18 @@ function uiPromptForm(title, fields, cb){
   const inputs=[];
   for(const f of fields){
     const lab=document.createElement('div'); lab.textContent=f.label; lab.style.cssText='margin:12px 0 4px;font-size:11px;letter-spacing:0.6px;color:#9fc4ba;'; card.appendChild(lab);
-    const inp=document.createElement('input'); inp.type='text'; inp.value=f.value||''; if(f.max) inp.maxLength=f.max;
+    /* build 1351: an optional options-driven <select>. Additive — every pre-existing caller passes no
+       `options` and gets exactly the text input it always got — and `inputs` still collects an element
+       whose `.value` is what the callback receives, so the array contract is unchanged. */
+    let inp;
+    if(f.options && f.options.length){
+      inp=document.createElement('select');
+      for(const o of f.options){ const op=document.createElement('option');
+        op.value=(o&&o.value!=null)?o.value:o; op.textContent=(o&&o.label!=null)?o.label:String(o);
+        if(op.value===f.value) op.selected=true; inp.appendChild(op); }
+    } else {
+      inp=document.createElement('input'); inp.type='text'; inp.value=f.value||''; if(f.max) inp.maxLength=f.max;
+    }
     inp.style.cssText='width:100%;box-sizing:border-box;background:#0c161b;color:#eafff7;border:1px solid rgba(var(--accent-rgb),0.35);border-radius:7px;padding:9px 11px;font-size:14px;';
     card.appendChild(inp); inputs.push(inp);
   }
@@ -25234,10 +25245,82 @@ function sendChat(text){ text=(''+text).slice(0,200); if(!text) return;
     else { _chatMuted.add(who); if(typeof flashToast==='function') flashToast('Muted '+mm[2].trim()+' for this session'); }
     return; }
   const nm=NET.name||'You'; addChatLine(nm, text, true); if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send({t:'chat', name:nm, text}); }catch(e){} } } else if(NET.mode==='client' && NET.conn){ try{ NET.conn.send({t:'chat', text}); }catch(e){} } }
+// ---- build 1351: A WAY TO REPORT SOMETHING ---------------------------------------------------------
+// The platform audit's named blocker for a public release with minors, and the cheapest high-value item in
+// the whole audit: there was NO report affordance anywhere in the product. Chat had a filter (build 1178's
+// 11-word list, applied at render) and a per-session `/mute`, and that was the entire safety surface — a
+// player who saw something worse had no way to tell anybody, and a moderator had no queue to read.
+//
+// The server half is `server/api/report.php`. This is the half a person can reach.
+//
+// Three things shape it:
+//  * A CHAT REPORT MUST CARRY THE TEXT. Chat is peer-to-peer, so the server has no copy of the line being
+//    reported — without the message and the room code a moderator receives an unactionable accusation.
+//    report.php refuses a chat report with no `text` for exactly this reason, and the client sends it.
+//  * IT MUST WORK WHEN THE BACKEND IS NOT THERE. Reports go to the founder's host, which a self-hoster or
+//    an offline session does not have. A failed report says so plainly instead of pretending; a silent
+//    swallow here is worse than no button, because the reporter believes they have been heard.
+//  * 429 CARRIES A `retry` IN SECONDS, so the button says how long rather than guessing.
+const REPORT_REASONS = [['harassment','Harassment or bullying'], ['sexual','Sexual content'],
+  ['violence','Violence or threats'], ['hate','Hate speech'], ['spam','Spam or scam'], ['other','Something else']];
+let _reportBusy = false;
+function openReportDialog(kind, opts){
+  opts = opts || {};
+  if(_reportBusy) return;
+  /* uiPromptForm hands the callback an ARRAY of field values in order, and until this build it only built
+     text inputs. A free-text "reason" would be useless to a moderator and report.php whitelists it anyway,
+     so the helper gained an options-driven <select> — additive, since every existing caller passes none. */
+  const rows = [{ label:'What is wrong?', options:REPORT_REASONS.map(r=>({ value:r[0], label:r[1] })), value:'harassment' },
+                { label:'Anything else? (optional)', max:500, value:'' }];
+  const what = opts.what || kind;
+  uiPromptForm('Report ' + what, rows, async (vals)=>{
+    if(!vals) return;
+    _reportBusy = true;
+    const body = { kind, reason:(vals[0]||'other'), note:String(vals[1]||'').slice(0,500) };
+    if(opts.target) body.target = String(opts.target).slice(0,120);
+    if(opts.text) body.text = String(opts.text).slice(0,300);      /* chat: the server has no copy */
+    if(opts.room) body.room = String(opts.room).slice(0,12);
+    try{
+      const r = await fetch(_commApi()+'report.php', { method:'POST',
+        headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
+      let j = null; try{ j = await r.json(); }catch(e){}
+      if(r.ok && j && j.ok){ flashToast('Reported \u2014 thank you. A moderator will look at it.'); }
+      else if(r.status === 429){
+        const secs = (j && +j.retry) || 60;
+        flashToast('You have reported very recently \u2014 try again in ' + Math.ceil(secs) + 's');
+      }
+      else flashToast('Could not send the report' + ((j && j.error) ? (': ' + j.error) : ''));
+    }catch(e){
+      /* No backend, offline, or a self-hosted build with no report endpoint. Say so — a reporter who
+         believes they were heard and was not is the worst outcome this feature can produce. */
+      flashToast('Could not reach the moderation service \u2014 your report was NOT sent');
+    }
+    _reportBusy = false;
+  });
+}
+function _reportBtn(label, title, fn){
+  const b = document.createElement('button');
+  b.textContent = label; b.title = title;
+  b.setAttribute('aria-label', title);
+  b.style.cssText = 'padding:2px 6px;font-size:11px;line-height:1;border-radius:5px;cursor:pointer;'
+    + 'border:1px solid transparent;background:transparent;color:#7a6b6b;flex:none;';
+  b.onmouseenter = ()=>{ b.style.color='#ff9b93'; b.style.borderColor='#5c2a2a'; };
+  b.onmouseleave = ()=>{ b.style.color='#7a6b6b'; b.style.borderColor='transparent'; };
+  b.onclick = (e)=>{ e.stopPropagation(); e.preventDefault(); fn(); };
+  return b;
+}
 function addChatLine(name, text, mine){ const log=document.getElementById('chatLog'); if(!log) return;
   if(!mine && _chatMuted.has((''+(name||'')).trim().toLowerCase())) return;   // build 1178: muted senders render nothing
   if(!mine) text = _chatClean(text);   /* build 1178: filter at RENDER — your own text shows as typed */
-  const row=document.createElement('div'); row.className='chatRow'; const nm=document.createElement('span'); nm.className='chatName'+(mine?' chatMine':''); nm.textContent=(name||'?')+': '; const tx=document.createElement('span'); tx.className='chatText'; tx.textContent=(''+(text||'')).slice(0,200); row.appendChild(nm); row.appendChild(tx); log.appendChild(row); while(log.children.length>8) log.removeChild(log.firstChild); setTimeout(()=>{ row.classList.add('chatFade'); }, 9000); }
+  const row=document.createElement('div'); row.className='chatRow'; const nm=document.createElement('span'); nm.className='chatName'+(mine?' chatMine':''); nm.textContent=(name||'?')+': '; const tx=document.createElement('span'); tx.className='chatText'; tx.textContent=(''+(text||'')).slice(0,200); row.appendChild(nm); row.appendChild(tx);
+  /* build 1351: report the LINE. Your own text gets no flag — reporting yourself is not a thing — and the
+     reported message travels with the report because chat is peer-to-peer and the server has no copy. */
+  if(!mine && typeof _reportBtn==='function'){
+    row.appendChild(_reportBtn('\u2691', 'Report this message',
+      ()=>openReportDialog('chat', { what:'this message', target:(''+(name||'')).slice(0,120),
+        text:(''+(text||'')).slice(0,300), room:(NET && NET.room) ? String(NET.room).toLowerCase() : '' })));
+  }
+  log.appendChild(row); while(log.children.length>8) log.removeChild(log.firstChild); setTimeout(()=>{ row.classList.add('chatFade'); }, 9000); }
 function applyPvpDamage(dmg, from){
   if(duelDead || duelInvuln>0) return;
   if(sameTeam(from, NET.myId)) return;   // no friendly fire in team modes
@@ -31184,7 +31267,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1350 · 2026-08-04';
+const BUILD_VERSION = 'build 1351 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -50514,6 +50597,12 @@ function _commRenderRows(){
       vb.title='Thumbs up \u2014 helps this level rise in Most played';
       if(_playsVoted(L)){ vb.disabled=true; vb.style.opacity='0.55'; }
       row.appendChild(vb); }
+    /* build 1351: report the LEVEL. The server has this one — it is in the published index — so the file
+       name is the whole target and the moderator can pull it up from the queue. */
+    if(typeof _reportBtn==='function')
+      row.appendChild(_reportBtn('\u2691', 'Report this level',
+        ()=>openReportDialog('level', { what:'“'+String(L.name||'this level').slice(0,40)+'”',
+          target:String(L.file||L.name||'').slice(0,120) })));
     rows.appendChild(row);
   }
 }
