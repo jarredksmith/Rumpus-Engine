@@ -9771,7 +9771,10 @@ scene.add(floor);
 // lobe around the sun, a limb-softened disc, and a ground half below the horizon. No texture fetch,
 // two pow and one exp, so it costs a few dozen ALU on 12 triangles drawn after the opaques.
 const SKY_DEF = { zenith:[0.18,0.30,0.54], horizon:[0.52,0.60,0.70], ground:[0.20,0.19,0.17],
-                  turb:0.35, sunSize:1.6, sunGlow:1.0, exp:1.0 };
+                  turb:0.35, sunSize:1.6, sunGlow:1.0, exp:1.0, cloud:0.35, cloudScale:1 };
+// build 1369: one clamp for the cloud fields. NaN falls to the DEFAULT, never into a uniform (a NaN
+// uniform is a silently stuck shader term, which is this region of the file at its worst).
+function _skyClamp(v, lo, hi, d){ v = +v; return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; }
 // build 1127: declared BEFORE _skyP, which reads it. `typeof` does NOT guard a temporal dead zone —
 // it throws ReferenceError for a `let` that has not been initialised yet, and _skyP runs at boot from
 // applyWorldCfg. Declaring this below _skyP turned the entire sky black on the first frame.
@@ -9783,12 +9786,14 @@ let _skyDayDim = 1;
 // (1180) lifts a dark frame back up. So a mood is a COHERENT PACKAGE — dome colours + sun strength/
 // colour/elevation + fog colour + the auto-exposure strength — or "night" is just a black ceiling over
 // a sunny afternoon. Presets are starting points; every field remains individually editable below them.
+// build 1369: each mood states its cloud COVER too. Day carries the engine default, per the 1234
+// rule, so Day still returns exactly stock; Overcast is what the word means — near-full cover.
 const SKY_MOODS = {
-  day:      { skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0,  sun:1.5,  sunColor:0xfff2dc, sunElev:24, fogColor:0x2e3b47, autoExp:0.7 },   // = DEFAULT_WORLD's sky, restated so Day always returns exactly stock
-  sunset:   { skyZenith:0x2c3f66, skyHorizon:0xff9a4d, skyGround:0x4a3a30, skyTurb:0.55, skySunSize:2.2, skySunGlow:1.5, skyExp:0.95, sun:1.05, sunColor:0xffb066, sunElev:8,  fogColor:0x3a2f33, autoExp:0.6 },
-  night:    { skyZenith:0x060a18, skyHorizon:0x12203a, skyGround:0x0a0d12, skyTurb:0.25, skySunSize:0.9, skySunGlow:0.35, skyExp:0.55, sun:0.28, sunColor:0xbfd4ff, sunElev:42, fogColor:0x0a1018, autoExp:0.15 },   // the dim cool "sun" IS the moonlight; autoExp held low or the eye undoes the dark
-  overcast: { skyZenith:0x8b98a4, skyHorizon:0xb9c2c9, skyGround:0x6f6d68, skyTurb:0.92, skySunSize:0.6, skySunGlow:0.15, skyExp:0.85, sun:0.7,  sunColor:0xe8ecef, sunElev:55, fogColor:0x39434b, autoExp:0.6 },
-  blood:    { skyZenith:0x1c0708, skyHorizon:0x8a1f14, skyGround:0x140a08, skyTurb:0.6,  skySunSize:2.6, skySunGlow:1.7, skyExp:0.8,  sun:0.55, sunColor:0xff5a3c, sunElev:16, fogColor:0x2a0d0a, autoExp:0.3 },
+  day:      { skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0,  sun:1.5,  sunColor:0xfff2dc, sunElev:24, fogColor:0x2e3b47, autoExp:0.7, skyCloud:0.35, skyCloudScale:1 },   // = DEFAULT_WORLD's sky, restated so Day always returns exactly stock
+  sunset:   { skyZenith:0x2c3f66, skyHorizon:0xff9a4d, skyGround:0x4a3a30, skyTurb:0.55, skySunSize:2.2, skySunGlow:1.5, skyExp:0.95, sun:1.05, sunColor:0xffb066, sunElev:8,  fogColor:0x3a2f33, autoExp:0.6, skyCloud:0.5, skyCloudScale:1.4 },
+  night:    { skyZenith:0x060a18, skyHorizon:0x12203a, skyGround:0x0a0d12, skyTurb:0.25, skySunSize:0.9, skySunGlow:0.35, skyExp:0.55, sun:0.28, sunColor:0xbfd4ff, sunElev:42, fogColor:0x0a1018, autoExp:0.15, skyCloud:0.2, skyCloudScale:1 },   // the dim cool "sun" IS the moonlight; autoExp held low or the eye undoes the dark
+  overcast: { skyZenith:0x8b98a4, skyHorizon:0xb9c2c9, skyGround:0x6f6d68, skyTurb:0.92, skySunSize:0.6, skySunGlow:0.15, skyExp:0.85, sun:0.7,  sunColor:0xe8ecef, sunElev:55, fogColor:0x39434b, autoExp:0.6, skyCloud:0.92, skyCloudScale:1.8 },
+  blood:    { skyZenith:0x1c0708, skyHorizon:0x8a1f14, skyGround:0x140a08, skyTurb:0.6,  skySunSize:2.6, skySunGlow:1.7, skyExp:0.8,  sun:0.55, sunColor:0xff5a3c, sunElev:16, fogColor:0x2a0d0a, autoExp:0.3, skyCloud:0.55, skyCloudScale:1.2 },
 };
 function applySkyMood(k){
   const m = SKY_MOODS[k]; if(!m) return false;
@@ -9812,6 +9817,13 @@ function _skyP(){
     // reads the sky — the dome, the hemisphere fill, the fog colour and the environment map — goes
     // through _skyP(), so dimming here dims all four together and they can never disagree.
     exp: ((w && w.skyExp != null) ? +w.skyExp : SKY_DEF.exp) * _skyDayDim,
+    // build 1369: clamped HERE because _skyP is the single reader of these two fields, so no loader
+    // can reach the shader with an out-of-range or NaN coverage. Zero is a real value (a clean
+    // gradient), so the != null gate keeps it. These also ride the _skyEnv key via P, so a coverage
+    // change rebuilds the probe key exactly like every other sky field (the probe itself stays
+    // cloudless; see the note there).
+    cloud: _skyClamp((w && w.skyCloud != null) ? w.skyCloud : SKY_DEF.cloud, 0, 1, SKY_DEF.cloud),
+    cloudScale: _skyClamp((w && w.skyCloudScale != null) ? w.skyCloudScale : SKY_DEF.cloudScale, 0.25, 4, SKY_DEF.cloudScale),
   };
 }
 // the sun's world direction from the authored azimuth/elevation (the same numbers that aim the
@@ -9864,6 +9876,33 @@ const SKY_GLSL = [
   '  float disc = 1.0 - clamp((ang - uSunSize*0.5) / max(0.05, uSunSize*0.35), 0.0, 1.0);',
   '  float add = glow*0.45 + disc*disc*12.0;',
   '  return (c + add*vec3(1.0, 0.94, 0.82)) * uExp;',
+  '}',
+  // build 1369: procedural clouds — a 2-octave value-noise FBM composited over the gradient by the
+  // DOME only. The probe and the CPU averages stay cloudless (clouds are in the picture, not in the
+  // light — see applySky). The hash is SIN-FREE (fract chains), so its precision does not decay with
+  // the drift offset the way fract-sin does; the drift clock is still wrapped at 2048 s in
+  // onBeforeRender to keep the noise domain small on mediump GPUs (one visible re-seed per ~34
+  // minutes is the accepted cost of a bounded domain). Coverage 0 returns the input radiance
+  // UNTOUCHED — byte-identical to the pre-cloud sky — via the explicit early return, which
+  // test-1369 executes against a JS mirror of exactly these lines. The cloud COLOUR is built from
+  // uHor/uZen only (no additive constant), so a Night sky keeps its clouds dark instead of glowing;
+  // the sun-side gain vector is warm on purpose. Edge softness (uCloudSharp) derives from the same
+  // turbidity the falloff uses, so Haze softens the clouds with the sky and there is no third knob.
+  'uniform float uCloud; uniform float uCloudScale; uniform float uCloudSharp; uniform float uCloudTime;',
+  'float _chash(vec2 p){ vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }',
+  'float _cnoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f*f*(3.0-2.0*f);',
+  '  return mix(mix(_chash(i), _chash(i+vec2(1.0,0.0)), f.x), mix(_chash(i+vec2(0.0,1.0)), _chash(i+vec2(1.0,1.0)), f.x), f.y); }',
+  'float _cfbm(vec2 p){ return _cnoise(p)*0.65 + _cnoise(p*2.17 + vec2(19.7, 7.3))*0.35; }',
+  'vec3 applyClouds(vec3 c, vec3 d){',
+  '  if(uCloud <= 0.0005) return c;',
+  '  float hf = smoothstep(0.02, 0.16, d.y);',
+  '  if(hf <= 0.0) return c;',
+  '  vec2 uv = d.xz / (d.y + 0.14) * (1.35 * uCloudScale) + uCloudTime * 0.004 * vec2(1.0, 0.36);',
+  '  float n = _cfbm(uv);',
+  '  float m = smoothstep(1.0 - uCloud, 1.0 - uCloud + uCloudSharp, n) * hf;',
+  '  float sunT = max(dot(d, uSun), 0.0);',
+  '  vec3 cl = (uHor * 1.12 + uZen * 0.30) * (vec3(0.60) + vec3(0.85, 0.74, 0.60) * (sunT * sunT)) * uExp;',
+  '  return mix(c, cl, m * 0.9);',
   '}'
 ].join('\n');
 let _skyMesh = null, _skyMat = null, _skyDomeRT = null, _skyDomePMREM = null, _skyKey = '', _skyEnvAt = -1e9;
@@ -9871,12 +9910,25 @@ let _skyMesh = null, _skyMat = null, _skyDomeRT = null, _skyDomePMREM = null, _s
 // and `typeof x` does NOT guard a temporal dead zone (build 1127 turned the sky black learning that).
 let _spCube=null, _spCube2=null, _spCam=null, _spCam2=null, _spScene2=null, _spInvMat=null, _spPM=null, _spRT=null;
 let _spAt=-1e9, _spSkyKey='', _spQueue=[], _spSkyScale=1;
+// build 1370: the probe FOLLOWS THE PLAYER. Reflections and the image-based ambient were captured at
+// the SPAWN only, so they were wrong everywhere else in a big level. _spPos is the point the LIVE probe
+// was captured from (every successful capture records it); the follow re-shoot fires when the player
+// stands more than SP_FOLLOW_DIST from it, at most once per SP_FOLLOW_MS, and never while the deploy
+// shots (_spQueue) are still pending.
+let _spPos = null;
+const SP_FOLLOW_DIST = 40, SP_FOLLOW_MS = 5000;
 function _skyUniforms(){
   const P = _skyP(), S = _sunDir();
   return { uZen:{value:new THREE.Vector3(...P.zenith)}, uHor:{value:new THREE.Vector3(...P.horizon)},
     uGnd:{value:new THREE.Vector3(...P.ground)}, uSun:{value:new THREE.Vector3(...S)},
     uFall:{value:1.6+(1-P.turb)*3.4}, uGlowP:{value:8+(1-P.turb)*56},
     uSunSize:{value:P.sunSize}, uSunGlow:{value:P.sunGlow}, uExp:{value:P.exp},
+    // build 1369: the cloud layer. uCloudSharp derives from the SAME turbidity the falloff uses — a
+    // hazy sky gets soft cloud edges with no third knob — floored so smoothstep never sees a
+    // zero-width edge (edge0 == edge1 is undefined in GLSL). uCloudTime is written per frame in
+    // onBeforeRender; 0 here is at worst one frame of still clouds.
+    uCloud:{value:P.cloud}, uCloudScale:{value:P.cloudScale},
+    uCloudSharp:{value:Math.max(0.06, 0.10 + P.turb*0.30)}, uCloudTime:{value:0},
     // build 1127: the dome tone-maps and encodes itself (see _ACES_GLSL). uEncode is settled per
     // frame in onBeforeRender, because whether this pass is the one that writes the canvas depends
     // on a runtime toggle the sky knows nothing about.
@@ -9906,7 +9958,10 @@ function _ensureSky(){
       // call is a forward reference and the program fails to compile. It fails silently, too — the
       // mesh just stops drawing, and the sky went pure black.
       _OETF_GLSL, _ACES_GLSL,
-      'void main(){ gl_FragColor = vec4(_out(_aces(skyRadiance(normalize(vDir)))), 1.0); }'].join('\n') });
+      // build 1369: clouds are IN THE PICTURE, not in the light — the layer composites over the
+      // radiance BEFORE the shared tone-map and encode, so a cloud rides the same response curve as
+      // the sky behind it. The probe below stays cloudless; see the note there.
+      'void main(){ vec3 nd = normalize(vDir); gl_FragColor = vec4(_out(_aces(applyClouds(skyRadiance(nd), nd))), 1.0); }'].join('\n') });
   _skyMesh = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), _skyMat);
   _skyMesh.frustumCulled = false; _skyMesh.renderOrder = 1000; _skyMesh.name = 'nocollide-sky';
   // The dome is a 2-unit box, so it has to travel with the eye — left at the world origin the camera
@@ -9924,7 +9979,10 @@ function _ensureSky(){
     const u=_skyMat.uniforms;
     if(u.uEncode) u.uEncode.value = (typeof _postOn!=='undefined' && _postOn && !(typeof _postFail!=='undefined' && _postFail)) ? 0 : 1;
     if(u.uExpo) u.uExpo.value = r.toneMappingExposure * ((typeof _spSkyScale!=='undefined') ? _spSkyScale : 1);   /* build 1186: during the probe render the SKY alone is scaled by worldCfg.sky — geometry radiance is already correct */
-    if(u.uTM) u.uTM.value = (r.toneMapping === THREE.NoToneMapping) ? 0 : 1; };
+    if(u.uTM) u.uTM.value = (r.toneMapping === THREE.NoToneMapping) ? 0 : 1;
+    /* build 1369: the cloud drift clock, wrapped at 2048 s so the value-noise domain stays small on
+       mediump GPUs (one visible re-seed per ~34 min is the accepted cost of a bounded domain). */
+    if(u.uCloudTime) u.uCloudTime.value = ((typeof performance!=='undefined' ? performance.now() : 0) * 0.001) % 2048; };
   scene.add(_skyMesh);
   return _skyMesh;
 }
@@ -9964,6 +10022,10 @@ function _skyEnv(){
         // sunlit and a shadowed face of the same deck differed by only 1.16x in luminance; raising the
         // sun 50% and halving the hemisphere fill moved that by 0.00, which is what proved the IBL was
         // the dominant term rather than either light. An environment map holds RADIANCE.
+        // build 1369: and NO CLOUDS. The probe is the sky as LIGHT and the cloud layer is picture —
+        // it drifts per frame while this cube rebuilds at most every 1.5 s off a key that knows no
+        // clock, so clouds here would be frozen mid-drift in every reflection. One rule with the
+        // hemisphere fill and the fog ring: no cloud term reaches lighting.
         'void main(){ gl_FragColor=vec4(skyRadiance(normalize(vDir)),1.0); }'].join('\n') }));
     m.frustumCulled=false; sc.add(m);
     const cubeRT = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType });
@@ -10000,6 +10062,11 @@ function applySky(){
   for(const k in u) if(_skyMat.uniforms[k]) _skyMat.uniforms[k].value = u[k].value;
   _skyMesh.visible = true;
   const P=_skyP(), S=_sunDir();
+  // build 1369: the CLOUD layer is deliberately NOT in these averages, nor in the fog ring below,
+  // nor in the environment probe — clouds are in the PICTURE, not in the light. At default coverage
+  // they move the hemisphere integral by a few percent, and they DRIFT per frame while this fill and
+  // the fog recompute on the day-cycle cadence: lighting that breathes out of step with the visible
+  // sky would be a worse artifact than the omission.
   // hemisphere fill: the average of the upper and lower hemispheres of the SAME model. A hard floor
   // keeps shadowed ground off zero — a surface lit only by bounce must still show its texture.
   const avg = (sign)=>{ const a=[0,0,0]; let n=0;
@@ -10043,7 +10110,7 @@ function applySky(){
 // hemisphere is the level's REAL ground radiance, not the sky model's brighter painted band) and the
 // weapon reads blue-steel (95,101,94 -> 75,82,80 region mean) — its top rail now carries the sky and its
 // sides the ground, which is what reflecting the world means for the one metal object always on screen.
-function buildSceneProbe(){
+function buildSceneProbe(px, py, pz){
   try{
     if(typeof IS_COARSE!=='undefined' && IS_COARSE) return false;                 /* phones keep the sky-only probe */
     if(!THREE.PMREMGenerator || !THREE.WebGLCubeRenderTarget) return false;
@@ -10076,8 +10143,18 @@ function buildSceneProbe(){
           '}'].join('\n') });
       const bm = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), _spInvMat); bm.frustumCulled = false; _spScene2.add(bm);
     }
-    const gy = (typeof terrainHeightAt==='function') ? terrainHeightAt(playerSpawn.x, playerSpawn.z) : 0;
-    _spCam.position.set(playerSpawn.x, gy + (playerSpawn.y||0) + 1.7, playerSpawn.z);
+    /* build 1370: the probe follows. An explicit position wins — the follow trigger passes the player
+       eye, and player.pos.y IS the eye. With none, a re-shoot refreshes IN PLACE at _spPos, the point
+       the live probe was captured from: the day-cycle rebuild must not snap a followed probe back to
+       spawn, or a moving player under a day cycle would thrash two capture points at six scene renders
+       plus a PMREM each. Only a fresh deploy captures from the spawn eye — requestSceneProbe clears
+       _spPos for exactly that. */
+    if(px != null){ _spCam.position.set(+px, +py, +pz); }
+    else if(_spPos){ _spCam.position.set(_spPos.x, _spPos.y, _spPos.z); }
+    else {
+      const gy = (typeof terrainHeightAt==='function') ? terrainHeightAt(playerSpawn.x, playerSpawn.z) : 0;
+      _spCam.position.set(playerSpawn.x, gy + (playerSpawn.y||0) + 1.7, playerSpawn.z);
+    }
     const prev = renderer.getRenderTarget();
     _spSkyScale = Math.max(0.05, Math.min(2, (typeof worldCfg!=='undefined' && worldCfg.sky!=null) ? +worldCfg.sky : 0.55));
     try{ _spCam.update(renderer, scene); } finally { _spSkyScale = 1; }             /* shadow maps already built; autoUpdate=false means no extra passes */
@@ -10091,6 +10168,8 @@ function buildSceneProbe(){
     const out = _spPM.fromCubemap(_spCube2.texture);
     if(_spRT && _spRT.dispose) _spRT.dispose();
     _spRT = out; _spSkyKey = _skyKey; _spAt = (typeof performance!=='undefined') ? performance.now() : 0;
+    if(!_spPos) _spPos = { x:0, y:0, z:0 };   /* build 1370: remember the capture point — the follow ring is centred on it */
+    _spPos.x = _spCam.position.x; _spPos.y = _spCam.position.y; _spPos.z = _spCam.position.z;
     if(typeof worldCfg!=='undefined' && worldCfg.skyMode==='sky' && !((typeof _skyHdriUrl!=='undefined') && _skyHdriUrl) && scene.environment)
       scene.environment = _spRT.texture;                                          /* live now; applySky keeps it current — and an authored HDRI always outranks it */
     return true;
@@ -10098,13 +10177,28 @@ function buildSceneProbe(){
 }
 // Two shots per deploy: one after the level settles, one after slow assets (models, textures) land. The
 // day cycle moves the sky continuously, so a changed sky key rebuilds at most every 3 seconds.
-function requestSceneProbe(){ const n = (typeof performance!=='undefined') ? performance.now() : 0; _spQueue = [n+1200, n+9000]; }
+function requestSceneProbe(){ const n = (typeof performance!=='undefined') ? performance.now() : 0; _spQueue = [n+1200, n+9000]; _spPos = null; /* build 1370: a fresh deploy captures from the spawn again */ }
+// build 1370: should the probe re-shoot from the point (px,py,pz) at time n? A pure decision so the
+// test can drive it with a fake clock. Never during the deploy window — the +1.2s/+9s shots own the
+// capture while _spQueue is pending; never before a first capture exists; at most one re-shoot per
+// SP_FOLLOW_MS; and only past SP_FOLLOW_DIST (3D) from the point the live probe was captured at.
+function _spFollowDue(px, py, pz, n){
+  if(_spQueue.length) return false;
+  if(!_spRT || !_spPos) return false;
+  if(n - _spAt < SP_FOLLOW_MS) return false;
+  const dx = px - _spPos.x, dy = py - _spPos.y, dz = pz - _spPos.z;
+  return (dx*dx + dy*dy + dz*dz) > SP_FOLLOW_DIST*SP_FOLLOW_DIST;
+}
 function _spTick(){
   if(typeof IS_COARSE!=='undefined' && IS_COARSE) return;
   if(typeof worldCfg!=='undefined' && (worldCfg.skyMode!=='sky' || ((typeof _skyHdriUrl!=='undefined') && _skyHdriUrl))) return;
   const n = (typeof performance!=='undefined') ? performance.now() : 0;
   if(_spQueue.length && n >= _spQueue[0]){ _spQueue.shift(); buildSceneProbe(); return; }
-  if(_spRT && _skyKey !== _spSkyKey && n - _spAt > 3000) buildSceneProbe();
+  if(_spRT && _skyKey !== _spSkyKey && n - _spAt > 3000){ buildSceneProbe(); return; }   /* the day-cycle refresh re-captures in place — see buildSceneProbe */
+  // build 1370: the follow trigger. The capture path is buildSceneProbe itself — the build-1186
+  // ACES-inverse / PMREM / sky-scale pipeline, never a fork.
+  if(typeof player!=='undefined' && player && player.pos && _spFollowDue(player.pos.x, player.pos.y, player.pos.z, n))
+    buildSceneProbe(player.pos.x, player.pos.y, player.pos.z);
 }
 
 // ---------- build 875: floor material painting (splat map) ----------
@@ -19871,7 +19965,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
 // the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
 // crushed red channel survives the restaging.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x403d39, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x3a454b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x403d39, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x3a454b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -19881,6 +19975,18 @@ function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.pos
 // compensated with sun/exposure that now read too hot. Such a level carries no colorV — and it must
 // not inherit the default's 2 through the Object.assign, or every legacy level would silently claim
 // to be authored in the corrected pipeline. No world block at all = a fresh level = colorV 2.
+// build 1370: baked ships ON (rendering audit: every indirect term passes through walls — 93% of the
+// light in a sealed room — and the one occlusion-aware term the engine has shipped off). A LEGACY level
+// with no baked key INHERITS the default true through the Object.assign below, and that is a decision,
+// not an accident: since build 1286 the bake is INDIRECT-ONLY crease darkening (it scales
+// indirectDiffuse/indirectSpecular by sky visibility and never touches the direct sun), which is exactly
+// the occlusion such a level lacks — the build-1149 precedent, where a correction that only applies where
+// the old term was wrong is not gated on authorship the way the colorV transfer switch had to be. The
+// inheriting population is also BOUNDED: applyWorldCfg forces worldCfg.baked to a boolean and
+// serializeLevel writes the whole worldCfg, so every level saved since build 1195 carries an explicit
+// baked — false included, for every creator who left the box unticked — and keeps its look byte-exactly.
+// Only pre-1195 levels inherit, and what they inherit is bounded crease shading in the indirect terms,
+// not a re-grade.
 function _worldFrom(w){
   const out = Object.assign({}, DEFAULT_WORLD, w || {});
   out.colorV = (w && w.colorV != null) ? (w.colorV | 0) : (w ? 1 : 2);
@@ -31867,7 +31973,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1368 · 2026-08-04';
+const BUILD_VERSION = 'build 1370 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -44202,6 +44308,9 @@ function renderEditorFields(){
       colorRow(b,'Sky top','skyZenith'); colorRow(b,'Horizon','skyHorizon'); colorRow(b,'Ground band','skyGround');
       slider(b,'Sky brightness','skyExp',0.05,2,0.05);
       slider(b,'Haze','skyTurb',0,1,0.05);
+      // build 1369: procedural clouds. Coverage 0 = the clean gradient every level had before this
+      // build; scale zooms the formation size. Edge softness follows Haze, so there is no third knob.
+      slider(b,'Clouds','skyCloud',0,1,0.05); slider(b,'Cloud scale','skyCloudScale',0.25,4,0.05);
       slider(b,'Sun size','skySunSize',0.3,4,0.1); slider(b,'Sun glow','skySunGlow',0,3,0.05);
       hint(b,'Sky brightness dims the DOME and the light it casts. For a truly dark scene also lower <b>Sun</b> (Lighting) and <b>Auto-exposure</b> (Camera) \u2014 or use the Night preset, which sets all of it. The day/night cycle animates on top of whatever you author here.','0 0 6px');
       hint(b,'<b>HDRI sky</b> \u2014 equirectangular panorama: <b>.hdr</b> (full HDR lighting) or .jpg/.png. Lights reflections too. Overrides the sky look above while set.','6px 0 4px');

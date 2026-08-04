@@ -27,7 +27,7 @@ const mul = (m, v) => [0, 1, 2].map((r) => m[r][0] * v[0] + m[r][1] * v[1] + m[r
 
 const fwdIn = mat3(src, 'const mat3 _ACESin');
 const fwdOut = mat3(src, 'const mat3 _ACESout');
-const probeGlsl = src.match(/build 1186: the SCENE reflection probe[\s\S]{0,6000}?fromCubemap/)[0];
+const probeGlsl = src.match(/---------- build 1186: the SCENE reflection probe ----------[\s\S]*?fromCubemap/)[0];   // build 1370: was a {0,6000} character budget (the recorded trap) that expired when the probe learned to follow the player; both ends anchor on named text, so the budget never did anything
 const invOut = mat3(probeGlsl, 'const mat3 outInv');
 const invIn = mat3(probeGlsl, 'const mat3 inInv');
 {

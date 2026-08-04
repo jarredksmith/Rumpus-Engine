@@ -82,7 +82,7 @@ const DIRS = new Function('Math', 'return ' + src.match(/\(\(\)=>\{ const out=\[
     'movers cannot hold a static bake and are skipped (they then ride the white-attribute invariant)');
   assert(/mat\.vertexColors = false;   \/\* build 1195/.test(src),
     'the primitive instancing batch strips vertexColors — its shared unit geometry has no colour attribute and would render black');
-  assert(/lut:'', lutAmt:1, baked:false,/.test(src), 'the flag ships in DEFAULT_WORLD and rides the whole-world serialization');
+  assert(/lut:'', lutAmt:1, baked:true,/.test(src), 'the flag ships in DEFAULT_WORLD (ON since build 1370) and rides the whole-world serialization');
   assert(/if\(worldCfg\.baked && typeof requestSceneBake==='function'\) requestSceneBake\(\);/.test(src),
     'applyWorldCfg kicks the bake on load — a shared level re-bakes deterministically wherever it opens');
   assert(/if\(!\(typeof worldCfg !== 'undefined' && worldCfg\.baked\)\)\{ if\(_bakeMats\.size\) unbakeScene\(\); return; \}/.test(tick),
