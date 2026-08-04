@@ -73,7 +73,8 @@ const src = gameSource();
 {
   const RM = Number(extractConst('REC_MAX', src));
   const mk = (vm, ads) => new Function('vm', 'ads',
-    'let _recPitch = 0, _recYaw = 0, _recSign = 1; const REC_MAX = ' + RM + ';\n' +
+    'let _recPitch = 0, _recYaw = 0, _recSign = 1, _fireFov = 0; const REC_MAX = ' + RM + ';\n' +
+    'const FIRE_FOV_SCALE = 85, FIRE_FOV_MAX = 6; const a11y = { shake: 1 };\n' +   // build 1373: the fire FOV punch now lives in _recKick; supplied so the rig runs (test-1373 owns proving it)
     'const activeViewMode = () => vm, adsBlend = ads;\n' +
     extractFunction('_recKick', src) +
     '\nreturn { kick: (w) => _recKick(w), get: () => ({ p: _recPitch, y: _recYaw }) };')(vm, ads);

@@ -30,8 +30,8 @@ const src = gameSource();
   assert(/const _hspd = Math\.hypot\(player\.vel\.x, player\.vel\.z\);/.test(cs), 'horizontal speed is read');
   assert(/const _penAdd = \(0\.012\*_mob \+ \(player\.onGround \? 0 : 0\.030\)\) \* \(1 - _ab\*0\.6\);/.test(cs),
     'airborne adds a spread FLOOR that zero-spread weapons pay too — the anti sprint-jump-sniping term');
-  assert(/return \(\+w\.spread\|\|0\) \* \(1 - _ab\*0\.8\) \* _penScale \+ _penAdd;/.test(cs),
-    'base spread keeps its ADS tightening, scaled and floored by movement');
+  assert(/return \(\+w\.spread\|\|0\) \* \(1 - _ab\*0\.8\) \* _penScale \+ _penAdd \+ _fireBloomNow\(w\);/.test(cs),
+    'base spread keeps its ADS tightening, scaled and floored by movement (build 1373: the sustained-fire bloom rides on top)');
   assert(/const spread = _curSpread\(w\);/.test(src), 'shoot() reads the SAME _curSpread the crosshair blooms from');
   // executable: replay the formula across the states that matter
   const S = (wspread, ads, hspd, grounded) => {

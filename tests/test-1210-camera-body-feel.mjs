@@ -52,8 +52,8 @@ const src = gameSource();
   assert(/_landDipV -= \(1\.6 \+ _imp\*7\.0\) \* \(\(typeof a11y!=='undefined'\)\?a11y\.sway:1\);/.test(src) && /if\(typeof SFX!=='undefined' && SFX\.land\) SFX\.land\(_imp\);/.test(src),
     'a real landing kicks the dip spring, and plays a thud scaled by impact');   /* build 1313 scales the IMPULSE by the player's sway setting; the 1.6 + _imp*7.0 tuning is unchanged */
   assert(/shake = Math\.max\(shake, _imp\*0\.22\*\(\(typeof a11y!=='undefined'\)\?a11y\.shake:1\)\);/.test(src), '...with a touch of impact shake');
-  assert(/const wantFov = hipFov \+ \(_zoomFov - hipFov\) \* adsBlend \+ _sprintFovCur;/.test(src),
-    'the sprint push is added to the ADS-blended FOV, not multiplied — and since 1222 it is the EASED value, so no single-frame condition can step the lens');
+  assert(/const wantFov = hipFov \+ \(_zoomFov - hipFov\) \* adsBlend \+ _sprintFovCur \+ _fireFov;/.test(src),
+    'the sprint push is added to the ADS-blended FOV, not multiplied — and since 1222 it is the EASED value, so no single-frame condition can step the lens (build 1373: the fire FOV punch rides the same sum)');
   assert(/_sprintFovCur \+= \(_sprintTarget - _sprintFovCur\) \* Math\.min\(1, dt\*8\);/.test(src),
     'the push eases toward its target (build 1222: the onGround flicker used to snap it 6 degrees in one frame — the reported stutter)');
   assert(!/player\.vel && player\.onGround && typeof SPEED/.test(src),

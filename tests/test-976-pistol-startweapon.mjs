@@ -13,7 +13,7 @@ assert(/name:'PISTOL'/.test(P), 'named PISTOL');
 assert(/auto:false/.test(P), 'SINGLE SHOT — semi-auto, one bullet per click');
 assert(/pellets:1/.test(P), 'fires a single precise round (not a spread)');
 assert(/magSize:12/.test(P) && /reserve:48/.test(P), 'a small magazine + modest reserve (a sidearm, not a primary)');
-assert(/dmg:26/.test(P), 'a solid per-shot hit — rewards accuracy over spray');
+assert(/dmg:20/.test(P), 'a solid per-shot hit — rewards accuracy over spray (build 1373: 26 -> 20, the sidearm no longer out-DPSes the starting rifle)');
 assert(/spread:0\.006/.test(P), 'tight spread (a precise sidearm)');
 assert(!/melee/.test(P) && !/scope/.test(P) && !/projectile/.test(P), 'a plain hitscan gun — no melee/scope/rocket flags');
 

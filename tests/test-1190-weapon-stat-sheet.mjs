@@ -51,7 +51,7 @@ const mk = () => {
   // build 1303 added `windup` alongside 1296's melee/reach, normalised the same way and for the same reason.
   assert(/const GUN_BASE = \{\}; for\(const _k in WEAPONS\)\{ const _w=WEAPONS\[_k\];/.test(src) &&
          /_w\.melee = _w\.melee \? 1 : 0; _w\.reach = _w\.reach \|\| 3\.4;/.test(src) &&
-         /GUN_BASE\[_k\]=\{ fireRate:_w\.fireRate, magSize:_w\.magSize, reserve0:_w\.reserve, reserveMax:_w\.reserveMax, spread:_w\.spread, reloadMs:_w\.reloadMs, pellets:_w\.pellets, melee:_w\.melee, reach:_w\.reach, windup:_w\.windup, kickV:_w\.kickV, kickH:_w\.kickH \}; _w\.reserve0=_w\.reserve; \}/.test(src),
+         /GUN_BASE\[_k\]=\{ fireRate:_w\.fireRate, magSize:_w\.magSize, reserve0:_w\.reserve, reserveMax:_w\.reserveMax, spread:_w\.spread, reloadMs:_w\.reloadMs, pellets:_w\.pellets, melee:_w\.melee, reach:_w\.reach, windup:_w\.windup, kickV:_w\.kickV, kickH:_w\.kickH, adsMs:_w\.adsMs \}; _w\.reserve0=_w\.reserve; \}/.test(src),
     'the baseline is captured from the live table before any override — retuning a factory gun retunes its baseline everywhere');
 }
 
