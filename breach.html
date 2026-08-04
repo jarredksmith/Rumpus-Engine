@@ -6761,7 +6761,7 @@ const _SHOT_LAYERS = {
   launcher:{ sub:[50,0.16,0.24], subA:0.012, body:{freq:110, type:'square', dur:0.20, vol:0.18, slideTo:45, attack:0.015}, crack:{dur:0.20, vol:0.22, filterFreq:800, type:'lowpass'}, tail:[0.50,0.13,550,160] },
 };
 const SFX = {
-  shoot(){ if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;
+  shoot(){ _duckMusic(); if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;   /* build 1374: a shot dips the music on EVERY path - sample, suppressed or synth (explode below does the same) */
     if(typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].suppressed){ tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass'}); return; }   // build 964: suppressed 'phut' (deliberately tail-less — that is what a suppressor is for)
     const L=_SHOT_LAYERS[curWep]||_SHOT_LAYERS.rifle;
     /* build 1363: per-shot variation. Each tonal layer jitters freq +-3% / vol +-10%, the tail delay
@@ -6822,7 +6822,7 @@ const SFX = {
   buy(){ tone({freq:660, type:'triangle', dur:0.08, vol:0.16, slideTo:990}); setTimeout(()=>tone({freq:990, type:'triangle', dur:0.1, vol:0.16, slideTo:1320}),80); },
   deny(){ tone({freq:160, type:'sawtooth', dur:0.12, vol:0.14, slideTo:90}); },
   throw(){ tone({freq:220, type:'sine', dur:0.18, vol:0.12, slideTo:380}); },
-  explode(at){ if(playSample(curSounds().explode, {at})) return; tone({freq:90, type:'sawtooth', dur:0.5, vol:0.25, slideTo:35, at}); noise({dur:0.45, vol:0.3, filterFreq:600, at}); },
+  explode(at){ _duckMusic(); if(playSample(curSounds().explode, {at})) return; tone({freq:90, type:'sawtooth', dur:0.5, vol:0.25, slideTo:35, at}); noise({dur:0.45, vol:0.3, filterFreq:600, at}); },
   power(){ tone({freq:440, type:'triangle', dur:0.1, vol:0.16, slideTo:660}); setTimeout(()=>tone({freq:660, type:'triangle', dur:0.1, vol:0.16, slideTo:880}),90); setTimeout(()=>tone({freq:880, type:'triangle', dur:0.14, vol:0.16, slideTo:1320}),180); },
   swap(){ tone({freq:300, type:'square', dur:0.05, vol:0.08, slideTo:500}); },
   /* ---- build 1363 (audio audit): UI SOUND, VICTORY AND DEFEAT ----
@@ -7004,6 +7004,8 @@ function preloadSignalSounds(){ if(typeof propModels==='undefined') return; for(
 
 // ---------- Audio buses + persisted volume settings (separate from level data) ----------
 let masterBus=null, sfxBus=null, musicBus=null;
+let _musicDuck=null, _sfxVerb=null, _sfxVerbGain=null;   /* build 1374: sidechain duck + reverb-send nodes, created in buildAudioBuses */
+const REVERB_WET=0.18, DUCK_TO=0.45, DUCK_TAU=0.12;   /* wet mix - duck floor - recovery time-constant (about 95 percent back at 3*tau = 0.36 s) */
 const AUDIO_KEY='breach_audio';
 // ---- UI theme (accent color + fonts) so players can make the interface their own ----
 const UI_THEME_KEY='breach_ui_theme';
@@ -7170,16 +7172,46 @@ function loadAudioSettings(){ try{ const j=JSON.parse(localStorage.getItem(AUDIO
 const audioSettings = loadAudioSettings();
 function saveAudioSettings(){ try{ localStorage.setItem(AUDIO_KEY, JSON.stringify(audioSettings)); }catch(e){} }
 function applyAudioSettings(){ if(!actx||!masterBus) return; const t=actx.currentTime; masterBus.gain.setTargetAtTime(audioSettings.muted?0:audioSettings.master, t, 0.02); const _editing=(typeof editorOpen!=='undefined' && editorOpen); musicBus.gain.setTargetAtTime(_editing?0:audioSettings.music, t, 0.02); sfxBus.gain.setTargetAtTime(audioSettings.sfx, t, 0.02); }   // music is forced silent while editing (no auto-play in the editor); SFX stays for preview buttons
+/* ---------- build 1374: the room, the duck, and the bed (audio review #5/#9) ----------
+   Every sound was bone dry (zero ConvolverNode in the file - an interior and an open arena were
+   sonically identical) and the music sat ~22 dB under the loudest SFX with nothing ducking it, so it
+   read as an unrelated backing track. Three pieces, all BUS-level so no call site changes:
+   - REVERB: a wet/dry SEND off sfxBus (sfxBus -> convolver -> wet gain -> master). The IR is
+     generated, never fetched: 2 s of exponentially decaying noise (-60 dB at the tail), each channel
+     rolled independently so the tail is stereo-decorrelated and reads as a room, not a mono echo.
+     No createConvolver (old browsers) -> the send is skipped cleanly and the dry path is byte-identical.
+   - SIDECHAIN: musicBus -> _musicDuck -> master. SFX.shoot and SFX.explode dip the duck to DUCK_TO and
+     it recovers exponentially via setTargetAtTime - audio-thread scheduling, so there is NO per-frame
+     JS work when silent (the 1182 rule for anything on a cadence, applied in the cheap direction).
+   - the AMBIENCE BED lives beside the music system below and is started/stopped with it. */
+function _makeReverbIR(){
+  const sr=actx.sampleRate, n=Math.floor(sr*2), buf=actx.createBuffer(2, n, sr);
+  for(let ch=0; ch<2; ch++){ const d=buf.getChannelData(ch); for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(0.001, i/n); }   /* pow(0.001, i/n) = exact exponential decay to -60 dB across the 2 s tail */
+  return buf;
+}
+function _duckMusic(){
+  if(!actx||!_musicDuck) return;
+  const t=actx.currentTime, g=_musicDuck.gain;
+  try{ g.cancelScheduledValues(t); g.setValueAtTime(DUCK_TO, t); g.setTargetAtTime(1, t, DUCK_TAU); }catch(e){}   /* cancel first: rapid fire re-dips instead of stacking schedules */
+}
 function buildAudioBuses(){ if(masterBus||!actx) return; masterBus=actx.createGain(); masterBus.connect(actx.destination); sfxBus=actx.createGain();
   /* build 1211: a gentle bus compressor — layered shots stack musically instead of clipping; every SFX
      already routes through sfxBus so no call site changes. Fallback to the plain connect if unavailable. */
   try{ const _cmp=actx.createDynamicsCompressor(); _cmp.threshold.value=-18; _cmp.knee.value=12; _cmp.ratio.value=4; _cmp.attack.value=0.003; _cmp.release.value=0.12; sfxBus.connect(_cmp); _cmp.connect(masterBus); }
   catch(e){ sfxBus.connect(masterBus); }
-  musicBus=actx.createGain(); musicBus.connect(masterBus); applyAudioSettings(); }
+  /* build 1374: the reverb SEND is a PARALLEL wet path, so the dry chain above is untouched and a
+     browser without ConvolverNode simply keeps the pre-1374 graph. Built once (masterBus guard). */
+  try{ if(actx.createConvolver){ _sfxVerb=actx.createConvolver(); _sfxVerb.buffer=_makeReverbIR(); _sfxVerbGain=actx.createGain(); _sfxVerbGain.gain.value=REVERB_WET; sfxBus.connect(_sfxVerb); _sfxVerb.connect(_sfxVerbGain); _sfxVerbGain.connect(masterBus); } }
+  catch(e){ _sfxVerb=null; _sfxVerbGain=null; }
+  musicBus=actx.createGain();
+  /* build 1374: the duck sits BETWEEN musicBus and master, so applyAudioSettings keeps sole ownership
+     of musicBus.gain (one writer per value - the recorded rule) and the dip composes under it. */
+  _musicDuck=actx.createGain(); musicBus.connect(_musicDuck); _musicDuck.connect(masterBus);
+  applyAudioSettings(); }
 function toggleMute(){ audioSettings.muted=!audioSettings.muted; applyAudioSettings(); saveAudioSettings(); return audioSettings.muted; }
 
 // ---------- Adaptive music (procedural; intensity tracks the live threat) ----------
-let _musicOn=false, _musicDrone=null, _musicTimer=null, _musicInt=0, _musicTarget=0, _musicStep=0, _musicSrc=null;
+let _musicOn=false, _musicDrone=null, _musicTimer=null, _musicInt=0, _musicTarget=0, _musicStep=0, _musicSrc=null, _musicCntr=null;
 // build 1074: a track chosen by a RULE, for this match only. null = "whatever the level authored"; a string
 // (including '') overrides it. Deliberately not written into audioSettings — a boss theme that plays during a
 // playtest must never end up saved as the level's music track.
@@ -7193,6 +7225,7 @@ function curMusicUrl(){ if(_lgMusic!=null) return _lgMusic; return (typeof NET!=
 function startMusic(){
   if(!actx||!musicBus||_musicOn) return;
   if(typeof editorOpen!=='undefined' && editorOpen) return;   // no level music while editing
+  _startAmbience();   /* build 1374: the bed starts with the music system on BOTH paths (custom track or proc score); the editor gate above means it can never start while editing */
   const murl=curMusicUrl();
   if(murl){
     _musicOn=true;
@@ -7211,30 +7244,92 @@ function _startProcMusic(){
   if(!actx||!musicBus) return; _musicOn=true; _musicInt=0; _musicStep=0;
   const freqs=[MUSIC_ROOT, MUSIC_ROOT*1.5, MUSIC_ROOT*2];
   _musicDrone=freqs.map((f,i)=>{ const o=actx.createOscillator(); o.type=(i===2?'triangle':'sine'); o.frequency.value=f; const g=actx.createGain(); g.gain.value=0; o.connect(g).connect(musicBus); o.start(); return {o,g}; });   // starts silent — swelled by intensity each step (no constant drone)
+  /* build 1374: the COUNTER-DRONE - a fourth continuous voice a fifth above the octave (MUSIC_ROOT*3),
+     started silent like the drone stack and gated in by the step fn only past intensity 0.75, so the
+     top register is reserved for real pressure. Its entry eases at a step boundary like every layer. */
+  _musicCntr=(function(){ const o=actx.createOscillator(); o.type='triangle'; o.frequency.value=MUSIC_ROOT*3; const g=actx.createGain(); g.gain.value=0; o.connect(g).connect(musicBus); o.start(); return {o,g}; })();
   _musicTimer=setInterval(_musicStepFn, 260);
 }
 function _musicStepFn(){
   if(!actx||!_musicOn) return;
   _musicInt += (_musicTarget-_musicInt)*0.12;   // smooth toward the target each step
   const inten=_musicInt, t=actx.currentTime, beat=_musicStep%4;
-  if(_musicDrone){ const dg=[0.045,0.022,0.018]; for(let i=0;i<_musicDrone.length;i++){ try{ _musicDrone[i].g.gain.setTargetAtTime(dg[i]*inten, t, 0.25); }catch(e){} } }   // drone tracks threat instead of holding a constant tone
-  if(inten>0.04){
+  /* build 1374 (audio review #7): the score is LAYERS, entered on the existing 260 ms step boundary.
+     - drone: ALWAYS-ON above a 0.30 floor (the world between events was silent), still tracking threat
+     - bass: enters past 0.3 (the old gate was 0.04, i.e. effectively always on - nothing ever ENTERED)
+     - hi-hat: 0.5 (was 0.35) - counter-drone: 0.75. Element gains are ~8 dB up toward parity with the
+       SFX (0.045->0.11, 0.06->0.15, 0.04->0.10); musicBus itself stays at the authored 0.6 default and
+       the 1374 duck is what keeps gunfire on top. */
+  if(_musicDrone){ const dg=[0.11,0.055,0.045]; for(let i=0;i<_musicDrone.length;i++){ try{ _musicDrone[i].g.gain.setTargetAtTime(dg[i]*(0.30+0.70*inten), t, 0.25); }catch(e){} } }
+  if(_musicCntr){ try{ _musicCntr.g.gain.setTargetAtTime(inten>0.75 ? 0.05*inten : 0.0001, t, 0.25); }catch(e){} }   /* the fifth-above voice fades in only under real pressure */
+  if(inten>0.3){
     const bf=[MUSIC_ROOT*0.5, MUSIC_ROOT*0.5, MUSIC_ROOT*0.6667, MUSIC_ROOT*0.5][beat];
     const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.value=bf;
-    const g=actx.createGain(), v=0.06*inten;
+    const g=actx.createGain(), v=0.15*inten;
     g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(v,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+0.22);
     const filt=actx.createBiquadFilter(); filt.type='lowpass'; filt.frequency.value=350+700*inten;
     o.connect(filt).connect(g).connect(musicBus); o.start(t); o.stop(t+0.24);
-    if(inten>0.35 && (beat===1||beat===3)){   // hi-hat tick on the off-beats once it gets tense
+    if(inten>0.5 && (beat===1||beat===3)){   // hi-hat tick on the off-beats once it gets tense
       const n=Math.floor(actx.sampleRate*0.04), buf=actx.createBuffer(1,n,actx.sampleRate), d=buf.getChannelData(0);
       for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
       const src=actx.createBufferSource(); src.buffer=buf; const hf=actx.createBiquadFilter(); hf.type='highpass'; hf.frequency.value=6000;
-      const hg=actx.createGain(); hg.gain.value=0.04*inten; src.connect(hf).connect(hg).connect(musicBus); src.start(t);
+      const hg=actx.createGain(); hg.gain.value=0.10*inten; src.connect(hf).connect(hg).connect(musicBus); src.start(t);
     }
   }
   _musicStep++;
 }
-function stopMusic(){ if(_musicTimer){ clearInterval(_musicTimer); _musicTimer=null; } if(_musicSrc){ try{ _musicSrc.stop(); }catch(e){} _musicSrc=null; } if(_musicDrone&&actx){ const t=actx.currentTime; for(const nd of _musicDrone){ try{ nd.g.gain.setTargetAtTime(0.0001,t,0.1); nd.o.stop(t+0.4); }catch(e){} } } _musicDrone=null; _musicOn=false; _musicInt=0; _musicTarget=0; }
+function stopMusic(){ if(_musicTimer){ clearInterval(_musicTimer); _musicTimer=null; } if(_musicSrc){ try{ _musicSrc.stop(); }catch(e){} _musicSrc=null; } if(_musicDrone&&actx){ const t=actx.currentTime; for(const nd of _musicDrone){ try{ nd.g.gain.setTargetAtTime(0.0001,t,0.1); nd.o.stop(t+0.4); }catch(e){} } } if(_musicCntr&&actx){ try{ _musicCntr.g.gain.setTargetAtTime(0.0001,actx.currentTime,0.1); _musicCntr.o.stop(actx.currentTime+0.4); }catch(e){} } _musicDrone=null; _musicCntr=null; _musicOn=false; _musicInt=0; _musicTarget=0; _stopAmbience(); }
+
+// ---------- build 1374: the AMBIENCE BED (audio review #9 - the world was silent between events) ----------
+// One looping filtered-noise layer at a whisper plus a sparse one-shot scheduler: a distant rumble or a
+// thin far-off whistle every 6-18 s, positioned through _spatialOut at ~30 m in a random direction so the
+// panner, the 1/d rolloff and the 1363 distance lowpass all apply for free. Lifecycle: startMusic and
+// stopMusic own it, so every path that silences the music (win, death, editor open, a track switch)
+// silences the bed with no second list of call sites. The LOOP rides musicBus - so the applyAudioSettings
+// editor mute, the music volume slider and the 1374 duck all cover it - while the one-shots ride the SFX
+// path (they are world sounds), which the editor does NOT mute, so their fire is explicitly gated on
+// gameOn and not-editing. All modulation is audio-thread (an LFO into the filter frequency): zero JS per
+// frame. gameOn and camera are declared far below - both are read only from timer callbacks, which can
+// never run during module evaluation, so there is no TDZ here (the 1331 boot-order rule was checked).
+let _ambOn=false, _ambSrc=null, _ambLfo=null, _ambGain=null, _ambFilt=null, _ambTimer=null, _ambBuf=null;
+const AMB_GAIN=0.02, AMB_LP_BASE=650, AMB_LP_DEPTH=200, AMB_LFO_HZ=0.06, AMB_MIN_MS=6000, AMB_SPAN_MS=12000, AMB_DIST=30;   /* the lowpass wanders 450-850 Hz (inside the 400-900 band) on a ~17 s LFO */
+function _startAmbience(){
+  if(!actx||!musicBus||_ambOn) return;
+  _ambOn=true;
+  try{
+    if(!_ambBuf){ const sr=actx.sampleRate, n=Math.floor(sr*3); _ambBuf=actx.createBuffer(1, n, sr); const d=_ambBuf.getChannelData(0); for(let i=0;i<n;i++) d[i]=Math.random()*2-1; }   /* cached: a level music switch restarts the bed and must not re-roll half a megabyte */
+    _ambSrc=actx.createBufferSource(); _ambSrc.buffer=_ambBuf; _ambSrc.loop=true;
+    _ambFilt=actx.createBiquadFilter(); _ambFilt.type='lowpass'; _ambFilt.frequency.value=AMB_LP_BASE;
+    _ambGain=actx.createGain(); _ambGain.gain.value=AMB_GAIN;
+    _ambSrc.connect(_ambFilt); _ambFilt.connect(_ambGain); _ambGain.connect(musicBus);
+    _ambSrc.start();
+    _ambLfo=actx.createOscillator(); _ambLfo.frequency.value=AMB_LFO_HZ;
+    const lg=actx.createGain(); lg.gain.value=AMB_LP_DEPTH; _ambLfo.connect(lg); lg.connect(_ambFilt.frequency); _ambLfo.start();   /* the slow wander - audio-thread only */
+  }catch(e){}
+  _ambArm();
+}
+function _ambArm(){ if(_ambTimer) clearTimeout(_ambTimer); _ambTimer=setTimeout(_ambOneShot, AMB_MIN_MS+Math.random()*AMB_SPAN_MS); }
+function _ambOneShot(){
+  _ambTimer=null;
+  if(!_ambOn) return;   /* stopped: never re-arm */
+  _ambArm();            /* re-arm FIRST - a gated skip must not end the schedule */
+  if(!(typeof gameOn!=='undefined' && gameOn)) return;         /* menu or between runs: the world is not live */
+  if(typeof editorOpen!=='undefined' && editorOpen) return;    /* the SFX path is not muted while editing, so gate here */
+  try{
+    const th=Math.random()*Math.PI*2, c=(typeof camera!=='undefined' && camera && camera.position) ? camera.position : null;
+    const at=c ? { x:c.x+AMB_DIST*Math.sin(th), y:c.y, z:c.z+AMB_DIST*Math.cos(th) } : null;
+    if(Math.random()<0.5) noise({dur:1.4, vol:0.06, filterFreq:210, type:'lowpass', at});             /* distant rumble */
+    else tone({freq:840+Math.random()*240, type:'sine', dur:1.6, vol:0.024, slideTo:560, attack:0.4, at});   /* thin far-off whistle */
+  }catch(e){}
+}
+function _stopAmbience(){
+  _ambOn=false;
+  if(_ambTimer){ clearTimeout(_ambTimer); _ambTimer=null; }
+  if(_ambSrc){ try{ _ambSrc.stop(); }catch(e){} _ambSrc=null; }
+  if(_ambLfo){ try{ _ambLfo.stop(); }catch(e){} _ambLfo=null; }
+  if(_ambGain){ try{ _ambGain.disconnect(); }catch(e){} _ambGain=null; }
+  _ambFilt=null;
+}
 
 // ---------- Core setup ----------
 const scene = new THREE.Scene();
@@ -32047,7 +32142,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1373 · 2026-08-04';
+const BUILD_VERSION = 'build 1374 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

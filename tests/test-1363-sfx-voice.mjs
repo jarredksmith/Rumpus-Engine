@@ -71,10 +71,10 @@ const layersTable = src.match(/const _SHOT_LAYERS = \{[\s\S]*?\n\};/)[0];
 const jitLine   = src.match(/const _sndJit = [^\n]+\n/)[0];
 const stateLine = src.match(/let _shotSndAt = [^\n]+\n/)[0];
 function shootRig(rnd, times){
-  const shootSrc = src.slice(src.indexOf('shoot(){ if(playSample'), src.indexOf('enemyShot(at)'));
+  const shootSrc = src.slice(src.indexOf('shoot(){ _duckMusic(); if(playSample'), src.indexOf('enemyShot(at)'));
   const body =
     'const Math=Object.create(globalThis.Math); if(rnd!=null) Math.random=()=>rnd;\n' +
-    'const playSample=()=>false, curSounds=()=>({}), WEAPONS={rifle:{}}, curWep="rifle";\n' +
+    'const playSample=()=>false, curSounds=()=>({}), WEAPONS={rifle:{}}, curWep="rifle", _duckMusic=()=>{};\n' +
     'const calls=[];\n' +
     'const tone=(o)=>calls.push({k:"tone",freq:o.freq,vol:o.vol,dur:o.dur,attack:o.attack,_at:_dly});\n' +
     'const noise=(o)=>calls.push({k:"noise",vol:o.vol,dur:o.dur,filterFreq:o.filterFreq,_at:_dly});\n' +
