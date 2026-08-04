@@ -7905,3 +7905,36 @@ all untouched and pinned.
 Two pins moved (1210, 91), both quoting the old literal with their intent intact: 1210's subject is that the
 lean is the base of the roll in both branches, and 91's is that a shotgun kicks hardest and an SMG least —
 both asserted directly now instead of by quotation.
+
+## The library reported saves it never checked (build 1359 — editor review, the only CRITICAL)
+
+Two silent data-loss paths in build 1262's level library, both found by reading the store calls:
+
+**1. Nothing verified the write.** `_libPut` fired both stores and discarded both answers; `libSaveAs` and
+`libCommit` never looked either, so the caller flashed `Saved as "Warehouse"` whether or not a byte landed.
+The INDEX is a tiny localStorage write that succeeds when the multi-megabyte payload does not — which is
+exactly what hid it: **the library LISTS a level that does not exist**, and Open, days later, says *"that
+level could not be read"*. Executed against failing stores:
+
+```
+both stores work   -> "Saved as Warehouse" · index 1 · payload written
+BOTH stores fail   -> "Saved as Warehouse" · index 1 · NOTHING WAS WRITTEN
+```
+
+**The author already knew to do this.** `saveLevel()` verifies its own write with a read-back and reports
+*"Autosave failed — storage full"*. The library did not inherit it.
+
+It stays **optimistic** on purpose — the callers are synchronous and the flow is unchanged. What the
+verification buys is that a failed write **rolls its own index row back out** and says so. A row pointing at
+nothing is worse than no row, because `libOpen` loads it over live work and only reports the read failure
+afterwards.
+
+**2. `_libCurrent` was module-level and never persisted.** So a reload — a crash, a restore, the next
+morning — detached Save from the entry you had been working in, with no signal but a badge disappearing
+from a row. Two hours of edits then went to the anonymous autosave slot while the named entry held
+yesterday's level, and clicking Open loaded that *over* them. It is stored now, and `_libTrack` is the
+**one writer** of both the variable and the key, so they cannot disagree. Build 1262's cross-tab guard
+still holds and now clears the persisted id too.
+
+Two pins moved (1262's rig needed the two new functions lifted from source rather than restated; 1322's
+quoted `_libCurrent=id` and asserts the tracker now).

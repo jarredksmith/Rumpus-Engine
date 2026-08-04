@@ -82,7 +82,10 @@ const src = gameSource();
   assert(/return;\n  \}\n  _libOpenNow\(id, cb\);/.test(open), 'and a clean cancel — the level is untouched');
   // the work moved wholesale, so no caller has to know
   const now = extractFunction('_libOpenNow');
-  assert(/restoreLevel\(lvl\)/.test(now) && /_libCurrent=id/.test(now), 'the actual open is intact, just moved');
+  // build 1359: the tracked entry is persisted now, so every writer goes through _libTrack — the
+  // memory and the storage cannot disagree. What this pin is about (the open itself moved wholesale
+  // into _libOpenNow) is unchanged.
+  assert(/restoreLevel\(lvl\)/.test(now) && /_libTrack\(id\)/.test(now), 'the actual open is intact, just moved');
   assert(!/restoreLevel/.test(open), 'libOpen itself no longer restores — it is the gate');
   assert(/every future entry point inherits it/.test(src), 'with the reason it is in libOpen and not the call site');
   assert(/a prompt on every open would be trained away in a week/.test(src),

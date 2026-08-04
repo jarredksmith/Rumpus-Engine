@@ -31603,7 +31603,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1358 · 2026-08-04';
+const BUILD_VERSION = 'build 1359 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -40649,7 +40649,7 @@ function _autoSaveStatus(txt){ try{ const el = editorEl && editorEl.querySelecto
 // autosave timer and the beforeunload handler would happily write the old level straight back — so this
 // flag stops every save path the moment New is confirmed.
 let _newLevelPending = false;
-function _libStopTracking(){ if(typeof _libCurrent!=='undefined') _libCurrent=null; }   /* build 1262: New / a foreign load leaves the library entry alone */
+function _libStopTracking(){ if(typeof _libTrack==='function') _libTrack(null); }   /* build 1262: New / a foreign load leaves the library entry alone */
 // build 1254: THE REMIX TRAP, closed. The gallery invites "open in editor to remix", share links load
 // straight over the working level, and there is ONE save slot — so before this build, opening someone
 // else's level and touching anything meant the 20s autosave overwrote your only save with THEIR level.
@@ -40721,7 +40721,16 @@ function saveLevel(){
 // would expect. Clearing it (New level, or opening something foreign) means Save goes back to
 // touching only the active slot — the pre-1262 behaviour, which is the right default.
 const LVLIB_KEY='breach_levels_v1', LVLIB_MAX=40;
-let _libCurrent=null;   // the library entry the active slot is tracking, or null
+// build 1359: PERSISTED. It was module-level, so a reload — a crash, a restore, the next morning — silently
+// detached Save from the entry you had been working in, and the only signal was a badge disappearing from a
+// row. Two hours of edits then went to the anonymous autosave slot while "Warehouse" held yesterday's level,
+// and clicking Open loaded that over them.
+const LVLIB_CUR='breach_lib_cur';
+let _libCurrent=(()=>{ try{ return localStorage.getItem(LVLIB_CUR)||null; }catch(e){ return null; } })();
+function _libTrack(id){   /* the ONE writer, so the memory and the storage can never disagree */
+  _libCurrent = id || null;
+  try{ if(_libCurrent) localStorage.setItem(LVLIB_CUR, _libCurrent); else localStorage.removeItem(LVLIB_CUR); }catch(e){}
+}
 function _libIndex(){ try{ const j=JSON.parse(localStorage.getItem(LVLIB_KEY)||'[]'); return Array.isArray(j)?j.filter(e=>e&&e.id):[]; }catch(e){ return []; } }
 function _libWriteIndex(list){ try{ localStorage.setItem(LVLIB_KEY, JSON.stringify(list.slice(0,LVLIB_MAX))); return true; }catch(e){ return false; } }
 function _libName(n, list){
@@ -40731,9 +40740,34 @@ function _libName(n, list){
   for(let i=2;i<200;i++){ const c=n+' '+i; if(!taken.has(c.toLowerCase())) return c; }   // never silently overwrite a namesake
   return n+' '+Date.now();
 }
+// ---- build 1359: THE LIBRARY REPORTED SAVES IT NEVER CHECKED -----------------------------------------
+// `_libPut` fired both stores and discarded both answers, and libSaveAs/libCommit never looked either — so
+// the caller flashed `Saved as "Warehouse"` whether or not a single byte landed. The INDEX is a tiny
+// localStorage write that succeeds when the multi-megabyte payload does not, which is exactly what hid it:
+// the library would LIST a level that does not exist, and Open days later says "that level could not be
+// read". The author already knew to do this — `saveLevel()` verifies its own write with a read-back and
+// reports "Autosave failed — storage full". Build 1262's library simply did not inherit it.
+//
+// It stays OPTIMISTIC on purpose: the callers are synchronous and the UI flow is unchanged. What the
+// verification buys is that a FAILED write rolls its own index row back out and says so, rather than
+// leaving a phantom entry that outlives the session and overwrites real work when opened.
 function _libPut(id, str){
-  if(typeof _levelDB==='function') _levelDBPutKey('lvl:'+id, str);
-  try{ localStorage.setItem('breach_lvl_'+id, str); }catch(e){}   // best-effort mirror; IndexedDB is the real home
+  const mirror = (()=>{ try{ localStorage.setItem('breach_lvl_'+id, str); return true; }catch(e){ return false; } })();
+  const idb = (typeof _levelDBPutKey==='function') ? _levelDBPutKey('lvl:'+id, str) : Promise.resolve(false);
+  return idb.then(ok=>!!(ok || mirror)).catch(()=>mirror);
+}
+/* Roll the entry back out of the index if neither store took it, and tell the creator. A row pointing at
+   nothing is worse than no row: `libOpen` loads it over live work and reports a read failure afterwards. */
+function _libVerify(id, put, what){
+  return put.then(ok=>{
+    if(ok) return true;
+    const list=_libIndex().filter(e=>e.id!==id); _libWriteIndex(list);
+    if(_libCurrent===id) _libCurrent=null;
+    try{ localStorage.removeItem(LVLIB_CUR); }catch(e){}
+    if(typeof flashToast==='function') flashToast('\u26a0 '+(what||'Save')+' FAILED \u2014 storage is full. The level was NOT saved.');
+    if(typeof renderEditorFields==='function') renderEditorFields();   /* the phantom row leaves the panel now, not on the next unrelated redraw */
+    return false;
+  });
 }
 function _libGet(id){
   return (typeof _levelDBGetKey==='function' ? _levelDBGetKey('lvl:'+id) : Promise.resolve(null))
@@ -40752,7 +40786,7 @@ function libSaveAs(name){
   const e={ id, name:_libName(name, list), t:Date.now() };
   list.unshift(e);
   if(!_libWriteIndex(list)) return { err:'Could not write the library index (storage full).' };
-  _libPut(id, str); _libCurrent=id;
+  _libVerify(id, _libPut(id, str), 'Save as new'); _libTrack(id);
   if(typeof _foreignLevel!=='undefined') _foreignLevel=false;   // it is yours now, by name
   if(typeof _levelDirty!=='undefined') _levelDirty=false;
   return e;
@@ -40762,8 +40796,8 @@ function libCommit(){
   if(!_libCurrent) return false;
   let str; try{ str=JSON.stringify(serializeLevel()); }catch(e){ return false; }
   const list=_libIndex(); const e=list.find(x=>x.id===_libCurrent);
-  if(!e){ _libCurrent=null; return false; }   // deleted from another tab: stop tracking rather than resurrect it
-  e.t=Date.now(); _libWriteIndex(list); _libPut(_libCurrent, str);
+  if(!e){ _libTrack(null); return false; }   // deleted from another tab: stop tracking rather than resurrect it
+  e.t=Date.now(); _libWriteIndex(list); _libVerify(_libCurrent, _libPut(_libCurrent, str), 'Save');
   return true;
 }
 // build 1322 (editor audit 4.11): "libOpen does not ask before replacing unsaved work; it relies on 1254's
@@ -40786,7 +40820,7 @@ function _libOpenNow(id, cb){
     if(typeof markForeignLevel==='function'){ const e=_libIndex().find(x=>x.id===id); markForeignLevel('"'+((e&&e.name)||'a level')+'"'); }
     try{ restoreLevel(lvl); }catch(err){ if(typeof flashToast==='function') flashToast('That level failed to load'); if(cb) cb(false); return; }
     // it came from YOUR library, so it is not foreign — but 1254's rescue of unsaved work still ran
-    _libCurrent=id; if(typeof _foreignLevel!=='undefined') _foreignLevel=false;
+    _libTrack(id); if(typeof _foreignLevel!=='undefined') _foreignLevel=false;
     if(typeof _levelDirty!=='undefined') _levelDirty=false;
     if(typeof saveLevel==='function') saveLevel();   // the active slot follows, so a reload lands here
     if(cb) cb(true);
