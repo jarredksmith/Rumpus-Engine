@@ -94,10 +94,15 @@ const T = await import('three');
 
 // ---------------------------------------------------- only the near cascade, nothing else ----
 {
-  assert(/UNROLLED_LOOP_INDEX == 0 \? getShadowPCSS\(/.test(src),
+  // build 1381 made the call a CONSTRUCTION from one named needle (so the guard and the replace cannot
+  // check different strings), so this asserts the built expression rather than a literal. Same intent.
+  const _c = src.match(/const _PCSS_CALL = '([^']+)';/);
+  assert(_c, 'the call site is named once');
+  const _built = '( UNROLLED_LOOP_INDEX == 0 ? getShadowPCSS' + _c[1].slice(9) + ' : ' + _c[1] + ' )';
+  assert(/UNROLLED_LOOP_INDEX == 0 \? getShadowPCSS\(/.test(_built),
     'ONLY light 0 gets PCSS: the far cascade keeps three\'s getShadow (its texel is 4x coarser by design ' +
     'and it covers geometry where a penumbra is under a pixel)');
-  assert(/: getShadow\( directionalShadowMap\[ i \]/.test(src), '...and the other index still calls it');
+  assert(/: getShadow\( directionalShadowMap\[ i \]/.test(_built), '...and the other index still calls it');
   // A spot light's shadow camera is PERSPECTIVE, so the depth-to-world scale derived below is simply wrong
   // for it. Point lights use getPointShadow and are untouched by construction.
   const patched = src.match(/THREE\.ShaderChunk\.lights_fragment_begin = THREE\.ShaderChunk\.lights_fragment_begin\.replace\([\s\S]*?\);/g) || [];
@@ -150,8 +155,7 @@ const T = await import('three');
   // a finer map means more texels for the same world penumbra
   assert(scale(259, texel / 2) > scale(259, texel), 'and halving the texel doubles the count, as a texel measure must');
 
-  assert(/_prStepI === 0/.test(src.slice(src.indexOf('_pcssP.x = _on'), src.indexOf('_pcssP.x = _on') + 400)) ||
-         /_on = \(typeof _prStepI === 'undefined' \|\| _prStepI === 0\)/.test(src),
+  assert(/_on = _pcssOk && \(typeof _prStepI === 'undefined' \|\| _prStepI === 0\)/.test(src),
     'it sheds below the top rung — build 1350\'s rule that a perf ADD needs a way out, and here shedding is ' +
     'exactly free because 0 makes the function return three\'s own getShadow');
   assert(/_dr > 0 && texel > 0/.test(src), 'a degenerate camera or map turns it off rather than producing Infinity');

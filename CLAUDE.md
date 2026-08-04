@@ -967,6 +967,34 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The shadow patches are verified to land (build 1381)
+
+Build 1380 shipped three `.replace` calls on three's own chunks **unguarded**, and its test checked their
+anchors against PRISTINE three. By the time they run, `lights_fragment_begin` has already been rewritten
+TWICE — build 1364's visible-guard and build 1185's cascade select — so the test could pass while the
+engine's own replace missed. That is this file's most-repeated failure shape, and 1364 had already written
+the answer down four builds earlier.
+
+**HALF is worse than none**, which is why the two chunks are now committed together behind one flag:
+
+| what lands | what happens |
+|---|---|
+| function, not call site | PCSS is dead code. Silent — every material compiles and the frame renders |
+| call site, not function | `getShadowPCSS` is UNDEFINED and **every lit material in the engine** fails to compile |
+
+The needle is named ONCE (`_PCSS_CALL`) and used by the guard and by both ternary branches, because a guard
+that checks a different string from the one the replace uses is not a guard. An anchor that has become
+AMBIGUOUS counts as missing too — two matches would patch both sites and is not "landed". A failure warns
+by name and says what to look for, and `_fitSunShadow` refuses to derive a scale, so `pcssP.x` can never be
+non-zero for a shader with no `getShadowPCSS` in it.
+
+**The build found a live syntax error in itself while being written.** The call is built as
+`'getShadowPCSS' + _PCSS_CALL.slice(n)`, and the first draft used `n = 10` where `'getShadow'.length` is
+**9** — which drops the `(` and emits `getShadowPCSS directionalShadowMap[ i ], ...`, a GLSL syntax error
+in a chunk included by every lit material. It was caught by PRINTING the generated string instead of
+assuming it, and `test-1381` now derives `n` from the name's own length and checks the result's parens
+balance. Two pins moved in 1380, both quoting the literal call text that became a construction.
+
 ## A shadow's softness is the distance to what cast it (build 1380)
 
 Every shadow in the engine had the SAME edge softness whatever cast it, because PCF samples a fixed radius

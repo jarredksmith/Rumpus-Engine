@@ -9202,7 +9202,7 @@ function _fitSunShadow(cam){
   // exactly free, because 0 makes getShadowPCSS return three's own getShadow.
   if(typeof _pcssP !== 'undefined'){
     const _sc = moon.shadow.camera, _dr = (_sc ? (_sc.far - _sc.near) : 0);
-    const _on = (typeof _prStepI === 'undefined' || _prStepI === 0) && _dr > 0 && texel > 0;
+    const _on = _pcssOk && (typeof _prStepI === 'undefined' || _prStepI === 0) && _dr > 0 && texel > 0;
     _pcssP.x = _on ? (_dr * SUN_ANGLE_TAN) / texel : 0;
   }
   _fitL.copy(moon.position).normalize();                       // light direction (it orbits the origin)
@@ -9377,12 +9377,35 @@ for(const _clk in THREE.ShaderLib){ const _clu = THREE.ShaderLib[_clk].uniforms;
 //     a Vogel spiral (build 1247's bokeh disc) needs no array at all.
 //   * The scale is derived on the CPU, where the shadow camera's extent, depth range and map size all
 //     live, so the shader carries arithmetic rather than a second copy of the shadow fit.
+let _pcssOk = true;
+// Named ONCE: a guard that checks a different string from the one the replace uses is not a guard.
+const _PCSS_CALL = 'getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] )';
 const _pcssP = { x:0, y:6, z:22 };   /* x: penumbra texels per unit of normalised depth gap (0 = OFF, exactly) - y: blocker search radius, texels - z: penumbra ceiling, texels */
 // The tangent of the sun's apparent angular RADIUS. The real sun is ~0.0047 (0.27 degrees), which at this
 // engine's scale gives a penumbra under a texel for anything but a very tall occluder — i.e. it would
 // measure as no change at all. 0.020 is ~4x life size, which is the ordinary film/game exaggeration and
 // is what makes the effect visible at the distances a level is actually played at.
 const SUN_ANGLE_TAN = 0.020;
+// build 1381: THE THREE REPLACES ARE VERIFIED TO LAND, ALL-OR-NOTHING.
+// 1380 shipped them unguarded, and the test checked their anchors against PRISTINE three — but by the time
+// this runs, `lights_fragment_begin` has already been rewritten TWICE (build 1364's visible-guard and
+// build 1185's cascade select). A three upgrade, or either of those patches growing, silently misses the
+// anchor and PCSS quietly never runs: the frame renders, every material compiles, nothing errors.
+// Worse than silent is HALF: if the function lands and the call site does not, PCSS is dead code; if the
+// call site lands and the function does not, `getShadowPCSS` is undefined and EVERY LIT MATERIAL IN THE
+// ENGINE fails to compile. So both chunks are built into locals first and only committed together.
+// This is build 1364's own precedent, applied to the build that sits directly beneath it.
+{
+  const _s0 = THREE.ShaderChunk.shadowmap_pars_fragment, _l0 = THREE.ShaderChunk.lights_fragment_begin;
+  const _need = [[_s0, '#ifdef USE_SHADOWMAP'], [_s0, '\tvec2 cubeToUV'], [_l0, _PCSS_CALL]];
+  let _miss = 0;
+  for(const [txt, needle] of _need) if(typeof txt !== 'string' || txt.split(needle).length - 1 !== 1) _miss++;
+  if(_miss){
+    if(typeof console !== 'undefined') console.warn('[RUMPUS] PCSS patch: ' + _miss + '/3 anchors missing in three\u2019s shadow chunks \u2014 contact-hardening shadows are OFF and the chunks are UNTOUCHED (did a three upgrade move getShadow?)');
+    _pcssOk = false;
+  }
+}
+if(_pcssOk){
 THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment
   .replace('#ifdef USE_SHADOWMAP', 'uniform vec3 pcssP;\n#ifdef USE_SHADOWMAP')
   // appended AFTER getShadow, because it calls both getShadow and texture2DCompare, and GLSL has no
@@ -9417,8 +9440,9 @@ THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fra
     '\tvec2 cubeToUV'].join('\n'));
 // Only light 0 — the near cascade. UNROLLED_LOOP_INDEX is three's own macro inside the unrolled loop.
 THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(
-  'getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] )',
-  '( UNROLLED_LOOP_INDEX == 0 ? getShadowPCSS( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) )');
+  _PCSS_CALL,
+  '( UNROLLED_LOOP_INDEX == 0 ? getShadowPCSS' + _PCSS_CALL.slice(9) + ' : ' + _PCSS_CALL + ' )');   /* 9 = len('getShadow'), keeping the '(' — slicing 10 drops it and emits a GLSL syntax error that takes down every lit material */
+}
 // 1181's lesson again: ShaderLib merged UniformsLib at module load, so the VALUE has to be added to every
 // already-merged lit entry or the uniform sits at GL zero — which here means PCSS silently never runs.
 THREE.UniformsLib.lights.pcssP = { value:_pcssP };
@@ -32548,7 +32572,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1380 · 2026-08-04';
+const BUILD_VERSION = 'build 1381 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
