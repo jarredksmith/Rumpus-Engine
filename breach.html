@@ -382,6 +382,17 @@
   #editor button:hover { background: #1a2831; border-color: rgba(var(--accent-rgb),0.6); color: #eafff7; }
   #editor input[type=text], #editor input[type=search], #editor input[type=number], #editor select, #editor textarea { background: #0b1317; border: 1px solid #223039; border-radius: 4px; color: #dff0e9; padding: 4px 7px; font: 500 11.5px var(--ui-font); }
   #editor input[type=text]:focus, #editor input[type=search]:focus, #editor input[type=number]:focus, #editor select:focus, #editor textarea:focus { outline: none; border-color: rgba(var(--accent-rgb),0.65); }
+  /* build 1347: A VISIBLE FOCUS RING. Before this, the ONLY :focus rule in ~2,000 lines of stylesheet was
+     the one above, and it REMOVES the outline — the classic anti-pattern: someone disliked the browser's
+     default ring, deleted it, and never drew a replacement. That line is fine on its own terms because it
+     swaps in an accent border, so a focused text field IS legible; every other control had nothing at all.
+     Measured in the live editor: of 86 clickable, visible controls, 59 were keyboard-reachable and not one
+     of them showed where the focus was.
+     :focus-visible, not :focus, is what makes this shippable — the browser only matches it for keyboard
+     (and other non-pointer) focus, so clicking a button does not leave a ring stuck on it. That behaviour
+     is exactly why people deleted outlines in the first place. */
+  :focus-visible { outline: 2px solid rgba(var(--accent-rgb),0.95); outline-offset: 2px; border-radius: 3px; }
+  #editor .edMode:focus-visible, #editor button:focus-visible, .a11yBtn:focus-visible { outline: 2px solid rgba(var(--accent-rgb),0.95); outline-offset: 1px; }
   #editor .valnum { font-family: ui-monospace, Menlo, monospace; }
   #editor .hint { color: #67837a; font-size: 10.5px; margin: 2px 0 6px; }
   #editor .hint b { color: #9fc0b5; }
@@ -31110,7 +31121,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1346 · 2026-08-03';
+const BUILD_VERSION = 'build 1347 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31342,6 +31353,79 @@ function saveA11y(){ try{ localStorage.setItem(A11Y_KEY, JSON.stringify(a11y)); 
 // loadA11y clamps every one of those keys to 0..1, which is exactly right for a multiplier of an effect
 // and exactly wrong for a scale that has to reach 1.75. Squeezing it in would have meant a special case
 // inside a loop whose whole point is that it has none.
+// ---- build 1347: THE KEYBOARD REACHES THE EDITOR --------------------------------------------------
+// Build 1333/1334 closed three of the platform audit's six accessibility items and left `role=` 0 and
+// `tabindex` 0 on the list. Measured live rather than counted statically, because a static count says
+// nothing about what a keyboard can DO:
+//
+//     in play          2 clickable, 2 reachable      0 unreachable
+//     pause menu      15 clickable, 15 reachable     0 unreachable    <- real <button>s throughout
+//     EDITOR          86 clickable, 59 reachable    27 UNREACHABLE (31%)
+//
+// So the HUD and the pause menu were already fine and needed nothing. The editor was not: 19 of those 27
+// are DIVs with an `.onclick`, and they include the ENTIRE MODE RAIL — Build / World / Player / Enemies /
+// Gameplay / Weapons / HUD / Save / Settings. A keyboard user could not change editor tab at all. (The
+// other 8 are `disabled` buttons, which are correctly unreachable and are not a defect.)
+//
+// THE FIX IS ONE PREDICATE, NOT 500 EDITS. There are ~500 `.onclick` assignments in this file and panels
+// are torn down and rebuilt constantly (renderEditorFields), so stamping attributes at each construction
+// site would be a list that drifts — the defect this file records under builds 1152, 1266, 1320 and 1326.
+// Instead `_a11yWire(root)` asks a QUESTION of the DOM — "is this clickable and not already focusable?" —
+// and a MutationObserver re-asks it of anything added later. A control added by a future build inherits it.
+//
+// AND IT COSTS NOTHING UNTIL SOMEBODY USES A KEYBOARD. renderEditorFields rebuilds ~3,000 nodes and build
+// 1322 measured it at 8-27 ms; an observer walking every one of those on every rebuild would be a real
+// regression for the overwhelming majority who are using a mouse. So the whole thing arms on the FIRST TAB
+// PRESS: keydown fires before the browser performs its focus move, so stamping there puts the elements in
+// the tab order in time for that very keystroke. A mouse-only session never runs any of it.
+let _a11yKbd = false, _a11yObs = null;
+const _A11Y_NATIVE = { BUTTON:1, A:1, INPUT:1, SELECT:1, TEXTAREA:1, SUMMARY:1 };
+function _a11yWire(root){
+  if(!root || !root.querySelectorAll) return 0;
+  let n = 0;
+  const all = root.querySelectorAll('*');
+  for(let i = -1; i < all.length; i++){
+    const el = (i < 0) ? root : all[i];
+    if(!el || el.nodeType !== 1) continue;
+    if(typeof el.onclick !== 'function') continue;          /* not a control */
+    if(_A11Y_NATIVE[el.tagName]) continue;                  /* focusable for free */
+    if(el.hasAttribute('tabindex')) continue;               /* already handled, or deliberately opted out */
+    if(el.tagName === 'CANVAS') continue;                   /* the viewport is not a button */
+    el.setAttribute('tabindex', '0');
+    /* role=button and not role=tab for the mode rail: a tablist owes the screen reader aria-selected,
+       aria-controls and arrow-key navigation, and a half-implemented tablist reads worse than an honest
+       list of buttons. The rail is a set of things you press; say that. */
+    if(!el.hasAttribute('role')) el.setAttribute('role', 'button');
+    el.classList.add('a11yBtn');
+    n++;
+  }
+  return n;
+}
+function _a11yArm(){
+  if(_a11yKbd) return;
+  _a11yKbd = true;
+  _a11yWire(document.body);
+  try{
+    _a11yObs = new MutationObserver(muts=>{
+      for(const m of muts) for(const node of m.addedNodes) if(node.nodeType === 1) _a11yWire(node);
+    });
+    _a11yObs.observe(document.body, { childList:true, subtree:true });
+  }catch(e){}
+}
+addEventListener('keydown', (e)=>{
+  if(e.key === 'Tab'){ _a11yArm(); return; }
+  /* Enter and Space activate a stamped control, which is what role=button PROMISES a screen reader. A
+     native <button> does this itself; a div never will. Guarded on the role so this cannot fire for a
+     text field, a select, or the game's own keybindings — Space is JUMP, and stealing it while the player
+     is in the world would be a far worse bug than the one being fixed. */
+  if(e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  const el = document.activeElement;
+  if(!el || el === document.body) return;
+  if(_A11Y_NATIVE[el.tagName]) return;
+  if(el.getAttribute && el.getAttribute('role') === 'button' && typeof el.onclick === 'function'){
+    e.preventDefault(); e.stopPropagation(); el.click();
+  }
+}, true);
 const UI_SCALE_MIN = 0.75, UI_SCALE_MAX = 1.75, UI_SCALE_KEY = 'breach_uiscale';
 let uiScale = 1;
 try{ const _us = parseFloat(localStorage.getItem(UI_SCALE_KEY)); if(isFinite(_us)) uiScale = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, _us)); }catch(e){}

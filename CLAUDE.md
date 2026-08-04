@@ -967,6 +967,66 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The keyboard reaches the editor (build 1347 — the accessibility census, 4/6)
+
+Build 1334 left the census at three-for-six and named what remained: `role=`, `tabindex`, and a
+key-rebinding review. The static counts were `role=` **0**, `tabindex` **0**, and exactly **one** `:focus`
+rule in ~2,000 lines of stylesheet — which *removes* the outline.
+
+**A static count says nothing about what a keyboard can do**, so it was measured live. A `<button>` is
+focusable for free; a `<div>` with an `.onclick` never is:
+
+```
+in play       2 clickable,  2 reachable    0 unreachable
+pause menu   15 clickable, 15 reachable    0 unreachable   <- already fine, and untouched
+EDITOR       86 clickable, 59 reachable   27 UNREACHABLE (31%)
+```
+
+**The HUD and the pause menu needed nothing** — they are built from real `<button>` elements throughout.
+The editor was the gap, and 19 of those 27 are DIVs carrying an `.onclick` that include the **entire mode
+rail**: Build / World / Player / Enemies / Gameplay / Weapons / HUD / Save / Settings. **A keyboard user
+could not change editor tab at all.** (The other 8 are `disabled` buttons — correctly unreachable, not a
+defect, and the measurement says so rather than inflating the number.)
+
+### One predicate, not 500 construction sites
+
+There are ~500 `.onclick` assignments in this file and `renderEditorFields` tears the panel down and
+rebuilds it constantly, so stamping attributes at each site would be a hand-kept list that drifts — the
+defect recorded under builds 1152, 1266, 1320 and 1326. `_a11yWire(root)` asks the DOM a **question**
+("clickable, and not already focusable?") and a `MutationObserver` re-asks it of anything added later, so a
+control added by a future build inherits it.
+
+**And it costs nothing until somebody uses a keyboard.** Build 1322 measured the panel rebuild at 8–27 ms
+over ~3,000 nodes; an always-on observer walking all of that would be a real regression for the majority
+who use a mouse. So the whole mechanism arms on the **first Tab press** — and `keydown` fires *before* the
+browser performs its focus move, so the elements are in the tab order in time for the very keystroke that
+armed them.
+
+**`role="button"`, deliberately not a tablist.** A tablist owes the screen reader `aria-selected`,
+`aria-controls` and arrow-key navigation, and a half-implemented one reads worse than an honest list of
+buttons. The rail is a set of things you press; say that.
+
+**Space is JUMP in this game**, so Enter/Space activation is gated on `role="button"` and an existing
+handler, and returns immediately for native controls — double-firing a real `<button>`, or stealing Space
+while the player is in the world, would each be worse than the bug being fixed.
+
+### The focus ring, and why there wasn't one
+
+The single pre-existing `:focus` rule is `outline: none` on text fields — the classic anti-pattern, someone
+disliked the browser default and never drew a replacement. That rule is actually fine on its own terms (it
+swaps in an accent border, so a focused *field* was always legible); every other control had nothing.
+
+`:focus-visible`, not `:focus`, is what makes the replacement shippable: the browser matches it only for
+keyboard focus, so clicking a button does not leave a ring stuck on it — which is exactly why outlines get
+deleted in the first place. Verified live on the World tab: `matches(':focus-visible') true`,
+`outline: solid 2px rgba(56, 245, 181, 0.95)`.
+
+**Measured after, in the same live editor, after one real Tab keypress: 86 clickable, 78 reachable, 8
+unreachable — and the 8 are exactly the disabled buttons.** A tab opened *after* arming inherits it (the
+observer), and Enter on the focused World tab switched the editor mode.
+
+Still open from the census: the key-rebinding review.
+
 ## The corner leak is one texel wide (build 1346)
 
 Build 1345 halved the leak and the reporter said it looked unchanged. That is fair — 156 pixels of a bright
