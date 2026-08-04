@@ -9910,6 +9910,13 @@ let _skyMesh = null, _skyMat = null, _skyDomeRT = null, _skyDomePMREM = null, _s
 // and `typeof x` does NOT guard a temporal dead zone (build 1127 turned the sky black learning that).
 let _spCube=null, _spCube2=null, _spCam=null, _spCam2=null, _spScene2=null, _spInvMat=null, _spPM=null, _spRT=null;
 let _spAt=-1e9, _spSkyKey='', _spQueue=[], _spSkyScale=1;
+// build 1370: the probe FOLLOWS THE PLAYER. Reflections and the image-based ambient were captured at
+// the SPAWN only, so they were wrong everywhere else in a big level. _spPos is the point the LIVE probe
+// was captured from (every successful capture records it); the follow re-shoot fires when the player
+// stands more than SP_FOLLOW_DIST from it, at most once per SP_FOLLOW_MS, and never while the deploy
+// shots (_spQueue) are still pending.
+let _spPos = null;
+const SP_FOLLOW_DIST = 40, SP_FOLLOW_MS = 5000;
 function _skyUniforms(){
   const P = _skyP(), S = _sunDir();
   return { uZen:{value:new THREE.Vector3(...P.zenith)}, uHor:{value:new THREE.Vector3(...P.horizon)},
@@ -10103,7 +10110,7 @@ function applySky(){
 // hemisphere is the level's REAL ground radiance, not the sky model's brighter painted band) and the
 // weapon reads blue-steel (95,101,94 -> 75,82,80 region mean) — its top rail now carries the sky and its
 // sides the ground, which is what reflecting the world means for the one metal object always on screen.
-function buildSceneProbe(){
+function buildSceneProbe(px, py, pz){
   try{
     if(typeof IS_COARSE!=='undefined' && IS_COARSE) return false;                 /* phones keep the sky-only probe */
     if(!THREE.PMREMGenerator || !THREE.WebGLCubeRenderTarget) return false;
@@ -10136,8 +10143,18 @@ function buildSceneProbe(){
           '}'].join('\n') });
       const bm = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), _spInvMat); bm.frustumCulled = false; _spScene2.add(bm);
     }
-    const gy = (typeof terrainHeightAt==='function') ? terrainHeightAt(playerSpawn.x, playerSpawn.z) : 0;
-    _spCam.position.set(playerSpawn.x, gy + (playerSpawn.y||0) + 1.7, playerSpawn.z);
+    /* build 1370: the probe follows. An explicit position wins — the follow trigger passes the player
+       eye, and player.pos.y IS the eye. With none, a re-shoot refreshes IN PLACE at _spPos, the point
+       the live probe was captured from: the day-cycle rebuild must not snap a followed probe back to
+       spawn, or a moving player under a day cycle would thrash two capture points at six scene renders
+       plus a PMREM each. Only a fresh deploy captures from the spawn eye — requestSceneProbe clears
+       _spPos for exactly that. */
+    if(px != null){ _spCam.position.set(+px, +py, +pz); }
+    else if(_spPos){ _spCam.position.set(_spPos.x, _spPos.y, _spPos.z); }
+    else {
+      const gy = (typeof terrainHeightAt==='function') ? terrainHeightAt(playerSpawn.x, playerSpawn.z) : 0;
+      _spCam.position.set(playerSpawn.x, gy + (playerSpawn.y||0) + 1.7, playerSpawn.z);
+    }
     const prev = renderer.getRenderTarget();
     _spSkyScale = Math.max(0.05, Math.min(2, (typeof worldCfg!=='undefined' && worldCfg.sky!=null) ? +worldCfg.sky : 0.55));
     try{ _spCam.update(renderer, scene); } finally { _spSkyScale = 1; }             /* shadow maps already built; autoUpdate=false means no extra passes */
@@ -10151,6 +10168,8 @@ function buildSceneProbe(){
     const out = _spPM.fromCubemap(_spCube2.texture);
     if(_spRT && _spRT.dispose) _spRT.dispose();
     _spRT = out; _spSkyKey = _skyKey; _spAt = (typeof performance!=='undefined') ? performance.now() : 0;
+    if(!_spPos) _spPos = { x:0, y:0, z:0 };   /* build 1370: remember the capture point — the follow ring is centred on it */
+    _spPos.x = _spCam.position.x; _spPos.y = _spCam.position.y; _spPos.z = _spCam.position.z;
     if(typeof worldCfg!=='undefined' && worldCfg.skyMode==='sky' && !((typeof _skyHdriUrl!=='undefined') && _skyHdriUrl) && scene.environment)
       scene.environment = _spRT.texture;                                          /* live now; applySky keeps it current — and an authored HDRI always outranks it */
     return true;
@@ -10158,13 +10177,28 @@ function buildSceneProbe(){
 }
 // Two shots per deploy: one after the level settles, one after slow assets (models, textures) land. The
 // day cycle moves the sky continuously, so a changed sky key rebuilds at most every 3 seconds.
-function requestSceneProbe(){ const n = (typeof performance!=='undefined') ? performance.now() : 0; _spQueue = [n+1200, n+9000]; }
+function requestSceneProbe(){ const n = (typeof performance!=='undefined') ? performance.now() : 0; _spQueue = [n+1200, n+9000]; _spPos = null; /* build 1370: a fresh deploy captures from the spawn again */ }
+// build 1370: should the probe re-shoot from the point (px,py,pz) at time n? A pure decision so the
+// test can drive it with a fake clock. Never during the deploy window — the +1.2s/+9s shots own the
+// capture while _spQueue is pending; never before a first capture exists; at most one re-shoot per
+// SP_FOLLOW_MS; and only past SP_FOLLOW_DIST (3D) from the point the live probe was captured at.
+function _spFollowDue(px, py, pz, n){
+  if(_spQueue.length) return false;
+  if(!_spRT || !_spPos) return false;
+  if(n - _spAt < SP_FOLLOW_MS) return false;
+  const dx = px - _spPos.x, dy = py - _spPos.y, dz = pz - _spPos.z;
+  return (dx*dx + dy*dy + dz*dz) > SP_FOLLOW_DIST*SP_FOLLOW_DIST;
+}
 function _spTick(){
   if(typeof IS_COARSE!=='undefined' && IS_COARSE) return;
   if(typeof worldCfg!=='undefined' && (worldCfg.skyMode!=='sky' || ((typeof _skyHdriUrl!=='undefined') && _skyHdriUrl))) return;
   const n = (typeof performance!=='undefined') ? performance.now() : 0;
   if(_spQueue.length && n >= _spQueue[0]){ _spQueue.shift(); buildSceneProbe(); return; }
-  if(_spRT && _skyKey !== _spSkyKey && n - _spAt > 3000) buildSceneProbe();
+  if(_spRT && _skyKey !== _spSkyKey && n - _spAt > 3000){ buildSceneProbe(); return; }   /* the day-cycle refresh re-captures in place — see buildSceneProbe */
+  // build 1370: the follow trigger. The capture path is buildSceneProbe itself — the build-1186
+  // ACES-inverse / PMREM / sky-scale pipeline, never a fork.
+  if(typeof player!=='undefined' && player && player.pos && _spFollowDue(player.pos.x, player.pos.y, player.pos.z, n))
+    buildSceneProbe(player.pos.x, player.pos.y, player.pos.z);
 }
 
 // ---------- build 875: floor material painting (splat map) ----------
@@ -19931,7 +19965,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
 // the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
 // crushed red channel survives the restaging.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x403d39, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x3a454b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x403d39, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x3a454b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -19941,6 +19975,18 @@ function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.pos
 // compensated with sun/exposure that now read too hot. Such a level carries no colorV — and it must
 // not inherit the default's 2 through the Object.assign, or every legacy level would silently claim
 // to be authored in the corrected pipeline. No world block at all = a fresh level = colorV 2.
+// build 1370: baked ships ON (rendering audit: every indirect term passes through walls — 93% of the
+// light in a sealed room — and the one occlusion-aware term the engine has shipped off). A LEGACY level
+// with no baked key INHERITS the default true through the Object.assign below, and that is a decision,
+// not an accident: since build 1286 the bake is INDIRECT-ONLY crease darkening (it scales
+// indirectDiffuse/indirectSpecular by sky visibility and never touches the direct sun), which is exactly
+// the occlusion such a level lacks — the build-1149 precedent, where a correction that only applies where
+// the old term was wrong is not gated on authorship the way the colorV transfer switch had to be. The
+// inheriting population is also BOUNDED: applyWorldCfg forces worldCfg.baked to a boolean and
+// serializeLevel writes the whole worldCfg, so every level saved since build 1195 carries an explicit
+// baked — false included, for every creator who left the box unticked — and keeps its look byte-exactly.
+// Only pre-1195 levels inherit, and what they inherit is bounded crease shading in the indirect terms,
+// not a re-grade.
 function _worldFrom(w){
   const out = Object.assign({}, DEFAULT_WORLD, w || {});
   out.colorV = (w && w.colorV != null) ? (w.colorV | 0) : (w ? 1 : 2);
@@ -31927,7 +31973,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1369 · 2026-08-04';
+const BUILD_VERSION = 'build 1370 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
