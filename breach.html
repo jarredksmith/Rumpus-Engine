@@ -9740,6 +9740,14 @@ function _procSet(repeat){
 // crate. Every caller therefore passes the surface's world SPAN and the tiling is derived from it,
 // quantised to a short ladder so the clone cache stays a handful of entries rather than one per prop.
 const PROC_TILE_M = 2.2;                                  // metres per tile of grain
+// build 1378: the same idea one layer up. A surface texture's repeat count is not a size — build 1139
+// established that for the grain and the auto-tiling above it never got the message: the floor's repeat
+// was `ARENA/4` and the wall's `ARENA/8`, both ratios of the arena's own extent, so the metres covered
+// by one tile GREW with the level and a wall 140 m wide by 8 m tall took the SAME repeat on both axes
+// (a 17:1 stretch on the one texture a creator can put on the boundary). Auto tiling is now a physical
+// span divided by this, per axis, so a tile is the same size in metres in every level and on every face.
+const SURF_TILE_M = 4;                                    // metres per tile of authored surface texture
+function _surfRepeat(spanM){ return Math.max(1, Math.round((+spanM || 1) / SURF_TILE_M)); }
 const _PROC_STEPS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128];
 function _procRepeatFor(span){
   const want = Math.max(1, (+span || 1) / PROC_TILE_M);
@@ -9747,7 +9755,11 @@ function _procRepeatFor(span){
   for(const v of _PROC_STEPS) if(Math.abs(v - want) < Math.abs(rep - want)) rep = v;
   return rep;
 }
-function applyProcSurface(mat, span){
+// build 1379: `alb` opts a material into the albedo term as well. floorMat and wallMat deliberately do
+// NOT pass it — they carry a real authored albedo since 1378, and two detail systems on one surface is
+// double grain (1145's rule). A primitive has no albedo of any kind, which is what this is for.
+function applyProcSurface(mat, span, alb){
+  if(alb && albedoDetailWanted(mat)){ applyObjDetail(mat, _albDetailFreq(span), true); mat.userData._odSpan = true; }
   const set = _procSet(_procRepeatFor(span)); if(!set || !mat) return mat;
   for(const k of PROC_SLOTS) if(!mat[k]) mat[k] = set[k];   // never displace a texture a creator set
   mat.userData.procSurf = set;   // remembered, because assigning it once is not enough — see below
@@ -9758,7 +9770,20 @@ function applyProcSurface(mat, span){
 // swapped, so a creator's own map, normal or roughness is never touched.
 function retileProcSurface(root, span){
   const set = _procSet(_procRepeatFor(span)); if(!set || !root) return;
-  const one = (m)=>{ if(!m || !m.userData) return; const cur = m.userData.procSurf; if(!cur || cur === set) return;
+  const one = (m)=>{ if(!m || !m.userData) return;
+    // build 1379: the albedo field's density is a physical size too, so a scaled prop re-derives it. It
+    // writes the material's own value AND the live uniform if one exists — the uniform is created at first
+    // compile, which is usually AFTER this runs. No recompile either way. It sits before the procSurf
+    // early-out because a material can carry the albedo term without ever holding one of our textures.
+    // `_odSpan` keeps it off the MODEL path: an imported mesh's frequency is normalised by its own
+    // bounding box (1145), and overwriting that with a scale-derived one would be wrong for it.
+    if(m.userData._odSpan){
+      const _f = _albDetailFreq(span);
+      m.userData._odFreq = _f;
+      const u = m.userData._odU;
+      if(u && u.uOdFreq) u.uOdFreq.value = _f;
+    }
+    const cur = m.userData.procSurf; if(!cur || cur === set) return;
     let hit = false;
     for(const k of PROC_SLOTS) if(m[k] === cur[k]){ m[k] = set[k]; hit = true; }
     m.userData.procSurf = set; if(hit) m.needsUpdate = true; };
@@ -9795,6 +9820,32 @@ function _propProcSpan(obj){ const s = obj && obj.scale; return s ? Math.max(Mat
 const OBJ_DETAIL_CYCLES = 34.0;  // noise cycles across a mesh's longest local axis
 const OBJ_DETAIL_ROUGH = 0.30;   // +/- fraction it swings the authored roughness
 const OBJ_DETAIL_BUMP = 0.35;    // normal perturbation, in gradient units
+// build 1379: THE TERM 1139 COULD NOT HAVE. That build gave the detail set relief and roughness and
+// deliberately left ALBEDO out, for a reason that was correct about textures: "an albedo map cannot be
+// exposure-neutral. It multiplies the material colour, so it only darkens — neutrality would need values
+// above 255." Every word of that is true of a MAP. It is not true of a shader term: a multiplier centred
+// on 1.0 can go above it, so `mix(1-a, 1+a, field)` leaves the mean albedo exactly where the creator set
+// it while breaking the flat facet that reads as plastic. A prop is the thing you actually look at, and
+// until this build every one of them was one colour edge to edge however well the frame was lit.
+// 0.30 is the KNEE of a measured sweep, not a taste call. Paused scene, one variable, control returning:
+//     0.16 -> 1.014x unique colours   0.30 -> 1.026x   0.45 -> 1.035x   (control back at 1.001x)
+// so 0.16 -> 0.30 nearly doubles the gain and 0.30 -> 0.45 adds a third as much again for 50% more swing.
+// The frame MEAN moved -0.023% / -0.048% / -0.079% across that range while the control drifted -0.093%
+// on its own — i.e. the exposure movement this term causes is smaller than the scene's own settling at
+// every amplitude, which is the neutrality claim measured on real pixels rather than argued.
+const OBJ_DETAIL_ALB = 0.30;     // +/- fraction it swings the authored albedo, centred on 1.0
+// Cycles per WORLD METRE for a primitive. The object-space field is locked to the mesh (1145's reason:
+// world-space noise SWIMS as a prop is carried), but its DENSITY has to be a physical size or a 22 m deck
+// and a 1 m crate read as two differently-zoomed photographs of one material — which is exactly the fault
+// build 1139 recorded for UV tiling, one layer down. retileProcSurface already owns the world span, so
+// the frequency rides the same hook that keeps the grain honest through a gizmo scale.
+// 0.9 is a PIXEL-SUBTENSE argument, not a taste one. The broad octave's period is 1/this, and a period
+// smaller than a pixel averages straight back to the flat colour it was supposed to break up: at 5.5 the
+// period is 18 cm, which at a 40 m gameplay distance across a 78-degree frame is well under one pixel, so
+// the term measured as NOTHING at exactly the range a level is played at while costing a full noise
+// evaluation per fragment. At 0.9 the broad octave is ~1.1 m — the scale of an architectural panel, which
+// is what reads across a room — and the field's second octave (3.1x, ~36 cm) is what carries it up close.
+const ALB_DETAIL_PER_M = 0.9;
 // One value-noise field, hashed rather than sampled: no texture, no UVs, no upload.
 const _OBJ_NOISE_GLSL = [
   'float _odHash(vec3 p){ p = fract(p*0.3183099 + vec3(0.71,0.113,0.419)); p *= 17.0;',
@@ -9814,34 +9865,60 @@ function objDetailWanted(geo, mat){
   if(mat.map || mat.normalMap || mat.roughnessMap || mat.metalnessMap) return false;   // authored maps win, always
   return true;
 }
-function applyObjDetail(mat, freq){
+// `albOnly` patches the ALBEDO alone, for a surface whose relief the texture path already serves (a
+// primitive, or an imported mesh that has UVs but no map). The two modes compile two programs, never one
+// per material — see the cache key below.
+function applyObjDetail(mat, freq, albOnly){
   if(!mat || mat.userData._objDetail) return mat;
-  mat.userData._objDetail = true;
-  const f = (freq > 0) ? freq : OBJ_DETAIL_CYCLES;
+  mat.userData._objDetail = albOnly ? 'alb' : 'full';
+  // build 1379: the frequency is kept on the MATERIAL, and the uniform reads it at compile time. It
+  // cannot live only in `shader.uniforms`, because onBeforeCompile does not run until the material is
+  // first RENDERED — and retileProcSurface sets a prop's real span at SPAWN, before any of that. Probed:
+  // all 57 of the stock level's prop materials were correctly patched and every one still carried the
+  // frequency for a 1 m object, including a 16 m deck — so the grain was one blob every three metres on
+  // exactly the surfaces it was meant to be visible on. A uniform written before its shader exists is a
+  // write to nothing, and it fails silently, which is the only reason this needed a probe to find.
+  mat.userData._odFreq = (freq > 0) ? freq : OBJ_DETAIL_CYCLES;
   mat.onBeforeCompile = (shader)=>{
-    shader.uniforms.uOdFreq = { value: f };
+    shader.uniforms.uOdFreq = { value: mat.userData._odFreq };
     shader.uniforms.uOdRough = { value: OBJ_DETAIL_ROUGH };
     shader.uniforms.uOdBump = { value: OBJ_DETAIL_BUMP };
+    shader.uniforms.uOdAlb = { value: OBJ_DETAIL_ALB };
+    // kept so a later resize can move the density without recompiling anything (retileProcSurface)
+    mat.userData._odU = shader.uniforms;
     shader.vertexShader = 'varying vec3 vOdPos;\n' + shader.vertexShader
       .replace('#include <begin_vertex>', 'vOdPos = position;\n#include <begin_vertex>');
     // _odP and _odBase are shader-globals on purpose: three's meshphysical fragment shader runs
     // roughnessmap_fragment BEFORE normal_fragment_maps, so the field is evaluated once in the first
     // patch and reused by the second — four noise evaluations per pixel instead of five.
-    shader.fragmentShader = 'varying vec3 vOdPos;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump;\n'
+    shader.fragmentShader = 'varying vec3 vOdPos;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump; uniform float uOdAlb;\n'
       + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase;\n' + shader.fragmentShader
-      // Roughness first: this is the term that breaks a swept highlight into a surface. roughnessFactor
-      // is declared by the chunk, so the patch has to come AFTER it.
-      .replace('#include <roughnessmap_fragment>', [
-        '#include <roughnessmap_fragment>',
+      // build 1379: the field is evaluated HERE now, at map_fragment, because that is the earliest chunk
+      // where diffuseColor is final and it runs BEFORE roughnessmap_fragment — so the albedo, roughness
+      // and normal patches all share ONE evaluation instead of the roughness patch owning it. three's
+      // chunk order is what makes that safe and `test-1379` asserts it against the real build: get it
+      // backwards and `_odBase` is read before it is written, which is a silent garbage perturbation
+      // rather than an error (build 1145 pinned the same ordering for the same reason).
+      .replace('#include <map_fragment>', [
+        '#include <map_fragment>',
         '_odP = vOdPos * uOdFreq;',
         '_odBase = _odField(_odP);',
+        // EXPOSURE-NEUTRAL BY CONSTRUCTION: the field's mean is 0.5, so the multiplier's mean is exactly
+        // 1.0 and the surface's mean albedo — the thing every level's lighting was tuned against — does
+        // not move. That is the whole reason this can be retrofitted onto colours creators already chose.
+        'diffuseColor.rgb *= mix(1.0 - uOdAlb, 1.0 + uOdAlb, _odBase);',
+      ].join('\n'))
+      // Roughness next: this is the term that breaks a swept highlight into a surface. roughnessFactor
+      // is declared by the chunk, so the patch has to come AFTER it.
+      .replace('#include <roughnessmap_fragment>', albOnly ? '#include <roughnessmap_fragment>' : [
+        '#include <roughnessmap_fragment>',
         'roughnessFactor = clamp(roughnessFactor * mix(1.0 - uOdRough, 1.0 + uOdRough, _odBase), 0.03, 1.0);',
       ].join('\n'))
       // Then the normal. A low-poly facet is ONE flat shading value across its whole area, which is the
       // single loudest "this is an untextured model" tell; a few degrees of micro-relief is what breaks
       // it. The gradient is projected onto the tangent plane so the perturbation cannot tilt the normal
       // away from the surface it belongs to.
-      .replace('#include <normal_fragment_maps>', [
+      .replace('#include <normal_fragment_maps>', albOnly ? '#include <normal_fragment_maps>' : [
         '#include <normal_fragment_maps>',
         '{ float _odE = 0.6;',
         '  vec3 _odG = vec3(_odField(_odP + vec3(_odE,0.0,0.0)) - _odBase,',
@@ -9854,7 +9931,7 @@ function applyObjDetail(mat, freq){
   };
   // Every patched material produces the SAME program, so they can all share one — but three keys its
   // program cache on the material's own signature and would otherwise compile a variant per material.
-  mat.customProgramCacheKey = ()=> 'objDetail';
+  mat.customProgramCacheKey = ()=> (albOnly ? 'objDetailA' : 'objDetail');
   mat.needsUpdate = true;
   return mat;
 }
@@ -9876,13 +9953,29 @@ function _objDetailFreq(geo, cycles){
 // frequency (whichever patched first), because the frequency is baked into that material's uniform. That
 // is correct for the common case — a GLB's materials are per-look, and its parts are of similar scale —
 // and cloning per mesh to avoid it would multiply programs for no visible gain.
+// build 1379: the albedo term wants a DIFFERENT question from the relief term. Relief is refused when the
+// mesh has UVs, because the texture path serves it there — but the texture path carries no albedo
+// (PROC_SLOTS is normalMap + roughnessMap and 1139's note says why), so a UV-having mesh with no map is
+// exactly as flat as a UV-less one. A creator's own `map` always wins, as it does everywhere else here.
+function albedoDetailWanted(mat){
+  return !!(mat && mat.isMeshStandardMaterial && !mat.map && !mat.userData._objDetail);
+}
+// The frequency a primitive should use for the albedo field, from the world span its grain is measured
+// against. The local box is ~1 unit, so cycles across the mesh = cycles per metre x metres.
+function _albDetailFreq(span){ return ALB_DETAIL_PER_M * Math.max(0.05, Math.min(200, +span || 1)); }
 function installObjDetail(root, cycles){
   if(!root || !root.traverse) return 0;
   let n = 0;
   root.traverse(o=>{ if(!o.isMesh || !o.material) return;
     const ms = Array.isArray(o.material) ? o.material : [o.material];
     const f = _objDetailFreq(o.geometry, cycles);
-    for(const m of ms) if(objDetailWanted(o.geometry, m)){ applyObjDetail(m, f); n++; } });
+    for(const m of ms){
+      if(objDetailWanted(o.geometry, m)){ applyObjDetail(m, f); n++; }
+      // build 1379: a UV-HAVING mesh with no map gets the albedo term alone. Low-poly packs ship these
+      // constantly — unwrapped, textureless, one flat colour per part — and they were the one case the
+      // 1145 detail pass looked at and deliberately walked past.
+      else if(albedoDetailWanted(m)){ applyObjDetail(m, f, true); n++; }
+    } });
   return n;
 }
 // The detail set is a FALLBACK, not a one-shot assignment, and getting that wrong is why the first cut
@@ -14661,7 +14754,7 @@ const PRIM_DEFAULT_COLOR = 0x2a3a42;
 // been touched got its metalness (0.35) — the same object, lit two different ways depending on whether a
 // slider had been dragged. Two sites, one derivation.
 function primitiveMat(){ return applyProcSurface(new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:.65, metalness:.35,
-  envMapIntensity:_envInten(0.35), emissive:0x000000, emissiveIntensity:0 }), 1); }
+  envMapIntensity:_envInten(0.35), emissive:0x000000, emissiveIntensity:0 }), 1, true); }
 // Which primitives accept material edits (the pillar is a pre-built composite, so it's excluded).
 const SHAPE_PRIMS = { box:1, sphere:1, cylinder:1, cone:1 };
 function isShapePrimitive(src){ return SHAPE_PRIMS.hasOwnProperty(src); }
@@ -20245,7 +20338,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
 // the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
 // crushed red channel survives the restaging.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x403d39, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x3a454b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -20598,7 +20691,7 @@ function applyWorldCfg(){
     floorMat.envMapIntensity = _envInten(floorMat.metalness, worldCfg.skyBright);   // build 1144: metal drives REFLECTION strength, but never below the floor every surface needs to see the sky at all
     floorMat.specularIntensity = floorMat.metalness;   // metal 0 => no dielectric sun-sheen (truly matte)
     if(+worldCfg.floorTile>0 && !(+worldCfg.floorTileU>0) && !(+worldCfg.floorTileV>0)){ worldCfg.floorTileU=worldCfg.floorTileV=+worldCfg.floorTile; worldCfg.floorTile=0; }   // migrate legacy uniform tile
-    const fAuto = Math.max(2, Math.round(ARENA/4));
+    const fAuto = _surfRepeat(ARENA*2);   // build 1378: the ground plane is ARENA*2 across, UV 0..1 — so this is metres, not a ratio
     const fu = +worldCfg.floorTileU>0 ? +worldCfg.floorTileU : fAuto, fv = +worldCfg.floorTileV>0 ? +worldCfg.floorTileV : fAuto;
     applySurfaceTexture(floorMat, worldCfg.floorTex, '_floorTexUrl', fu, fv, worldCfg.floorTexN, worldCfg.floorTexR, (+worldCfg.floorRot||0)*Math.PI/180);
   }
@@ -20610,8 +20703,10 @@ function applyWorldCfg(){
     wallMat.envMapIntensity = _envInten(wallMat.metalness, worldCfg.skyBright);   // build 1144
     wallMat.specularIntensity = wallMat.metalness;   // metal 0 => matte (no sun-sheen)
     if(+worldCfg.wallTile>0 && !(+worldCfg.wallTileU>0) && !(+worldCfg.wallTileV>0)){ worldCfg.wallTileU=worldCfg.wallTileV=+worldCfg.wallTile; worldCfg.wallTile=0; }   // migrate legacy uniform tile
-    const wAuto = Math.max(2, Math.round(ARENA/8));
-    const wu = +worldCfg.wallTileU>0 ? +worldCfg.wallTileU : wAuto, wv = +worldCfg.wallTileV>0 ? +worldCfg.wallTileV : wAuto;
+    // build 1378: a boundary wall's wide face is ARENA*2 by H, so ONE repeat for both axes stretched the
+    // texture by the aspect ratio (17:1 at the default). Derived per axis from the real span instead.
+    const wuAuto = _surfRepeat(ARENA*2), wvAuto = _surfRepeat(H);
+    const wu = +worldCfg.wallTileU>0 ? +worldCfg.wallTileU : wuAuto, wv = +worldCfg.wallTileV>0 ? +worldCfg.wallTileV : wvAuto;
     applySurfaceTexture(wallMat, worldCfg.wallTex, '_wallTexUrl', wu, wv, worldCfg.wallTexN, worldCfg.wallTexR, (+worldCfg.wallRot||0)*Math.PI/180);
   }
   for(const w of arenaWalls){ w.visible = worldCfg.wallsVisible !== false; }   // toggle the boundary walls' look; their colliders stay either way
@@ -32371,7 +32466,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1377 · 2026-08-04';
+const BUILD_VERSION = 'build 1379 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34611,6 +34706,21 @@ function buildInstancing(){
     const mat = src0 ? src0.clone() : new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:PRIM_DEFAULT_ROUGH, metalness:PRIM_DEFAULT_METAL, envMapIntensity:_envInten(PRIM_DEFAULT_METAL) });
     mat.vertexColors = false;   /* build 1195: the batch's shared UNIT geometry has no colour attribute — a baked member's vertexColors=true would render the whole batch black */
     if(src0 && src0.userData) mat.userData = Object.assign({}, src0.userData);   // clone() shallow-copies userData by reference in r149
+    // build 1379: three's Material.copy() does NOT carry onBeforeCompile — it is an own property on the
+    // instance — so a cloned batch material silently loses the albedo term while the un-batched editor
+    // copy keeps it, which is EXACTLY the "lost its detail set in play and got it back in the editor"
+    // fault build 1139 recorded for the textures. Re-applied here, at the same frequency.
+    // `!mat.onBeforeCompile` was the obvious guard and it is DEAD: three declares onBeforeCompile as a
+    // no-op on Material.PROTOTYPE, so it is truthy on every material ever made and the re-apply never ran.
+    // Probed — `hasOwnProperty('onBeforeCompile')` is false on a fresh MeshStandardMaterial. Whether this
+    // material has its OWN is the actual question, and hasOwnProperty is the thing that asks it.
+    if(src0 && src0.userData && src0.userData._objDetail && !Object.prototype.hasOwnProperty.call(mat, 'onBeforeCompile')){
+      const _p = src0.userData._objDetail === 'alb';
+      const _f = +src0.userData._odFreq || 0;
+      mat.userData._objDetail = null; mat.userData._odU = null;
+      applyObjDetail(mat, _f, _p);
+      mat.userData._odSpan = !!src0.userData._odSpan;
+    }
     const im = new THREE.InstancedMesh(instanceGeoFor(shape), mat, list.length);
     im.castShadow = true; im.receiveShadow = true;
     const m = new THREE.Matrix4();

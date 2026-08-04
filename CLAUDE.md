@@ -967,6 +967,157 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The props stop being one flat colour (build 1379)
+
+Build 1139 built the procedural detail set and deliberately left ALBEDO out of it, for a reason that is
+exactly right **about textures**: *"an albedo map cannot be exposure-neutral. It multiplies the material
+colour, so it only darkens — neutrality would need values above 255."* None of that is true of a **shader
+term**, which has no 8-bit ceiling: `mix(1-a, 1+a, field)` goes above 1.0 as freely as below it, so the mean
+albedo — the quantity every level's lighting was tuned against — does not move. That is the whole reason
+this can be retrofitted onto colours creators already chose, which is what 1139 concluded was impossible.
+
+1145 had already built the machinery: `onBeforeCompile` on three's own `MeshStandardMaterial`, an
+object-space hashed noise field, one shared program. This adds one `.replace` to it and a second mode.
+
+**Who gets it is a DIFFERENT question from who gets relief.** `objDetailWanted` refuses a mesh with UVs
+because "the texture path serves it there" — true for relief and roughness, and false for albedo, because
+`PROC_SLOTS` is `normalMap` + `roughnessMap` and carries no albedo at all. So a UV-having, textureless mesh
+was exactly as flat as a UV-less one, and low-poly packs ship those constantly. `albedoDetailWanted` asks
+only "standard material, no authored `map`" — a creator's own albedo always wins.
+
+### Measured, on real pixels, with a control that returns
+
+```
+                unique colours    frame mean    exposure drift
+alb 0            26,116  1.000x      88.075         0.000%
+alb 0.16         26,488  1.014x      88.055        -0.023%
+alb 0.30         26,787  1.026x      88.032        -0.048%   <- shipped
+alb 0.45         27,027  1.035x      88.005        -0.079%
+alb 0 (control)  26,137  1.001x      87.993        -0.093%
+```
+
+Two things that table settles. **The control returns to 1.001x**, so the whole 3.5% is the term and not
+drift. And **the exposure movement the term causes is smaller than the scene's own settling at every
+amplitude** — that is the neutrality claim measured rather than argued. 0.30 is the knee: 0.16→0.30 nearly
+doubles the gain, 0.30→0.45 adds a third as much again for 50% more swing.
+
+`test-1379` proves the neutrality independently by **porting the shipped GLSL into JS and integrating it**
+— the field measures 0.5 over 216,000 samples, so the multiplier's mean is 1.0 — and asserts the three
+`.replace` anchors against the real `ShaderLib.physical.fragmentShader`, because a replace that misses is a
+silent no-op that renders a perfectly plausible frame.
+
+### The density is a pixel-subtense argument
+
+The first cut used 5.5 cycles per metre. **That measures as nothing at the range the game is played at**: the
+broad octave's period is 18 cm, which at 40 m across a 78-degree frame is well under one pixel, so it
+averages straight back to the flat colour it was there to break up while costing a full noise evaluation per
+fragment. At **0.9/m** the broad octave is ~1.1 m — the scale of an architectural panel, which is what reads
+across a room — and the field's second octave (3.1x, ~36 cm) carries it up close.
+
+Frequency is per WORLD METRE, not per object: build 1139's *"UV tiling is not a physical size"* one layer
+down. A 22 m deck and a 1 m crate otherwise read as two differently-zoomed photographs of one material.
+`retileProcSurface` already owns each prop's world span, so the density rides the hook that keeps the grain
+honest through a gizmo scale — gated on `_odSpan` so it never overwrites an imported mesh's own
+bounding-box-normalised frequency (1145).
+
+### Two silent failures, both found by probing and neither by the suite
+
+- **A uniform written before its shader exists is a write to nothing.** The frequency lived only in
+  `shader.uniforms`, which `onBeforeCompile` creates at the material's first RENDER — and a prop's real span
+  is set at SPAWN, before that. Probed on the stock level: all 57 prop materials were correctly patched and
+  every single one still carried the frequency for a **1 m** object, including a 16 m deck. It is stored on
+  the material now and the uniform reads it at compile time.
+- **`!mat.onBeforeCompile` is always false.** three declares `onBeforeCompile` as a no-op on
+  `Material.PROTOTYPE`, so it is truthy on every material ever made and the batch re-apply — which exists
+  because `Material.copy()` does not carry it, 1139's own trap one layer along — never ran. `hasOwnProperty`
+  is the question that actually distinguishes them, and both facts are now asserted against the real build.
+
+Every source pin in this build passed while both of those were live. **A test that pins the two ends of a
+wire proves nothing about the wire** (build 1277), and the probe is what closed it.
+
+### Four instrument failures before one number was real
+
+| # | what it said | why it was wrong |
+|---|---|---|
+| 1 | props gained 0.96x / 0.99x / 0.98x unique colours — a null | two separate capture RUNS, so auto-exposure and settling differed; and the ground, which this build does not touch, moved 1.36x |
+| 2 | mint block -2.25% under the term | the same-condition control drifted -3.9%. The effect was inside it, ordered by CAPTURE TIME (build 1152's failure #5, verbatim) |
+| 3 | the A/B region read mean 45 where the capture read 114 | the probe never posed the camera, so the coordinates were for a frame it was not looking at — build 1124, again |
+| 4 | control: **99.25% of pixels differ between two frames of the SAME condition** | the world was LIVE — wave, enemies, coach pill, minimap. No screenshot diff of this scene can mean anything until it is paused |
+
+`paused = true` is what made every number above possible. **In a running game, the scene is the noise
+floor**, and it is far larger than any material change worth making.
+
+## The stock level has an albedo (build 1378)
+
+Every one of the six AAA critics named this first, in different words: *"a very good engine with no art
+department"*, *"technically literate and it still does not read as a real place"*. The cause is one line of
+data — `floorTex:''` and `wallTex:''` in `DEFAULT_WORLD`. The ground plane and the four boundary walls, which
+between them are most of the pixels in the first frame anybody sees, were **flat colour**. No lighting change
+can fix that, and none of builds 1126–1377's rendering work could show on a surface with no detail in it.
+
+The generator has shipped a procedural texture library the whole time (`node tools/levelgen.mjs tex <id>
+<out.png>`, build 1110's fast-iteration path). Nothing had ever pointed the engine's own two surfaces at it.
+
+**The url is the trivial half. The value structure is the build.** An albedo `map` MULTIPLIES the material
+colour — build 1139 measured that and recorded *"an albedo map cannot be exposure-neutral… it only darkens"*
+— so dropping concrete (linear mean **0.366**) onto build 1360's tuned floor would have taken 63% of the
+frame's ground albedo away and silently invalidated everything derived from it: the exposure, 1149's bounce
+factor, 1156's horizon match, and the auto-exposure that would then have lifted the whole frame back up and
+flattened it. So the base colours are **compensated**, `newColour_linear = oldColour_linear / textureMean`:
+
+```
+              tuned (1360)   texture mean          now      drawn albedo   error
+floor  0x403d39  0.0513/0.0467/0.0409   0.366/0.367/0.356   0x69645f   0.0517/0.0468/0.0407   +0.9/+0.2/-0.5%
+wall   0x3a454b  0.0423/0.0595/0.0704   0.355/0.355/0.343   0x61727d   0.0424/0.0597/0.0703   +0.3/+0.3/-0.0%
+```
+
+**Within 1% per channel, so build 1360's staging is preserved exactly and the surface gains its variation for
+free.** The compensation has headroom to exist at all only because those albedos are dark: the compensated
+floor sits at 0.140 linear, well under 1.0. On a bright surface this trade is not available, which is the
+other half of 1139's finding.
+
+`test-1378` **re-derives that from the PNGs that ship** — decoding them and linearising per pixel before
+averaging (1151's rule: `toBytes` writes the sRGB fraction with no transfer and the map is sRGB-tagged) — and
+asserts the product lands on 1360's numbers. Regenerating a texture at a different brightness without
+re-deriving the colour fails there rather than silently re-exposing the first frame of the game.
+
+### Tiling is a size, and the wall was stretched 17:1
+
+Build 1139: *"UV tiling is not a physical size."* The auto repeats never got that message — the floor's was
+`ARENA/4` and the wall's `ARENA/8`, **ratios of the arena's own extent**, so one tile covered proportionally
+more metres in a bigger level. Worse, a boundary wall's wide face is `ARENA*2 × H` = **140 m by 8 m** and both
+axes took the same repeat: any creator who had ever put a texture on the boundary got it stretched 17:1.
+
+`SURF_TILE_M = 4` is named once and `_surfRepeat(spanM)` divides a real span by it, per axis — floor from
+`ARENA*2`, wall U from `ARENA*2` and wall V from `H`. A tile is now the same size in metres in every level and
+on every face. This corrects existing levels that used auto tiling *and* a texture; the floor moves 17.5 → 35
+repeats and the wall's V axis 8.75 → 2, which is the stretch going away.
+
+**The mood had to state it too.** `groundMood` (levelgen) owns a generated theme's ground — that is build
+1143's whole point — and it named only the colours. With the stock world now carrying a texture, generating an
+arena would have left concrete multiplying a theme's ground, 0.37× darker than the albedo the lightmap bake
+integrated. It states `floorTex:''`/`wallTex:''` explicitly now. Naming a value once is not the same as
+deriving it; the six slots are asserted in `test-1378`.
+
+**Two harnesses failed and both were right to.** 1156 and 1360 read `DEFAULT_WORLD.floorColor` as *the floor's
+albedo*, which it stopped being the moment a map multiplied it. Every luminance claim in them is about the
+albedo the surface **draws**, so both now derive it — through one shared `tests/albedo.mjs`, because three
+copies of a derivation is how the thing being derived stops agreeing with itself. Their assertions are
+untouched in intent and are now stronger: they test the frame rather than a factor of it.
+
+### Two process failures, both mine, one destructive
+
+- **`open(path,'w').write(rep(path,…))` EMPTIES THE FILE.** Python opens (and truncates) the target before it
+  evaluates the argument that reads it, so `tools/levelgen.mjs` went to **0 bytes**. It is tracked, so
+  `git checkout --` cost nothing — but the same shape against an untracked file is unrecoverable. Compute the
+  new text into a variable **first**, then open for writing. The scripted-edit convention in this file exists
+  for exactly this class and did not cover it; it does now.
+- **The eleventh container rollback, and the first to land mid-session.** The tree reverted from 1377 to 1353
+  between two of my own commands. `git fetch` + `reset --hard FETCH_HEAD` restored everything, because every
+  build is pushed the moment it lands. What did NOT survive were **uncommitted probe tools** — the capture
+  rig had to be rebuilt once already for this reason. Anything worth using twice belongs in a commit, not in
+  the working tree.
+
 ## Texture memory is visible, and the AO sweep stopped allocating (build 1353)
 
 **1. The cost a creator could not discover.** Build 1257 made the LIGHT count visible on the grounds that it

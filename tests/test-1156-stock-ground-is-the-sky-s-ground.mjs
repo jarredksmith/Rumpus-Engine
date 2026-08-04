@@ -22,7 +22,14 @@
 // The wall change is NOT shipped: it buys 5 points and spends the cool-distance note a warm ground reads
 // against. Recorded so it is not re-derived. The frame's luminance is unmoved (128 green, all three runs) —
 // which is the point of matching the luminance rather than adopting skyGround outright.
+//
+// build 1378 MOVED WHAT THIS READS, and the assertions keep their intent. The stock level now ships a
+// concrete albedo, and a `map` MULTIPLIES the material colour — so `floorColor` stopped being the floor's
+// albedo and became one factor of it. Every luminance claim here is about the albedo the surface DRAWS,
+// so it derives that (colour x the shipped texture's linear mean) instead of reading the hex. That is
+// build 1151's lesson, applied to the engine's own two surfaces.
 import { gameSource, extractConst, assert, near, eq, done } from './harness.mjs';
+import { drawnAlbedo } from './albedo.mjs';
 const src = gameSource();
 
 const W = src.match(/const DEFAULT_WORLD = \{[\s\S]*?\};/);
@@ -34,7 +41,8 @@ const lin = (h) => [(h >> 16) & 255, (h >> 8) & 255, h & 255].map(v => s2l(v / 2
 const Y = (a) => 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
 const unit = (a) => { const y = Y(a); return a.map(v => v / y); };      // hue, with luminance divided out
 
-const floor = lin(num('floorColor')), ground = lin(num('skyGround')), wall = lin(num('wallColor'));
+const ROOT = new URL('../', import.meta.url);
+const floor = drawnAlbedo(src, 'floor', ROOT), ground = lin(num('skyGround')), wall = drawnAlbedo(src, 'wall', ROOT);
 
 // ---------------------------------------------------------------- THE link
 {

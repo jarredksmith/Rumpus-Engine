@@ -18,7 +18,14 @@
 // inside a 110-degree horizontal fov, auto-exposure lifted the frame to accommodate it, and clipping went
 // up a hundredfold. The ELEVATION buys the shadows; the azimuth only decides whether you are photographing
 // the level or the sun.
+//
+// build 1378 MOVED WHAT THIS READS, and the assertions keep their intent. The stock level now ships a
+// concrete albedo, and a `map` MULTIPLIES the material colour — so `floorColor` stopped being the floor's
+// albedo and became one factor of it. Every luminance claim here is about the albedo the surface DRAWS,
+// so it derives that (colour x the shipped texture's linear mean) instead of reading the hex. That is
+// build 1151's lesson, applied to the engine's own two surfaces.
 import { gameSource, assert, near, done } from './harness.mjs';
+import { drawnAlbedo } from './albedo.mjs';
 
 const src = gameSource();
 const DW = src.match(/const DEFAULT_WORLD = \{[^\n]*/)[0];
@@ -27,6 +34,10 @@ const num = (k) => { const m = DW.match(new RegExp(k + ':(0x[0-9a-fA-F]+|-?[\\d.
 const s2l = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
 const lin = (h) => [(h >> 16) & 255, (h >> 8) & 255, h & 255].map(v => s2l(v / 255));
 const Y = (h) => { const a = lin(h); return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]; };
+// the DRAWN albedo of the two engine surfaces (build 1378): colour x its texture's mean, in linear.
+const ROOT = new URL('../', import.meta.url);
+const Yl = (a) => 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+const drawnY = (which) => Yl(drawnAlbedo(src, which, ROOT));
 
 // the level's own palette, read from _DL rather than restated
 const DL = src.slice(src.indexOf('const _DL = {'), src.indexOf('const _DL = {') + 2600);
@@ -34,7 +45,7 @@ const dl = (k) => { const m = DL.match(new RegExp('\\b' + k + ':\\s*\\{\\s*col:(
 
 // ---- the value structure, computed from the real constants ----
 {
-  const floor = Y(num('floorColor')), wall = Y(num('wallColor'));
+  const floor = drawnY('floor'), wall = drawnY('wall');
   const deck = Y(dl('deck')), crate = Y(dl('crate')), crateH = Y(dl('crateH'));
 
   assert(floor < deck,
@@ -52,7 +63,7 @@ const dl = (k) => { const m = DL.match(new RegExp('\\b' + k + ':\\s*\\{\\s*col:(
 // ---- the hue survived, because the scaling was done in LINEAR space ----
 {
   const before = [0x5f, 0x5a, 0x55].map(v => s2l(v / 255));
-  const after = lin(num('floorColor'));
+  const after = drawnAlbedo(src, 'floor', ROOT);
   const rb = before[0] / before[2], ra = after[0] / after[2];
   near(ra, rb, 0.06, 'the ground keeps its warm hue exactly — a uniform linear scale cannot change ' +
     'chromaticity (R/B ' + rb.toFixed(3) + ' -> ' + ra.toFixed(3) + ')');
@@ -83,7 +94,7 @@ const dl = (k) => { const m = DL.match(new RegExp('\\b' + k + ':\\s*\\{\\s*col:(
   // build 1149's term is `bounce * sun`, coloured by sunColor x mix(floor, wall, 0.4) — the ALBEDO is
   // already in the colour, so halving the floor's luminance halves the delivered fill unless this moves.
   const bounce = num('bounce');
-  const floorNow = Y(num('floorColor')), floorWas = Y(0x5f5a55);
+  const floorNow = drawnY('floor'), floorWas = Y(0x5f5a55);
   const deliveredNow = bounce * floorNow, deliveredWas = 0.50 * floorWas;
   assert(deliveredNow < deliveredWas,
     'a darker ground bounces LESS, as it physically must — the term is not compensated back to parity');
@@ -94,13 +105,13 @@ const dl = (k) => { const m = DL.match(new RegExp('\\b' + k + ':\\s*\\{\\s*col:(
 
 // ---- the dome's ground band moved with the plane it meets ----
 {
-  const g = lin(num('skyGround')), f = lin(num('floorColor'));
+  const g = lin(num('skyGround')), f = drawnAlbedo(src, 'floor', ROOT);
   const uy = (a) => { const y = 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]; return a.map(v => v / y); };
   const ug = uy(g), uf = uy(f);
   for (let k = 0; k < 3; k++)
     near(uf[k], ug[k], 0.035, 'build 1156’s link survives the restaging — same hue either side of the ' +
       'horizon (ch ' + k + ')');
-  assert(Y(num('skyGround')) > Y(num('floorColor')),
+  assert(Y(num('skyGround')) > drawnY('floor'),
     '...with the band still the brighter of the two, so it is not skyGround adopted outright');
 }
 

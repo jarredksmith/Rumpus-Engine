@@ -111,9 +111,26 @@ const src = gameSource();
   const fn = extractFunction('applyObjDetail');
   assert(/if\(!mat \|\| mat\.userData\._objDetail\) return mat;/.test(fn), 'a material is patched once, however many meshes share it');
   assert(/mat\.onBeforeCompile = \(shader\)=>\{/.test(fn), 'it patches three\'s own material rather than replacing it');
-  assert(/mat\.customProgramCacheKey = \(\)=> 'objDetail';/.test(fn),
-    'and every patched material shares ONE program — three keys its cache on the material otherwise and would compile a variant per material');
-  assert(/const f = \(freq > 0\) \? freq : OBJ_DETAIL_CYCLES;/.test(fn), 'a zero or missing frequency falls back to the default');
+  // build 1379 gave the patch a second MODE (albedo-only, for a surface whose relief the texture path
+  // already serves), so the key is one of two constants rather than one. The assertion's intent is
+  // unchanged and is stated directly now: the key may depend on the MODE and on nothing else, because a
+  // key that varies per material is a program per material — which is the whole reason it exists.
+  {
+    const m = fn.match(/mat\.customProgramCacheKey = \(\)=>([^;]+);/);
+    assert(m, 'the patched material declares a program cache key');
+    const expr = m[1];
+    assert(!/\bmat\b|\bfreq\b|\bf\b\s*[^a-zA-Z]/.test(expr.replace(/'[^']*'/g, "''")),
+      'and it reads NOTHING per-material — three keys its cache on the material otherwise and would compile a variant per material');
+    const key = new Function('albOnly', 'return (' + expr + ');');
+    const a = key(false), b = key(true);
+    assert(typeof a === 'string' && typeof b === 'string' && a && b, 'both modes name a program');
+    assert(a !== b, '...and they are DIFFERENT programs, or one mode would be served the other\'s shader');
+    assert(key(false) === a && key(true) === b, 'the key is a pure function of the mode');
+  }
+  // build 1379 moved this onto the material (the uniform does not exist until the first render, and a
+  // prop's span is set before that), so the fallback is asserted where it now lives. Same intent.
+  assert(/mat\.userData\._odFreq = \(freq > 0\) \? freq : OBJ_DETAIL_CYCLES;/.test(fn),
+    'a zero or missing frequency falls back to the default');
 
   // the two chunks it hooks, and the ORDER the sharing depends on
   assert(/\.replace\('#include <roughnessmap_fragment>'/.test(fn), 'roughness is modulated after the chunk that declares roughnessFactor');
