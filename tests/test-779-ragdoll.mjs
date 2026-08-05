@@ -2,12 +2,14 @@
 // force, with the frozen mesh rigidly attached. A per-level toggle; capped + faded out. Physics is browser-verified;
 // this pins the wiring + the maths that don't need Rapier.
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 
 // config + persistence
 assert(/ragdoll: !!\(savedLevel && savedLevel\.game && savedLevel\.game\.ragdoll\)/.test(src), 'gameCfg has a ragdoll flag (off by default)');
 assert(/ragdoll: !!gameCfg\.ragdoll/.test(src), 'ragdoll serializes with the level');
-assert(/gameCfg\.ragdoll = !!level\.game\.ragdoll;/.test(src), 'ragdoll restores from a loaded level');
+assert(/gameCfg\.ragdoll = !!g\.ragdoll;/.test(src), 'ragdoll restores from a loaded level');
 assert(/fdToggle\('<b>Ragdoll on death<\/b>', \(\)=>gameCfg\.ragdoll, v=>gameCfg\.ragdoll=v\)/.test(src), 'the editor exposes a Ragdoll toggle');
 
 // the kill path spawns a corpse with the hit direction (else removes the mesh as before)

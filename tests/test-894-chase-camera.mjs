@@ -11,6 +11,8 @@
 //      the viewmodel hidden, vm stays 'fps' (no twin-stick cursor), a yaw flip decays exponentially
 //      (6.9 -> 5.6 -> ... -> 0), damping 0 is bolted-rigid, and the level serializes view:'chase'.
 import { gameSource, extractFunction, assert, near, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 
 const src = gameSource();
 const tp = extractFunction('tpCameraPushback', src);
@@ -46,7 +48,7 @@ assert(/if\(gameCfg\.view==='chase'\) return 'fps';/.test(extractFunction('activ
 assert(/if\(tpActive\(\) && gameOn && !duelDead\)\{ gun\.visible=false; tpCameraPushback\(dt\); \}/.test(src), 'the render loop drives it with dt');
 // every view sanitizer accepts 'chase' (boot init, net load, restore, serialize)
 assert(/savedLevel\.game\.view==='chase'/.test(src), 'boot init accepts chase');
-assert((src.match(/level\.game\.view==='chase'/g)||[]).length===2, 'restoreLevel + loadLevelFromNet accept chase');
+assert(/g\.view==='chase'/.test(extractFunction('_applyGameCfg')), 'the shared applier both loaders route through accepts chase');
 assert(/view: \(gameCfg\.view==='top'\|\|gameCfg\.view==='side'\|\|gameCfg\.view==='chase'\)\?gameCfg\.view:'fps',/.test(src), 'serializeLevel keeps chase');
 // editor: the button + the smoothing slider
 assert(/vBtn\('chase','Third-person'\)/.test(src), 'Camera view row has the Third-person option');

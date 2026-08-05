@@ -72,7 +72,7 @@ const parse = new Function(extractFunction('parseWaveManifest') + '\nreturn pars
 }
 {
   assert(/wavesText: \(gameCfg\.wavesText\|\|''\)\.slice\(0,2000\) \|\| undefined/.test(src), 'the manifest SOURCE serialises (round-trips the editor)');
-  eq((src.match(/gameCfg\.waves = gameCfg\.wavesText \? parseWaveManifest\(gameCfg\.wavesText\) : null;/g) || []).length, 2,
+  eq((src.match(/gameCfg\.waves = gameCfg\.wavesText \? parseWaveManifest\(gameCfg\.wavesText\) : null;/g) || []).length, 1,
     'both loaders (restore + net) re-parse it');
   assert(/one line per wave/.test(src), 'the editor explains the grammar where the textarea lives');
 }

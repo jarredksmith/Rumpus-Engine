@@ -1,13 +1,15 @@
 // (build 65) Objective layer: the win condition + HUD label are pluggable. 'eliminate' = clear waves,
 // 'survival' = outlast a countdown (endless spawns). Existing waves route through it unchanged.
 import { gameSource, extractFunction, done, assert, eq, near } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 
 // config + persistence
 assert(/objective: \(savedLevel && savedLevel\.game && savedLevel\.game\.objective\) \|\| 'eliminate'/.test(src), 'objective in gameCfg');
 assert(/surviveSecs: \(savedLevel/.test(src), 'survival duration in gameCfg');
 assert(/objective: gameCfg\.objective, surviveSecs: gameCfg\.surviveSecs/.test(src), 'serialized into the level');
-assert(/gameCfg\.objective = level\.game\.objective\|\|'eliminate'/.test(src), 'restored / synced to co-op clients');
+assert(/gameCfg\.objective = g\.objective\|\|'eliminate'/.test(src), 'restored / synced to co-op clients');
 
 // loop wiring
 assert(/objectiveTick\(dt\);   \/\/ survival countdown/.test(src), 'objective ticks each frame (host/solo)');
@@ -55,7 +57,7 @@ assert(/function buildExtractZone\(\)/.test(src) && /function placeExtraction\(\
 assert(/objectiveActive\(\)==='extraction'/.test(src), 'extraction handled in the objective layer');
 assert(/obBtn\('extraction'/.test(src), 'editor extraction option');
 assert(/extractHold: gameCfg\.extractHold, extractRadius: gameCfg\.extractRadius/.test(src), 'extraction params serialized');
-assert(/gameCfg\.extractHold = level\.game\.extractHold!=null/.test(src), 'extraction params restored / synced');
+assert(/gameCfg\.extractHold = g\.extractHold!=null/.test(src), 'extraction params restored / synced');
 assert(/\(objectiveActive\(\)==='extraction'\|\|objectiveActive\(\)==='defend'\) && extractZone && extractZone\.visible\) blip\(extractPos\.x, extractPos\.z/.test(src), 'extraction/defend zone shows on the minimap');
 assert(/gameCfg\.objective==='extraction' \? 'EXTRACTED'/.test(src), 'win screen reads EXTRACTED');
 

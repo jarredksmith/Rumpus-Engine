@@ -5,12 +5,14 @@
 // colliders/propModels (never block, never serialize, can't be entered) — that hold the grid until GO, race
 // the line with per-bot pace, and END THE RACE if they finish first (RACE LOST screen). HUD shows P n/N.
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 
 // --- wiring pins ---
 assert(/raceBots: gameCfg\.raceBots, raceBotSkill: gameCfg\.raceBotSkill,/.test(src), 'rival count + pace serialized with the level');
-{ const m=src.match(/gameCfg\.raceBots = level\.game\.raceBots!=null \? level\.game\.raceBots : 3; gameCfg\.raceBotSkill = level\.game\.raceBotSkill!=null \? level\.game\.raceBotSkill : 0\.85;/g);
-  assert(m && m.length===2, 'both loaders restore rival config (found '+(m?m.length:0)+')'); }
+{ const m=src.match(/gameCfg\.raceBots = g\.raceBots!=null \? g\.raceBots : 3; gameCfg\.raceBotSkill = g\.raceBotSkill!=null \? g\.raceBotSkill : 0\.85;/g);
+  assert(m && m.length===1, 'both loaders restore rival config, through the one shared applier (found '+(m?m.length:0)+')'); }
 assert(/rrow\('AI rivals','0','6','1'/.test(src) && /rrow\('Rival pace','0\.4','1\.3','0\.05'/.test(src), 'Rules tab has rival count + pace rows');
 assert(/_raceBotsTick\(dt\);/.test(extractFunction('_raceTick')), 'the race tick drives the rivals');
 assert(/_racePath=_raceBuildPath\(\);/.test(extractFunction('_raceSetup')) && /if\(\(gameCfg\.raceBots\|0\)>0\) _raceSpawnBots\(\);/.test(extractFunction('_raceSetup')), 'deploy builds the line + grids the field');

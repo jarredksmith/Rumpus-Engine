@@ -1,4 +1,6 @@
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 // build 693: checkpoints. A signal action do:'checkpoint' drops a respawn point at the player; with gameCfg.
 // respawnOnDeath on, a solo death sends them to the last checkpoint (or the start) with full health, no game over.
@@ -27,7 +29,7 @@ assert(/run = \{ \.\.\.RUN0 \}; _checkpoint=null;/.test(src), 'startGame resets 
 // --- config + editor + persistence ---
 assert(/respawnOnDeath: !!\(savedLevel && savedLevel\.game && savedLevel\.game\.respawnOnDeath\)/.test(src), 'gameCfg.respawnOnDeath seeded from the save');
 assert(/respawnOnDeath: !!gameCfg\.respawnOnDeath/.test(src), 'serialized with the level');
-assert((src.match(/gameCfg\.respawnOnDeath = !!level\.game\.respawnOnDeath;/g)||[]).length===2, 'restored in both load paths');
+assert((src.match(/gameCfg\.respawnOnDeath = !!g\.respawnOnDeath;/g)||[]).length === 1, 'restored in both load paths');
 const panel = extractFunction('renderEditorFields');
 assert(/<b>Respawn at checkpoint<\/b> on death \(solo\)/.test(panel) && /gameCfg\.respawnOnDeath=cb\.checked/.test(panel), 'an editor toggle exists');
 

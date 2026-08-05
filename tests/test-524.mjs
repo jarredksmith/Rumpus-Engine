@@ -1,4 +1,6 @@
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 // build 677: the held flashlight is tunable per level — brightness, cone angle, edge softness, range and beam
 // colour — via editor sliders, serialized with the level and applied live for instant feedback.
@@ -32,7 +34,7 @@ assert(/_flashlight\.intensity = flashlightOn \? fc\.intensity : 0;/.test(tf), '
 // --- gameCfg carries flashCfg, persisted + restored both load paths ---
 assert(/flashCfg: _sanitizeFlash\(savedLevel && savedLevel\.game && savedLevel\.game\.flash\)/.test(src), 'gameCfg.flashCfg seeded from the save');
 assert(/flash: \{ intensity:\+gameCfg\.flashCfg\.intensity, angle:\+gameCfg\.flashCfg\.angle, penumbra:\+gameCfg\.flashCfg\.penumbra, distance:\+gameCfg\.flashCfg\.distance, color:gameCfg\.flashCfg\.color \}/.test(src), 'flash beam serialized with the level');
-eq((src.match(/gameCfg\.flashCfg = _sanitizeFlash\(level\.game\.flash\);/g)||[]).length, 2, 'restored in both load paths');
+eq((src.match(/gameCfg\.flashCfg = _sanitizeFlash\(g\.flash\);/g)||[]).length, 1, 'restored in both load paths');
 
 // --- the editor exposes the sliders (only when the flashlight is enabled) ---
 const panel = extractFunction('renderEditorFields');

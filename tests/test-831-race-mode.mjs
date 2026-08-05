@@ -4,6 +4,8 @@
 // Per-lap clock with last/best in the HUD; races spawn no enemies (noEnemyMode); raceLaps is serialized and
 // restored by both level loaders.
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 
 // --- wiring: 8th objective, clean grid, config plumbed everywhere ---
@@ -12,8 +14,8 @@ assert(/obBtn\('race',_icn\('route'\)\+'Race'\)/.test(src), 'the Rules tab has a
 assert(/raceLaps: \(savedLevel && savedLevel\.game && savedLevel\.game\.raceLaps!=null\) \? savedLevel\.game\.raceLaps : 3,/.test(src), 'raceLaps boots from the saved level (default 3)');
 assert(/surviveSecs: gameCfg\.surviveSecs, raceLaps: gameCfg\.raceLaps,/.test(src), 'raceLaps is serialized with the level');
 {
-  const m=src.match(/gameCfg\.raceLaps = level\.game\.raceLaps!=null \? level\.game\.raceLaps : 3;/g);
-  assert(m && m.length===2, 'both level loaders restore raceLaps (found '+(m?m.length:0)+')');
+  const m=src.match(/gameCfg\.raceLaps = g\.raceLaps!=null \? g\.raceLaps : 3;/g);
+  assert(m && m.length===1, 'both level loaders restore raceLaps, through the one shared applier (found '+(m?m.length:0)+')');
 }
 assert(/if\(objectiveActive\(\)==='race'\) _raceSetup\(\); else _raceClear\(\);/.test(src), 'startObjective snapshots the course');
 assert(/else if\(objectiveActive\(\)==='race'\)\{\s*\n\s*_raceTick\(dt\);/.test(src), 'objectiveTick drives the race');

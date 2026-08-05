@@ -5,6 +5,8 @@
 // lane. Verified end-to-end in headless Chromium (camera pose, facing, movement axes, lane hold);
 // these pins guard the wiring.
 import { gameSource, extractFunction, evalDecl, assert, eq, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 
 const src = gameSource();
 
@@ -21,8 +23,8 @@ eq(mk({ gameCfg:{ view:'fps' }, gameOn:true, editorOpen:false, _cineActive:false
 assert(/view: \(savedLevel && savedLevel\.game && \(savedLevel\.game\.view==='top'\|\|savedLevel\.game\.view==='side'\|\|savedLevel\.game\.view==='chase'\)\) \? savedLevel\.game\.view : 'fps',/.test(src), 'gameCfg.view boots from the autosave (chase joined in build 894)');
 assert(/viewAxis: \(savedLevel && savedLevel\.game && savedLevel\.game\.viewAxis==='z'\) \? 'z' : 'x',/.test(src), 'gameCfg.viewAxis boots from the autosave');
 assert(/view: \(gameCfg\.view==='top'\|\|gameCfg\.view==='side'\|\|gameCfg\.view==='chase'\)\?gameCfg\.view:'fps', viewDist: \+gameCfg\.viewDist\|\|0, viewAxis: \(gameCfg\.viewAxis==='z'\)\?'z':'x'/.test(src), 'serializeLevel writes all three fields');
-const loads = src.match(/gameCfg\.view = \(level\.game\.view==='top'\|\|level\.game\.view==='side'\|\|level\.game\.view==='chase'\) \? level\.game\.view : 'fps';/g) || [];
-eq(loads.length, 2, 'both load paths (local load + multiplayer host-adopt) apply the view');
+const loads = src.match(/gameCfg\.view = \(g\.view==='top'\|\|g\.view==='side'\|\|g\.view==='chase'\) \? g\.view : 'fps';/g) || [];
+eq(loads.length, 1, 'both load paths (local load + multiplayer host-adopt) apply the view');
 
 // ---- input rerouting: pointer + touch steer the cursor, not the head ----
 // (build 1103: the gate widened to cursorAimActive — top/side always, chase when ARPG cursor aim is on)

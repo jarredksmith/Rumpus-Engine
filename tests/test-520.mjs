@@ -1,4 +1,6 @@
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 // build 672: "hands / unarmed" mode. A level can start the player with bare fists instead of a gun, turning BREACH
 // into a fist-fight / adventure / puzzle base: punch (left-click), grab & carry & throw (G), and a held flashlight (L).
@@ -56,7 +58,7 @@ assert(/if\(e\.code===BINDS\.flashlight && !e\.repeat\) toggleFlashlight\(\);/.t
 
 // --- persistence: serialized with the level + restored in both load paths ---
 assert(/unarmed: !!gameCfg\.unarmed, startWeapon: [^,]+, allowPickup: gameCfg\.allowPickup!==false, flashlight: !!gameCfg\.flashlight,/.test(src), 'serialized with the level');
-assert((src.match(/gameCfg\.unarmed = !!level\.game\.unarmed; gameCfg\.startWeapon = [^;]+; gameCfg\.allowPickup = level\.game\.allowPickup!==false; gameCfg\.flashlight = !!level\.game\.flashlight;/g)||[]).length===2, 'restored in both load paths');
+assert((src.match(/gameCfg\.unarmed = !!g\.unarmed; gameCfg\.startWeapon = [^;]+; gameCfg\.allowPickup = g\.allowPickup!==false; gameCfg\.flashlight = !!g\.flashlight;/g)||[]).length === 1, 'restored in both load paths');
 
 // --- editor exposes the toggles in the Gameplay panel ---
 assert(/Start unarmed<\/b> \(fists only/.test(src), 'editor: Start unarmed toggle');

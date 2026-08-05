@@ -1,4 +1,6 @@
 import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 // build 1272: reported from play — "there's no option under gameplay to set the melee weapon as the
 // starting weapon." Correct, and it was a gap between two features rather than a bug in either.
@@ -32,11 +34,12 @@ const canStart = new Function('WEAPONS', extractFunction('_canStartWith') + '; r
   for (const m of src.match(/startWeapon[^;\n]{0,160}/g) || [])
     assert(!/\.melee/.test(m), 'no startWeapon expression still tests .melee itself: ' + m.slice(0, 90));
   const sites = (src.match(/_canStartWith\(/g) || []).length;
-  assert(sites >= 6, 'the dropdown, its current-value guard, both loaders, the serializer and the deploy all ask it (' + sites + ')');
+  /* build 1400: the two loaders became one, so one of the six call sites went with the duplication. */
+  assert(sites >= 5, 'the dropdown, its current-value guard, the shared loader, the serializer and the deploy all ask it (' + sites + ')');
   assert(/const _guns=Object\.keys\(WEAPONS\)\.filter\(_canStartWith\)/.test(src), 'the dropdown is built from it');
   assert(/startWeapon: _canStartWith\(gameCfg\.startWeapon\) \? gameCfg\.startWeapon : 'rifle'/.test(src),
     'the serializer clamps through it');
-  eq((src.match(/_canStartWith\(level\.game\.startWeapon\)/g) || []).length, 2,
+  eq((src.match(/_canStartWith\(g\.startWeapon\)/g) || []).length, 1,
     'and BOTH level loaders sanitize through it — a level file is untrusted input');
 }
 { // the deploy actually equips it

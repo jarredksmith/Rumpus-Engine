@@ -26158,6 +26158,60 @@ function playerDied(){
 // carry its intent without taking the room away from the people in it — and a co-op level dropped
 // into a PvP lobby is the host's call, not an error the engine should refuse.
 const PVP_MODES = ['duel','ffa','tdm','cp'];
+/* build 1400: the crosshair styles were a COMMENT beside the boot default and nowhere else, so nothing
+   could validate one arriving from a level file. Named here, next to the other level-data vocabulary. */
+const CROSSHAIR_STYLES = ['classic','cross','dot','circle','tee','none'];
+// build 1400 — the level's game settings, applied in ONE place.
+//
+// Found by sweeping what `serializeLevel` writes against what the loaders read, after build 1398 turned out
+// to be a serializer/loader mismatch. FIVE top-level settings were written with every level and never read
+// back by either runtime loader: `pvp`, `pvpTarget` (build 1265 — mine, and the whole feature is "a level
+// says which mode it is for", which therefore worked until you saved), `fallDamage`, `crushDamage` and
+// `crosshair`.
+//
+// They are not merely lost — they LEAK. Nothing reset them, so opening a second level kept the first one's
+// fall damage and crosshair. That is build 1325's finding for `keyNames`/`pickupModels`, and the reason the
+// probe needed a control: restoring the same level and reading the values back proves nothing when the
+// loader never cleared them. Stripping a field and watching it SURVIVE is the measurement.
+//
+// The block itself was TWO byte-identical 2,862-character copies, in `loadLevelFromNet` and `restoreLevel`.
+// That is exactly the duplication build 1280 removed for props, and exactly the mechanism that lets a fix
+// land on one path only. One function now; `test-1400` proves the copies are gone by count.
+function _applyGameCfg(g){
+  if(!g) return;
+ gameCfg.mode = g.mode||'random'; gameCfg.winWaves = g.winWaves||0; gameCfg.upgrades = g.upgrades !== false; gameCfg.objective = g.objective||'eliminate'; gameCfg.surviveSecs = g.surviveSecs!=null ? g.surviveSecs : 120; gameCfg.raceLaps = g.raceLaps!=null ? g.raceLaps : 3; gameCfg.raceBots = g.raceBots!=null ? g.raceBots : 3; gameCfg.raceBotSkill = g.raceBotSkill!=null ? g.raceBotSkill : 0.85; gameCfg.extractHold = g.extractHold!=null ? g.extractHold : 5; gameCfg.extractRadius = g.extractRadius!=null ? g.extractRadius : 3.5; gameCfg.bossWave = g.bossWave!=null ? g.bossWave : 5; gameCfg.wavesText = (typeof g.wavesText==='string') ? g.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!g.noRespawn; gameCfg.unarmed = !!g.unarmed; gameCfg.startWeapon = (typeof g.startWeapon==='string' && _canStartWith(g.startWeapon)) ? g.startWeapon : 'rifle'; gameCfg.allowPickup = g.allowPickup!==false; gameCfg.flashlight = !!g.flashlight; gameCfg.flashCfg = _sanitizeFlash(g.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof g.goalText==="string") ? g.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!g.respawnOnDeath; gameCfg.winText = (typeof g.winText==="string") ? g.winText.slice(0,240) : ""; gameCfg.loseText = (typeof g.loseText==="string") ? g.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!g.ragdoll; gameCfg.view = (g.view==='top'||g.view==='side'||g.view==='chase') ? g.view : 'fps'; gameCfg.viewDist = g.viewDist!=null ? +g.viewDist : 0; gameCfg.viewAxis = (g.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +g.viewYaw||0; gameCfg.viewTilt = (g.viewTilt!=null) ? +g.viewTilt : null; gameCfg.viewHeight = +g.viewHeight||0; gameCfg.viewRoll = +g.viewRoll||0; gameCfg.viewOrbit = !!g.viewOrbit; gameCfg.chaseCursorAim = !!g.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(g.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+      if(g.spawnRegion){ const _sr=g.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; }
+  // ---- build 1400: the five that were written and never read -----------------------------------------
+  // ALWAYS ASSIGNED, defaulting when absent — that is what stops the leak. A field that is only assigned
+  // "if present" survives into the next level, which is the bug rather than a lesser version of it.
+  gameCfg.pvp = (function(){ const v=String(g.pvp||'').trim(); return (PVP_MODES.indexOf(v)>=0) ? v : ''; })();
+  gameCfg.pvpTarget = Math.max(0, Math.min(999, Math.round(+g.pvpTarget||0)));
+  gameCfg.fallDamage  = _dmgRuleFrom(g.fallDamage,  24, 1.4);
+  gameCfg.crushDamage = _dmgRuleFrom(g.crushDamage,  7, 2.2);
+  gameCfg.crosshair   = _crosshairFrom(g.crosshair);
+  if(typeof applyCrosshair==='function') try{ applyCrosshair(gameCfg.crosshair); }catch(e){}
+}
+// The two damage rules have the same shape and the same defaults story, so they share one reader — two
+// copies of a five-field clamp is how they stop agreeing.
+function _dmgRuleFrom(r, minSpeed, perUnit){
+  r = r || {};
+  return { on: !!r.on,
+           player: (r.player != null) ? !!r.player : true,
+           ai:     (r.ai != null) ? !!r.ai : true,
+           minSpeed: (r.minSpeed != null) ? Math.max(0, Math.min(999, +r.minSpeed || 0)) : minSpeed,
+           perUnit:  (r.perUnit  != null) ? Math.max(0, Math.min(999, +r.perUnit  || 0)) : perUnit };
+}
+function _crosshairFrom(c){
+  c = c || {};
+  const st = String(c.style || '');
+  return { style: (CROSSHAIR_STYLES.indexOf(st) >= 0) ? st : 'classic',
+           size:      (c.size != null)      ? Math.max(2, Math.min(80, +c.size || 0)) : 24,
+           thickness: (c.thickness != null) ? Math.max(1, Math.min(12, +c.thickness || 0)) : 2,
+           gap:       (c.gap != null)       ? Math.max(0, Math.min(40, +c.gap || 0)) : 3,
+           dot: (c.dot != null) ? !!c.dot : true,
+           /* a colour reaches CSS, and a level file is untrusted input (build 1325/1260) */
+           color: String(c.color || 'accent').slice(0, 32).replace(/[^\w#().,%\- ]/g, '') || 'accent' };
+}
 function _lvlPvp(){
   const g=(typeof gameCfg!=='undefined' && gameCfg) ? gameCfg : {};
   const m=String(g.pvp||'').trim();
@@ -27133,8 +27187,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && _canStartWith(level.game.startWeapon)) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
-      if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
+  if(level.game) _applyGameCfg(level.game);
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
   triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
@@ -33066,7 +33119,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1399 · 2026-08-05';
+const BUILD_VERSION = 'build 1400 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -43349,8 +43402,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && _canStartWith(level.game.startWeapon)) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
-      if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
+  if(level.game) _applyGameCfg(level.game);
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
   refreshPlayerSpawnMarker();

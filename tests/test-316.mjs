@@ -12,7 +12,7 @@ assert(/if\(reg\)\{ const a=Math\.random\(\)\*Math\.PI\*2, rr=Math\.sqrt\(Math\.
 assert(/const c = usePoly \? _polyCentroid\(sr\.poly\) : \(reg \? \{ x:reg\.x, z:reg\.z \} : \{ x:0, z:0 \}\); best=\{ x:c\.x, z:c\.z, y:surfAt\(c\.x,c\.z\) \};/.test(rs), 'fallback is the region center/centroid, on its surface');
 // serialize + load
 assert(/spawnRegion: \{ on: !!gameCfg\.spawnRegion\.on, shape: gameCfg\.spawnRegion\.shape\|\|'circle'/.test(src) && /poly: \(gameCfg\.spawnRegion\.poly\|\|\[\]\)\.map/.test(src), 'region (shape + poly) saved with the level');
-assert((src.match(/gameCfg\.spawnRegion = \{ on:!!_sr\.on, shape:_sr\.shape\|\|'circle'/g)||[]).length===2, 'region restored on both load paths');
+assert((src.match(/gameCfg\.spawnRegion = \{ on:!!_sr\.on, shape:_sr\.shape\|\|'circle'/g)||[]).length===1, 'region restored on both load paths');
 // editor + marker
 assert(/Confine spawns to a region/.test(src), 'Game panel has the confine toggle');
 assert(/\\u2316 Center on player start|Center on player start/.test(src), 'can center the region on the player start');

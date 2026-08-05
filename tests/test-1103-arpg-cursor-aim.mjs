@@ -5,6 +5,8 @@
 // WASD moves relative to the frozen camera. Pair with the third-person Tilt slider for a
 // Diablo-style almost-top-down action game.
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 
 const src = gameSource();
 
@@ -48,8 +50,8 @@ assert(/else if\(typeof chaseCursorOn==='function' && chaseCursorOn\(\)\)\{ forw
 
 // persistence + UI
 assert(/chaseCursorAim: !!gameCfg\.chaseCursorAim \}/.test(src), 'saved with the level');
-const loads = src.match(/gameCfg\.chaseCursorAim = !!level\.game\.chaseCursorAim;/g) || [];
-assert(loads.length >= 2, 'both loaders restore it (' + loads.length + ')');
+const loads = src.match(/gameCfg\.chaseCursorAim = !!g\.chaseCursorAim;/g) || [];
+assert(loads.length >= 1, 'both loaders restore it (' + loads.length + ')');
 assert(/ARPG cursor aim<\/b>/.test(src), 'the checkbox lives in the camera-view section');
 
 done('build 1103: chase view plays like an ARPG — if the creator says so');

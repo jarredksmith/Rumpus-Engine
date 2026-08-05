@@ -1,4 +1,6 @@
 import { gameSource, extractFunction, evalIn, assert, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 // spawnAppearsOnWave: noRespawn turns wave-0 ("every wave") into a one-time wave-1 spawn
 const saw = extractFunction('spawnAppearsOnWave');
@@ -23,6 +25,6 @@ assert(/const _cleared = gameCfg\.noRespawn && gameCfg\.mode==='prebuilt' && !_h
 assert(/else if\(_cleared\)\{ if\(objectiveActive\(\)==='eliminate'\)\{ if\(typeof gameWon==='function'\) gameWon\(\); \} \}/.test(src), 'cleared branch wrong (must not advance for extraction/survival)');
 // persisted
 assert(/noRespawn: !!gameCfg\.noRespawn/.test(src), 'noRespawn not serialized');
-assert((src.match(/gameCfg\.noRespawn = !!level\.game\.noRespawn;/g)||[]).length === 2, 'noRespawn not restored in both load paths');
+assert((src.match(/gameCfg\.noRespawn = !!g\.noRespawn;/g)||[]).length === 1, 'noRespawn not restored in both load paths');
 assert(/No respawn<\/b> \(single pass\)/.test(src), 'no-respawn toggle UI missing');
 done();
