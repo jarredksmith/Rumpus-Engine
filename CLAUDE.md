@@ -2256,6 +2256,180 @@ block. And my replacement pin `/g\.view==='chase'/` silently matched the tail of
 as well — six hits where one was meant. **A short variable name in a source pin is a substring of everything
 that ends with it**; that one asks `extractFunction('_applyGameCfg')` instead.
 
+## The graph could not name a thing it computed (build 1402)
+
+Found by asking what the gauntlet's first booth — a shooting gallery — actually needs, and checking rather
+than assuming. A gallery is N plates popped one at a time in a random order, and **every piece was already
+there**: `showprop`/`hideprop`/`resetprop` by tag (1170/1391), a random integer from Set variable, the
+`damaged` event to score with (1397). The JOIN between them was not.
+
+**`{score}` interpolation had existed since the toast node and reached NOTHING else.** Every field that
+names a thing in the world took a LITERAL, so *"show plate&lt;n&gt;"* was unsayable — eight plates meant eight
+hand-wired branches, and a ninth meant editing the graph.
+
+Measured on build 1401, with a literal tag as the control:
+
+```
+BEFORE   literal `plate2` hid plate2  ·  `plate{n}` with n=2 hid NOTHING
+         _lgPlaceAt('mark7') -> {60,60}  ·  _lgPlaceAt('mark{k}') -> null
+AFTER    both hide plate2  ·  the place field resolves to the same mark
+GALLERY  three nodes — event -> Set variable (random 1..3) -> `showprop plate{n}` — drew 24 times and
+         popped plate3 x10, plate1 x7, plate2 x7
+```
+
+**Three nodes instead of one branch per plate**, and adding a ninth plate is now a `max` field.
+
+### Where it lands, and why those places
+
+- **`_lgPlaceAt`'s first line**, so the goto node's arrival tag (1394), the prop-position stats (1352) and
+  every spawn/teleport verb inherit it with **no list of call sites to keep in step**. It is IDEMPOTENT — a
+  resolved name has no braces left — which is what lets it sit there AND at the dispatch site above without
+  either having to know about the other.
+- **The `do` node's four naming fields** — the tag, the prefab, the item, and the text a player reads. The
+  enums and urls beside them (`clip`, `sound`, `etype`, `pk`, `who`, `stat`, `cmd`) deliberately do not:
+  interpolating an enum can only ever produce an invalid one.
+- **Before the tag check**, so a computed tag that resolves to nothing is reported by the name it actually
+  resolved to: *"A `hideprop` action targets the tag `plate99`, but no placed prop has that tag."* — build
+  1214's channel, naming the real miss rather than the template.
+
+**The toast's own inline copy is gone.** Two implementations of one syntax is how the two drift, and a
+creator who learns `{score}` in a toast must get the same answer in a tag. Build 1231's per-player scoping
+rides along for free, because it is `_lgVarKey` that does the lookup: `plate{lane@}` is THIS player's lane.
+
+**The HUD widget's `interp` stays separate, and that is not an oversight** — build 1287 resolves through
+`_hwVarKey`, which asks a different question (*"what is MY number"*, outside any event) and must not adopt
+the event context's pid.
+
+### Eight harnesses moved, and five of them were rigs rather than pins
+
+1027, 1073, 1077, 1214, 1221 each EXECUTE engine source in a constructed scope, so a new dependency is
+genuinely missing there; each is now handed `_lgName` **lifted from the source**, never restated — a rig that
+restates a helper keeps passing against a stale copy. 1277 and 1073's param pins quoted the literal-only
+forms; 1231's and 1287's quoted the toast's inline regex, and 1231's is now stronger, asserting the
+`{coins@}` scoping **by execution** rather than by the shape of a regex literal.
+
+### And a probe fault worth the line, because it read as the feature not working
+
+The probe reset its plates between rounds by hand-setting `.visible`. show/hide track their own state (build
+1170 also drops the collider and the body), so the next hide early-returned and the computed tag measured as
+doing nothing — while the literal control, which ran first, worked. **The fix is to reset through the same
+verb.** Alongside it, `tools/probe/feature-sweep.mjs` was setting `userData.phys = true` by hand for its
+melee fixture; build 1392 made every damage consumer resolve through `damageableProps()`, and a prop that
+merely carries the flag is in neither list. That check had been reporting a broken melee arc against a
+fixture the engine could never produce — it uses `setPropDynamic` now, and the sweep reads **22/22**.
+
+Backticks inside a template literal, for the eighth time this session (1328/1342/1357).
+
+## A co-op joiner was playing a different level (build 1401)
+
+Build 1400 swept the `game` block's FIELDS against its loaders. This is the same sweep one tier up: every
+**top-level section** of a serialized level, checked against `restoreLevel` **and** `loadLevelFromNet`
+instead of against itself. **Of the 62 sections, thirteen were wrong** — and they are not obscure. Ten of
+them are one cluster, the KIT a level ships:
+
+| | |
+|---|---|
+| `gun` · `aim` · `aimWep` · `invItems` · `station` · `stationEnabled` · `chest` · `coin` | restored by the editor path, read by **nothing** in the client path |
+| `mountWep` · `attModels` | read at BOOT and by **neither** loader, so they leaked between levels on every path |
+
+So a co-op joiner played the level with the engine's defaults: **the wrong gun in their hands**, the
+engine's ADS pose rather than the level's, an ammo station the host did not have (or none where the host
+had one), **an inventory catalog that did not contain the key the host had just given them**, and default
+chest and coin meshes — both of which spawn on the client from the host's snapshot, so the two machines
+were drawing different objects at the same coordinates.
+
+`_applyLevelKit(level)` is the one applier, and both loaders call it. Build 1280's shape, third time.
+
+### The weapons block is the other half, and it is why this is one build
+
+Setting `gunModelUrl` on a client buys **nothing** while the client never drops its cached per-weapon
+meshes. The two loaders' copies of the weapons apply had drifted **four ways, with a hole in each
+direction**:
+
+- only `restoreLevel` RESET `model`/`view`/`clips`/`noMuzzle` for a weapon the level does not mention — so
+  a joiner kept the previous level's weapon models;
+- only `loadLevelFromNet` applied build 1240's authored **names** — so a renamed weapon reverted to its
+  factory name the moment a creator saved and reopened *their own* level;
+- only `restoreLevel` dropped the cached `gunModelByWep` meshes — the one that makes the url change visible;
+- only `restoreLevel` re-framed and re-showed the weapon, so a joiner never saw the swap at all.
+
+The shipped block is the **union**, written once.
+
+### Two things the probe found that nobody had reported
+
+- **`if(level.station && station)` was itself a bug.** `setStationEnabled(false)` runs first and tears the
+  object down, so a level that ships a custom station **disabled** found `station` null and silently kept
+  the *previous* level's model url — and re-enabling it in the editor then built the previous level's
+  station. The config is level DATA and lands either way now; only the LOAD waits for something to load
+  into. This one was live on the editor path, which was otherwise correct.
+- **`mountWep`/`attModels` had no sanitizer at all.** The boot line assigned the raw object straight
+  through, which was only ever safe because no peer's level could reach them. Now that both loaders do,
+  they are untrusted input like every other dictionary here (build 1325). The BOOT line is deliberately
+  left raw: `SAN_KEY_MAX` is declared ~800 lines below it, `typeof` does not guard a temporal dead zone
+  (build 1127), and that blob is the player's own localStorage rather than a stranger's.
+
+### The reset IS the measurement
+
+```
+                            loadLevelFromNet        restoreLevel
+BEFORE   16 of 16 values    still read the reset    (8 of them arrived)
+AFTER    16 of 16 values    ARRIVED                 ARRIVED
+weapons  name OLD -> Kit, an unmentioned weapon's model OLD -> '', the stale cached mesh dropped
+         — identically on both paths
+client   title screen OLD -> Kit, lobby backdrop OLD -> Kit, a minV+5 level REFUSED with 56 props untouched
+```
+
+Every value is RESET to a distinctive *"the joiner was in a different level"* state before the loader runs,
+so a value that arrives was applied and a value that still reads the reset was not — and `keyNames`/`hudCfg`
+ride along as POSITIVE controls, sections the client loader demonstrably does read. **Build 1400's first
+probe restored the same level and read the values back; everything came back and it proved nothing, because
+nothing had cleared them.**
+
+### `if present`, not always-assign — and the reason is not laziness
+
+Build 1400's rule is that a conditionally-assigned field LEAKS. All eight of the sections with a prior
+reader are written **unconditionally** by `serializeLevel`, so absence means a level authored before the
+field existed, and resetting those to engine defaults is a separate decision with a thousand builds of
+content behind it. The two with **no** prior reader always assign, because that is what stops *their* leak.
+
+### The sweep finishes at ZERO, and the last three are outside the kit
+
+Three more sections were wrong and are fixed in the same pass, because they were found by it:
+
+- **`homepage` and `lobbyBg`.** The client read `level.homepage` **only** to derive build 1215's per-game
+  persist namespace and never APPLIED it, so a joiner returning to the menu got the engine's title screen
+  and the engine's lobby backdrop rather than the level's.
+- **`v` / `minV`.** Build 1165's format check never ran on the multiplayer path — **the one path where a
+  stale cached client meets a newer level most often**, because the host picks the build. It runs before the
+  teardown there, which is 1165's own rule: a refusal must cost nothing. Verified live: a level stamped
+  `minV = LEVEL_FORMAT_V + 5` is refused with the prop list untouched.
+
+All 62 sections of a serialized level are now read by both runtime loaders.
+
+### Recorded, not fixed
+
+`level.player` is deliberately NOT in the kit — the client keeps its own avatar and the host's character
+arrives via the welcome `char` field, which is a documented decision at that line. But `pl.view` (the chase
+framing) and `pl.grip` (held-gun placement) are **level-wide** and ride along with that exclusion, so a
+joiner in third person uses their own framing. Splitting `applyPlayerLevel` into its per-player and
+level-wide halves is its own build.
+
+### Eight harnesses moved, and seven were counting copies
+
+504, 530, 229, 879, 1190, 1240, 1296, 1325. Every one of the seven asserted *"restored in all three load
+paths"* as a **count of 3** (or 2) over one line of source — build 1280's lesson again: **a test that counts
+copies of a thing is a test of the copying**, and each would have gone green against three copies that had
+quietly diverged, which is exactly what had happened to the weapons block they sat beside. They assert the
+property now: boot carries it, the one applier carries it, and both loaders provably reach that applier.
+
+The eighth is 504's, and it is the rare pin whose assertion was **inverted** rather than restated:
+`if(level.station && station)` was the defect. What it always meant — the transform is only *applied* when
+a station exists — is asserted directly now, beside the url landing as data either way.
+
+**A scripted edit must CUT before it INSERTS.** The applier's body contains the very lines being removed
+from `restoreLevel`, so inserting it first makes every one of those anchors ambiguous. The count assert
+caught it on the first run and nothing was written, which is what they are for.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

@@ -17,7 +17,11 @@ const PLACE_GLUE = `
   function terrainHeightAt(){ return 3; }
   let propModels=[], triggerZones=[];
 `;
-const P = new Function(PLACE_GLUE + extractFunction('_lgPlaceAt', src)
+/* build 1402: the place field interpolates `{var}`, so the rig needs the real interpolator (lifted, never
+   restated — a rig that restates a predicate keeps passing against a stale copy). */
+const NAME_GLUE = 'let logicVars={}; let _lgCtx={pid:0}; const LG_NAME_MAX = 64;\n'
+  + extractFunction('_lgVarKey', src) + '\n' + extractFunction('_lgName', src) + '\n';
+const P = new Function(NAME_GLUE + PLACE_GLUE + extractFunction('_lgPlaceAt', src)
   + '\nreturn { at:_lgPlaceAt, props:(v)=>{propModels=v;}, trigs:(v)=>{triggerZones=v;} };')();
 {
   const me = P.at('');
@@ -89,7 +93,7 @@ const WORLD_GLUE = `
   function updateHUD(){}
   function releaseHeld(){ log.push(['released']); }
 `;
-const W = new Function(WORLD_GLUE
+const W = new Function(NAME_GLUE + WORLD_GLUE
   + extractFunction('_lgPlaceAt', src) + '\n' + extractFunction('_lgEnemyTargets', src) + '\n'
   + extractFunction('_lgPlacePlayer', src) + '\n' + extractFunction('_wactSend', src) + '\n'
   + extractFunction('_applyWorldAction', src)
@@ -215,7 +219,8 @@ const W = new Function(WORLD_GLUE
   assert(/if\(\(typeof NET==='undefined' \|\| NET\.mode!=='client'\) && typeof _applyWorldAction==='function'\)/.test(fn),
     '...on the authoritative side only: the host owns spawns, damage and positions and streams the results');
 }
-assert(/etype:p\.etype\|\|'grunt', n:p\.n, pk:p\.pk\|\|'health', item:p\.item\|\|'', who:p\.who\|\|'player', amt:p\.amt, at:String\(p\.at==null\?'':p\.at\)\.trim\(\)/.test(src),
+// build 1402: `item` and `at` NAME something, so they interpolate `{var}`; the enums beside them do not.
+assert(/etype:p\.etype\|\|'grunt', n:p\.n, pk:p\.pk\|\|'health', item:_lgName\(p\.item\), who:p\.who\|\|'player', amt:p\.amt, at:_lgName\(p\.at\)/.test(src),
   'the Do-action node passes the new params through');
 assert(/\['spawn','Spawn enemies'\],\['pickup','Spawn pickup'\],\['damage','Damage'\],\['heal','Heal'\],\['kill','Kill'\],\['teleport','Teleport'\]/.test(src),
   'all six appear in the node\'s verb list, in plain English');

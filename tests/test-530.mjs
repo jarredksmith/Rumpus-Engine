@@ -25,6 +25,11 @@ assert(/mfCb\.checked=!WEAPONS\[curWep\]\.noMuzzle/.test(panel) && /WEAPONS\[cur
 // --- persistence: serialized + restored in all load paths ---
 assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg \|\| w\.noMuzzle \|\| st \|\| nmChg\)/.test(src), 'a flash-off weapon creates a weapons record');
 assert(/noMuzzle: w\.noMuzzle \? true : undefined/.test(src), 'noMuzzle serialized');
-assert((src.match(/WEAPONS\[k\]\.noMuzzle = !!wd\.noMuzzle;/g)||[]).length===3, 'noMuzzle restored in all three load paths');
+// build 1401: the two level loaders share ONE weapons block, so this is boot + that block. Counting one
+// copy per path was counting the duplication (build 1280) — and it would have gone green against three
+// copies that had drifted, which is exactly what had happened to the block around it.
+assert((src.match(/WEAPONS\[k\]\.noMuzzle = !!wd\.noMuzzle;/g)||[]).length===2, 'noMuzzle restored at boot and in the shared level applier');
+assert(/WEAPONS\[k\]\.noMuzzle = !!wd\.noMuzzle;/.test(extractFunction('_applyLevelKit')) && (src.match(/_applyLevelKit\(level\);/g)||[]).length===2,
+  '...which BOTH level loaders call, so every load path restores it');
 
 done('build 684: per-weapon muzzle-flash toggle');

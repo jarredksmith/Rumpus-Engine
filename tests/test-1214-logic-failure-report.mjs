@@ -47,6 +47,9 @@ const src = gameSource();
     const body =
       'const _LG_TAG_VERBS = new Set(["toggle","open","close","anim","unlock","showprop","hideprop","moveprop","delprop"]);\n' +
       'const propModels = props;\n' +
+      /* build 1402: a computed tag resolves BEFORE the check, so the report names what it resolved TO */
+      'let logicVars = {}; let _lgCtx = { pid:0 }; const LG_NAME_MAX = 64;\n' +
+      extractFunction('_lgVarKey') + '\n' + extractFunction('_lgName') + '\n' +
       extractFunction('_lgTagExists') + '\n' +
       'function _noteLogicFailure(m){ notes.push(m); }\n' +
       'function _applySignalAction(){}\n function _lgFollow(){}\n' +

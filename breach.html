@@ -12592,6 +12592,23 @@ let _lgCtx = {};
 // solo behaves identically when nobody else is connected. One function owns the mapping; every
 // read (_lgNum) and every write (setvar/addvar/math/read/toast) routes through it.
 function _lgVarKey(k){ return (k && k.charAt(k.length-1)==='@') ? (k + (_lgCtx.pid|0)) : k; }
+// build 1402: a NAME the graph computed. `{score}` interpolation had existed since the toast node and
+// reached nothing else, so every field that names a thing in the world took a LITERAL — and a shooting
+// gallery, which is N plates popped one at a time in a random order, could not say "show plate<n>". Eight
+// plates meant eight hand-wired branches, and adding a ninth meant editing the graph.
+//
+// Same rule as the toast, deliberately, so a creator learns ONE syntax: `{name}` reads a logic variable,
+// `{name@}` reads the event player's own copy (build 1231), a missing one reads 0, and the value is rounded
+// to 2 dp — which for the counters this exists to serve means `plate3`, not `plate3.00`.
+//
+// It is IDEMPOTENT (a resolved name has no braces left), which is what lets it sit at both a dispatch site
+// and the resolver below it without either having to know about the other.
+const LG_NAME_MAX = 64;   // a variable is a number, so this only ever bounds a pathological `{a}{a}{a}...`
+function _lgName(v){
+  const s = String(v == null ? '' : v).trim();
+  if(s.indexOf('{') < 0) return s;   // the overwhelmingly common case pays one indexOf
+  return s.replace(/\{([\w#@]+)\}/g, (m, k) => String(Math.round((+logicVars[_lgVarKey(k)] || 0) * 100) / 100)).slice(0, LG_NAME_MAX);
+}
 // build 1231: the player-side twin of _lgEnemyEvent — fires a NAMED event with a player context
 // (#pid, #team, #x, #z), set for the immediate cascade and unwound after (1221's rule: the payload
 // is a snapshot of the moment, not a live handle).
@@ -12932,14 +12949,16 @@ function _lgPulse(id, pin){
       break; }
     case 'once': { if(pin==='reset'){ st.done=false; break; } if(st.done) break; st.done=true; _lgFollow(id,0); break; }
     case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
-    case 'do': { const _verb=p.verb||'toggle', _tgt=String(p.target||'').trim();
+    case 'do': { const _verb=p.verb||'toggle', _tgt=_lgName(p.target);   /* build 1402: `plate{n}` — resolved BEFORE the tag check, so a computed tag that resolves to nothing is reported by its REAL name */
       if(_LG_TAG_VERBS.has(_verb) && _tgt && _tgt!=='this' && typeof _lgTagExists==='function' && !_lgTagExists(_tgt)) _noteLogicFailure('A "'+_verb+'" action targets the tag "'+_tgt+'", but no placed prop has that tag.');
-      try{ _applySignalAction({ do:_verb, target:_tgt, prefab:p.prefab||'',   /* build 1277: spawnprop was dead twice — the forwarded object dropped its prefab name */
-        clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
-        etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim(),
+      try{ _applySignalAction({ do:_verb, target:_tgt, prefab:_lgName(p.prefab),   /* build 1277: spawnprop was dead twice — the forwarded object dropped its prefab name */
+        clip:p.clip||'', cs:p.cs||'', text:_lgName(p.text), sound:p.sound||'',
+        /* build 1402: the four fields that NAME something interpolate — a tag, a prefab, an item, and the
+           text a player reads. The rest (clip, sound, etype, pk, who, stat, cmd) are enums or urls. */
+        etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:_lgName(p.item), who:p.who||'player', amt:p.amt, at:_lgName(p.at),
         stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }
       catch(e){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "'+_verb+'" action failed: '+((e&&e.message)||e)); } _lgFollow(id,0); break; }
-    case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#@]+)\}/g, (m,k)=>String(Math.round((+logicVars[_lgVarKey(k)]||0)*100)/100));   // {score} interpolates live variables; build 1231: {coins@} reads the event's player
+    case 'toast': { const msg=_lgName(String(p.text||'').slice(0,120));   // {score} interpolates live variables; build 1231: {coins@} reads the event's player; build 1402: through the ONE interpolator, so the syntax cannot drift between the fields that use it
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
     case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
     // ---- build 1352: GO TO A CAMPAIGN LEVEL ---------------------------------------------------------
@@ -13961,7 +13980,8 @@ function _applySignalAction(s, src){
 // They run on the authoritative side only — the host owns enemy spawns, damage and positions and streams the
 // results in the world snapshot, so a client applying them too would double-count.
 function _lgPlaceAt(tag){
-  const raw=String(tag==null?'':tag).trim(), t=raw.toLowerCase();
+  const raw=_lgName(tag), t=raw.toLowerCase();   // build 1402: `mark{n}` resolves here, so every place-taking verb inherits it
+
   if(t==='#here' || t==='here'){   // build 1221: the position the current event fired at (an enemy's death/hurt/spot spot)
     if(typeof _lgCtx.x==='number' && typeof _lgCtx.z==='number'){ const ty=(typeof terrainHeightAt==='function')?terrainHeightAt(_lgCtx.x,_lgCtx.z):0; return { x:_lgCtx.x, y:ty, z:_lgCtx.z }; }
     return null;   // '#here' outside an event with a position: do nothing rather than act at 0,0
@@ -23329,6 +23349,43 @@ function _sanPickupModels(raw){
   }
   return out;
 }
+/* build 1401: mount offsets and attachment models had NO sanitizer at all — the boot line assigned the raw
+   object straight through, and neither runtime loader read them, so a peer's level had never reached them.
+   Now that both loaders do, they are untrusted input like every other dictionary here (build 1325). The BOOT
+   line is deliberately left raw: SAN_KEY_MAX is declared ~800 lines below it, `typeof` does not guard a
+   temporal dead zone (build 1127), and that blob is the player's own localStorage rather than a peer's. */
+function _sanMountWep(raw){
+  const out = {};
+  if(!raw || typeof raw !== 'object') return out;
+  let n = 0;
+  for(const w in raw){
+    if(!Object.prototype.hasOwnProperty.call(raw, w)) continue;
+    if(++n > SAN_KEY_MAX) break;
+    const slots = raw[w]; if(!slots || typeof slots !== 'object') continue;
+    const o = {}; let m = 0;
+    for(const s in slots){
+      if(!Object.prototype.hasOwnProperty.call(slots, s)) continue;
+      if(++m > SAN_KEY_MAX) break;
+      const v = slots[s]; if(!v || typeof v !== 'object') continue;
+      o[_sanStr(s, 40)] = { x:_sanNum(v.x,-99,99,0),  y:_sanNum(v.y,-99,99,0),  z:_sanNum(v.z,-99,99,0),
+                            rx:_sanNum(v.rx,-360,360,0), ry:_sanNum(v.ry,-360,360,0), rz:_sanNum(v.rz,-360,360,0),
+                            s:_sanNum(v.s,0.01,100,1) };
+    }
+    out[_sanStr(w, 40)] = o;
+  }
+  return out;
+}
+function _sanAttModels(raw){
+  const out = {};
+  if(!raw || typeof raw !== 'object') return out;
+  let n = 0;
+  for(const k in raw){
+    if(!Object.prototype.hasOwnProperty.call(raw, k)) continue;
+    if(++n > SAN_KEY_MAX) break;
+    const u = _sanStr(raw[k], 300); if(u) out[_sanStr(k, 40)] = u;
+  }
+  return out;
+}
 let pickupModels = _sanPickupModels(savedLevel && savedLevel.pickupModels);   // kind -> {url, scale}: custom model in place of the floating icon
 let keyNames = _sanKeyNames(savedLevel && savedLevel.keyNames);   // color -> custom display name ('Engine Room Keycard'); ring/lock ids stay colors
 function keyDisplayName(color){ const n=keyNames[color]; return (n && String(n).trim()) ? String(n).trim() : color.toUpperCase()+' KEY'; }
@@ -26212,6 +26269,72 @@ function _crosshairFrom(c){
            /* a colour reaches CSS, and a level file is untrusted input (build 1325/1260) */
            color: String(c.color || 'accent').slice(0, 32).replace(/[^\w#().,%\- ]/g, '') || 'accent' };
 }
+// ---------------------------------------------------------------------------------------------------
+// build 1401: the KIT a level ships — the viewmodel gun, the ADS poses, the attachment mounts and models,
+// the inventory catalog, the ammo station, the chest and the coin.
+//
+// Found by continuing build 1400's sweep one tier up: every TOP-LEVEL section of a serialized level, against
+// BOTH runtime loaders instead of against itself. `restoreLevel` read eight of these and `loadLevelFromNet`
+// read NONE of them, so a co-op joiner played the level with the engine's defaults — the wrong gun in their
+// hands, the engine's ADS pose rather than the level's, an ammo station the host did not have (or none where
+// the host had one), an inventory catalog that did not contain the key the host had just given them, and
+// default chest and coin models. `mountWep`/`attModels` were read at BOOT and by neither loader, so those
+// two leaked between levels on EVERY path.
+//
+// The sections keep their `if present` semantics rather than always-assigning (build 1400's leak rule): all
+// eight are written unconditionally by `serializeLevel`, so absence means a level authored before the field
+// existed, and resetting those to engine defaults is a separate decision with a thousand builds of content
+// behind it. The two with no prior reader always assign, because that is what stops THEIR leak.
+function _applyLevelKit(level){
+  if(!level) return;
+  // the viewmodel gun. `level.weapons` (which both loaders already read) overrides it per weapon; this is
+  // the default and the framing every weapon starts from.
+  if(level.gun){ if(level.gun.url && level.gun.url!==gunModelUrl) swapGunModel(level.gun.url); Object.assign(editorTargets.gun.state, level.gun.state||{}); editorTargets.gun.apply(); }
+  // Per-weapon models, framing, tuning and names. The two loaders' copies of this had drifted FOUR ways,
+  // with a hole in each direction, and this is the UNION:
+  //   - only restoreLevel RESET model/view/clips/noMuzzle for a weapon the level does not mention, so a
+  //     joiner kept the previous level's weapon models;
+  //   - only loadLevelFromNet applied build 1240's authored NAMES, so a renamed weapon reverted to its
+  //     factory name the moment you saved and reopened your own level;
+  //   - only restoreLevel dropped the cached `gunModelByWep` meshes, so a joiner kept the OLD mesh even
+  //     when the url changed — which is what made setting the url on a client useless on its own;
+  //   - only restoreLevel re-framed and re-showed the weapon, so a joiner did not see the swap at all.
+  if(level.weapons && typeof level.weapons==='object'){
+    for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; WEAPONS[k].clips = wd.clips ? Object.assign(_wepClipBlank(k), wd.clips) : undefined; WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); _wepApplyName(k, wd.nm); } else { WEAPONS[k].model=''; WEAPONS[k].view=null; WEAPONS[k].dmg=GUN_BASE_DMG[k]; WEAPONS[k].clips=undefined; WEAPONS[k].noMuzzle=false; _wepApplyStats(k, null); _wepApplyName(k, null); } }
+    // drop cached models so they reload with their (possibly new) urls
+    for(const k in gunModelByWep){ if(gunModelByWep[k]){ gun.remove(gunModelByWep[k]); gunModelByWep[k]=null; } _gunLoading[k]=false; }
+    if(editorTargets.gun.syncFromWeapon) editorTargets.gun.syncFromWeapon();
+    showWeaponModel(curWep);
+  }
+  // the ADS poses
+  if(level.aimWep){ for(const k in level.aimWep) aimByWep[k]=Object.assign({}, AIM_DEFAULT, level.aimWep[k]); }
+  if(level.aim){ Object.assign(editorTargets.aim.state, level.aim.state||{}); if(!level.aimWep){ for(const k of Object.keys(WEAPONS)) aimByWep[k]=Object.assign({}, level.aim.state); } }
+  // attachment mounts + models — no reader outside boot until this build, so they ALWAYS assign
+  mountByWep = _sanMountWep(level.mountWep);
+  attModels  = _sanAttModels(level.attModels);
+  // the inventory catalog. Without it, a host's `give` of a level-defined item lands on a client that has
+  // never heard of it.
+  if(level.invItems && typeof level.invItems==='object'){ try{ invCatalog = _sanInvItems(level.invItems); }catch(e){} }
+  // The ammo station. Its CONFIG is level data whether or not a station object exists right now: the old
+  // line required `station` to be live, and `setStationEnabled(false)` — which ran BEFORE it — had already
+  // torn it down. So a level that ships a custom station DISABLED kept its predecessor's model url, and re-enabling
+  // it in the editor built the previous level's station. Measured on the editor path, which was otherwise
+  // correct; the url now lands as data and only the LOAD waits for an object to load into.
+  if(level.station){
+    Object.assign(editorTargets.station.state, level.station.state||{});
+    const _su = _sanStr(level.station.url, 300);
+    if(_su && _su !== stationModelUrl){ if(station) swapStationModel(_su); else stationModelUrl = _su; }
+  }
+  setStationEnabled(!(level.stationEnabled===false));   // build 654: build or tear down to match the level
+  if(station && editorTargets.station.apply) editorTargets.station.apply();
+  // the loot chest and the coin — both spawn on a CLIENT from the host's snapshot, so a joiner was drawing
+  // them with the engine's default meshes while the host drew the level's
+  if(level.chest){ chestModelUrl = level.chest.url||''; chestModelScale = level.chest.scale||1; randomLootOn = !level.chest.randomOff; }
+  if(level.coin){ const c=level.coin; coinCfg.url=c.url||''; coinCfg.scale=c.scale||1; coinCfg.on=c.on!==false; }
+  // make the poses live. `restoreLevel` calls this pair AGAIN at its own historic position after the
+  // per-weapon block, which is what keeps that path's final state identical to before this build.
+  applyWeaponAim(curWep); if(editorTargets.aim.syncFromWeapon) editorTargets.aim.syncFromWeapon();
+}
 function _lvlPvp(){
   const g=(typeof gameCfg!=='undefined' && gameCfg) ? gameCfg : {};
   const m=String(g.pvp||'').trim();
@@ -27150,6 +27273,10 @@ function _lobbyDlTick(){
 function _lobbyDlWatch(){ if(_lobbyDlT) clearInterval(_lobbyDlT); _lobbyDlT=setInterval(_lobbyDlTick, 500); _lobbyDlTick(); }
 function loadLevelFromNet(level){
   if(!level) return;
+  // build 1401: build 1165's format check never ran here — and this is the path where a stale cached client
+  // meets a newer level MOST often, because the host picks the build. Before the teardown below, since a
+  // refusal must cost nothing.
+  if(typeof _levelFormatCheck==='function' && !_levelFormatCheck(level).ok) return;
   NET.sentProps.clear();   // rebuild the "what peers already have" baseline from the host's level
   // clear current props
   for(let i=propModels.length-1;i>=0;i--){ if(propModels[i]) removeProp(i); }
@@ -27186,7 +27313,14 @@ function loadLevelFromNet(level){
   // (world/terrain adopted ABOVE the prop rebuild — build 893)
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
-  // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
+  // build 1401: everything the LEVEL ships that a joiner never received — the viewmodel gun, the ADS poses,
+  // the attachment mounts and models, the inventory catalog, the ammo station, the chest and the coin.
+  // Before the per-weapon block below, which overrides the gun per weapon and reads the state this sets.
+  _applyLevelKit(level);
+  // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome
+  // 'char' field. So `level.player` is deliberately NOT in the kit — but its `view` (chase framing) and
+  // `grip` (held-gun placement) halves ARE level-wide and ride along with that exclusion. Splitting
+  // applyPlayerLevel into its per-player and level-wide halves is its own build.
   if(level.game) _applyGameCfg(level.game);
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -27206,9 +27340,11 @@ function loadLevelFromNet(level){
   hudCfg = _sanitizeHud(level.hud); if(typeof applyHudCfg==='function') applyHudCfg(); if(typeof renderHudPanel==='function') renderHudPanel();   // build 665: per-level HUD theme
   radialCfg = _sanitizeRadial(level.radial); if(typeof renderBuildMenuPanel==='function') renderBuildMenuPanel();   // build 671: per-level build menu
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
+  // build 1401: the client read `level.homepage` only to derive the persist namespace and never APPLIED it,
+  // so a joiner returning to the menu got the engine's title screen and the engine's lobby backdrop.
+  homepageCfg = _sanitizeHomepage(level.homepage); lobbyBgUrl = (typeof _sanitizeLobbyBg==='function') ? _sanitizeLobbyBg(level.lobbyBg) : ''; if(typeof renderHomePanel==='function') renderHomePanel(); if(typeof _syncGameHome==='function') _syncGameHome();   // build 971: creator title screen (absent = off) + 1009 lobby backdrop
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; refreshPlayerSpawnMarker(); }
-  if(level.weapons){ for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; if(wd.clips) WEAPONS[k].clips=Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); _wepApplyName(k, wd.nm); } else { _wepApplyStats(k, null); _wepApplyName(k, null); } } }   // build 1190: a joiner plays the host's tuning, and a weapon with no entry plays factory; build 1240: names too
   if(level.grenade){ const G=level.grenade; if(G.model!=null) GRENADE.model=G.model||''; if(G.scale!=null) GRENADE.scale=G.scale; if(G.radius!=null) GRENADE.radius=G.radius; if(G.damage!=null) GRENADE.damage=G.damage; if(G.fuse!=null) GRENADE.fuse=G.fuse; if(G.throwForce!=null) GRENADE.throwForce=G.throwForce; loadGrenadeModel(); if(editorTargets.grenade.sync) editorTargets.grenade.sync(); }
   if(level.enemies || level.enemy){   // adopt the host's per-type enemy models so clients render the same hostiles
     applyEnemyModelData(level.enemies, level.enemy);
@@ -33119,7 +33255,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1400 · 2026-08-05';
+const BUILD_VERSION = 'build 1402 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -43426,21 +43562,10 @@ function restoreLevel(level){
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   homepageCfg = _sanitizeHomepage(level.homepage); lobbyBgUrl = (typeof _sanitizeLobbyBg==='function') ? _sanitizeLobbyBg(level.lobbyBg) : ''; if(typeof renderHomePanel==='function') renderHomePanel(); if(typeof _syncGameHome==='function') _syncGameHome();   // build 971: creator title screen (absent = off) + 1009 lobby backdrop
   if(level.grenade){ const G=level.grenade; if(G.model!=null) GRENADE.model=G.model||''; if(G.scale!=null) GRENADE.scale=G.scale; if(G.radius!=null) GRENADE.radius=G.radius; if(G.damage!=null) GRENADE.damage=G.damage; if(G.fuse!=null) GRENADE.fuse=G.fuse; if(G.throwForce!=null) GRENADE.throwForce=G.throwForce; loadGrenadeModel(); if(editorTargets.grenade.sync) editorTargets.grenade.sync(); }
-  // gun / aim / station
-  if(level.gun){ if(level.gun.url && level.gun.url!==gunModelUrl) swapGunModel(level.gun.url); Object.assign(editorTargets.gun.state, level.gun.state||{}); editorTargets.gun.apply(); }
-  // per-weapon models + framing
-  if(level.weapons && typeof level.weapons==='object'){
-    for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; WEAPONS[k].clips = wd.clips ? Object.assign(_wepClipBlank(k), wd.clips) : undefined; WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); } else { WEAPONS[k].model=''; WEAPONS[k].view=null; WEAPONS[k].dmg=GUN_BASE_DMG[k]; WEAPONS[k].clips=undefined; WEAPONS[k].noMuzzle=false; _wepApplyStats(k, null); } }
-    // drop cached models so they reload with their (possibly new) urls
-    for(const k in gunModelByWep){ if(gunModelByWep[k]){ gun.remove(gunModelByWep[k]); gunModelByWep[k]=null; } _gunLoading[k]=false; }
-    if(editorTargets.gun.syncFromWeapon) editorTargets.gun.syncFromWeapon();
-    showWeaponModel(curWep);
-  }
-  if(level.aimWep){ for(const k in level.aimWep) aimByWep[k]=Object.assign({}, AIM_DEFAULT, level.aimWep[k]); }
-  if(level.aim){ Object.assign(editorTargets.aim.state, level.aim.state||{}); if(!level.aimWep){ for(const k of Object.keys(WEAPONS)) aimByWep[k]=Object.assign({}, level.aim.state); } }
-  applyWeaponAim(curWep); if(editorTargets.aim.syncFromWeapon) editorTargets.aim.syncFromWeapon();
-  setStationEnabled(!(level.stationEnabled===false));   // build 654: build or tear down to match the level
-  if(level.station && station){ if(level.station.url && level.station.url!==stationModelUrl) swapStationModel(level.station.url); Object.assign(editorTargets.station.state, level.station.state||{}); editorTargets.station.apply(); }
+  // gun / aim / mounts / inventory / station / chest / coin — build 1401: one applier, shared with the
+  // multiplayer loader, which read NONE of it. The blocks that used to be scattered below are gone with it.
+  _applyLevelKit(level);
+  applyWeaponAim(curWep); if(editorTargets.aim.syncFromWeapon) editorTargets.aim.syncFromWeapon();   /* after the per-weapon block, exactly where it has always been — which is what keeps this path's final state identical to before build 1401 */
   // world + loot (world/terrain itself is adopted at the TOP of this function — build 893)
   // build 879: pickups / loot / inventory were NEVER restored on this path (community levels, share
   // links, .json import, undo) — the previous level's pads persisted and the loaded level's own never
@@ -43450,7 +43575,6 @@ function restoreLevel(level){
   selPickup=-1; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
   selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
-  if(level.invItems && typeof level.invItems==='object'){ try{ invCatalog = _sanInvItems(level.invItems); if(typeof renderInvItems==='function' && editorOpen) renderEditorFields(); }catch(e){} }   /* build 1325 */
   /* build 1325: `keyNames` and `pickupModels` SERIALIZE with the level and are loaded at boot and by the
      multiplayer loader — and restoreLevel never loaded either of them. So the level you opened second kept
      the first one's key names and pickup models, an undo could not undo a key rename, and a shared level
@@ -43463,8 +43587,6 @@ function restoreLevel(level){
   if(level.audio){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply, don't persist (see loadLevelFromNet)
   _applyCine(level.cine);
   if(level.player) applyPlayerLevel(level.player);
-  if(level.chest){ chestModelUrl = level.chest.url||''; chestModelScale = level.chest.scale||1; randomLootOn = !level.chest.randomOff; }
-  if(level.coin){ const c=level.coin; coinCfg.url=c.url||''; coinCfg.scale=c.scale||1; coinCfg.on=c.on!==false; }
   if(level.enemies || level.enemy){ applyEnemyModelData(level.enemies, level.enemy); for(const en of enemies) buildEnemyVisual(en.mesh); if(typeof refreshPreviewEnemy==='function') refreshPreviewEnemy(); }   // re-skin live enemies (legacy single-model falls back to all types)
   selProps.length = 0;
   editorTargets.props.idx = Math.max(0, Math.min(editorTargets.props.idx, propModels.length-1));

@@ -87,10 +87,12 @@ const src = gameSource();
 { // spawnprop was dead TWICE: the Do node dropped the prefab name on the way through
   const pulse = extractFunction('_lgPulse');
   const doCase = pulse.slice(pulse.indexOf("case 'do': {"), pulse.indexOf("case 'toast':"));
-  assert(/prefab:p\.prefab\|\|''/.test(doCase),
+  // build 1402: the four fields that NAME something now interpolate `{var}` on the way through. What this
+  // has always asserted — that the Do node forwards them at all — is unchanged.
+  assert(/prefab:_lgName\(p\.prefab\)/.test(doCase),
     'the Do node forwards the prefab name — without it spawnprop had nothing to spawn even once routed');
   // every verb the dropdown offers must be forwarded with the fields its own handler reads
-  assert(/target:_tgt/.test(doCase) && /at:String\(p\.at==null\?'':p\.at\)\.trim\(\)/.test(doCase),
+  assert(/target:_tgt/.test(doCase) && /at:_lgName\(p\.at\)/.test(doCase),
     '...alongside the tag and the place the prop verbs use');
 }
 { // the palette and the dispatcher must agree — this is the parity that was missing

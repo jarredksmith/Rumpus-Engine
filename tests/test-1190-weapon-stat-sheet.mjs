@@ -44,8 +44,16 @@ const mk = () => {
   // serializer emits only CHANGED stats; loaders apply st through the one helper
   assert(/for\(const s of GUN_STAT_KEYS\)\{ if\(w\[s\]!=null && GUN_BASE\[k\] && w\[s\]!==GUN_BASE\[k\]\[s\]\)\{ \(st=st\|\|\{\}\)\[s\]=w\[s\]; \} \}/.test(src),
     'the serializer diffs against GUN_BASE — factory levels carry no sheet at all (623\'s pattern)');
-  eq((src.match(/_wepApplyStats\(k, wd\.st\);/g) || []).length, 3, 'all three loaders (boot, net, restore) apply the sheet');
-  eq((src.match(/_wepApplyStats\(k, null\);/g) || []).length, 2, '...and the net + restore loaders reset weapons a level does not mention');
+  // build 1401: BOTH runtime loaders route through ONE `_applyLevelKit`, so counting copies of this line
+  // counts the DUPLICATION rather than the behaviour — build 1280's lesson, and the reason the old count of
+  // three could have gone green against three copies that had quietly diverged. It asserts the property now,
+  // which is stronger: boot carries it, the one shared applier carries it, and both loaders reach that
+  // applier.
+  eq((src.match(/_wepApplyStats\(k, wd\.st\);/g) || []).length, 2, 'boot and the one shared applier apply the sheet');
+  assert(/_wepApplyStats\(k, wd\.st\);/.test(extractFunction('_applyLevelKit')), '...and that applier is where the level paths do it');
+  eq((src.match(/_applyLevelKit\(level\);/g) || []).length, 2, '...which BOTH loaders call, so neither can be forgotten');
+  assert(/_wepApplyStats\(k, null\);/.test(extractFunction('_applyLevelKit')),
+    '...and a weapon the level does not mention is reset to factory on every level path');
   // build 1296 added melee + reach to the sheet and normalises both on the live weapon first, because the
   // only-changed serializer compares against this baseline and `true !== 1` would emit a phantom override.
   // build 1303 added `windup` alongside 1296's melee/reach, normalised the same way and for the same reason.
