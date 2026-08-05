@@ -967,6 +967,71 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A primitive gets material structure (build 1384)
+
+A cold critic put the stock level at **3/10** and a GENERATED arena at **6/10** off the same renderer, and
+named the difference exactly: the generator gives every piece it builds a real per-material albedo, while
+the hand-built level's crates, ramps and pillars are untextured primitives. Build 1379's noise gave them
+VARIATION; it cannot give them STRUCTURE — panel lines, brushed grain, wear — which is what reads as a
+material rather than as plastic.
+
+**A plain `map` cannot be the answer, and that is the whole design problem.** Build 1378 could compensate
+`floorMat`'s base colour because the ENGINE owns it. A primitive's colour is the CREATOR'S, chosen in a
+picker, and a map multiplies it — every prop in every level ever saved would have gone ~60% darker.
+
+So the texture is a **mean-1.0 MODULATION**, not an albedo: its LUMINANCE over that luminance's own mean.
+Three consequences, all wanted — the mean albedo does not move so nothing re-exposes, the texture's colour
+cast divides out so the creator's colour still decides the hue, and what survives is the structure.
+Neutrality is true by CONSTRUCTION, because `PROP_TEX_LUM` is the mean of the exact quantity the shader
+computes (sRGB-space luminance, THEN decoded) measured on the PNG that ships; `test-1384` re-derives it.
+
+**Triplanar in object space, never UV.** A primitive's UVs run 0..1 per FACE whatever that face's real size
+is, so a stretched box stretches the texture — build 1378's 17:1 boundary wall one layer down. `vOdPos` was
+already there for the noise, cannot stretch, and stays locked to the object as it moves.
+
+### The sweep that set both numbers
+
+Measured on a SUN-LIT target with build 1379's own term as a positive control:
+
+```
+                          unique colours   pixels moved >1
+base                          1.000x            0.00%
+uOdAlb 1.2 (the control)      1.318x           34.79%   <- it fires
+amp 0.35 / density 2          1.027x            5.68%
+amp 0.55 / density 2          1.050x            9.72%   <- shipped
+amp 0.55 / density 5          1.016x            7.77%
+amp 0.90 / density 2          1.088x           15.51%
+amp 0.90 / density 5          1.044x           14.14%
+control back to 0             0.999x            0.00%
+```
+
+0.55 gives twice 1379's frame-wide gain for −0.39% of exposure (1378's standard is 1%). 0.90 nearly doubles
+it again, but `mix(1, r, 0.9)` swings albedo 0.19x..2.01x — near black in the crevices and blown at the
+peaks, which stops being a modulation and starts being a texture overriding the colour the creator chose.
+
+**DENSITY 2 BEAT DENSITY 5 at both amplitudes**, which is build 1379's pixel-subtense argument for the
+third time: the first guess put ~5.6 tiles across the target, whose period is sub-pixel at the range a
+level is played at, so it averaged back toward flat.
+
+### The instrument, which cost more than the build
+
+The first attempt was reverted with the note *"it measurably does nothing"*. **That was false**, and the
+correction matters more than the feature: the null was measured on a target whose window mean luminance was
+**12.3 of 255**. A multiplicative modulation on a surface that renders black produces a fraction of a code
+value at any amplitude — the measurement could not have seen it at any setting.
+
+The check that caught it is the one this file already prescribes: **before believing a null, prove the
+instrument can produce a positive.** Driving 1379's `uOdAlb` — a term measured working — through the same
+rig moved 0.17% of pixels at a 10x amplitude. A positive control that barely fires invalidates every null
+taken beside it.
+
+So the target is now chosen on the SUN SIDE (`_sunDir()` decides the camera's side of the prop), the window
+is derived by PROJECTING the target's bounding box to screen rather than picked by eye, and the window's
+mean luminance is reported before any number beside it is believed. Every "know where the camera is" entry
+in this file — 1124, 1151, 1379 — is the same mistake, and those three habits together remove the class.
+
+One pin moved (1379's, which quoted a statement that gained the opt-in on the same line).
+
 ## An attempt that did not ship: texture modulation on primitives (after build 1383)
 
 A cold critic scored the stock level **3/10** and a GENERATED arena **6/10** off the same renderer, and named

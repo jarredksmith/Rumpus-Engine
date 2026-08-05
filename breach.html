@@ -9889,7 +9889,11 @@ function _procRepeatFor(span){
 // NOT pass it — they carry a real authored albedo since 1378, and two detail systems on one surface is
 // double grain (1145's rule). A primitive has no albedo of any kind, which is what this is for.
 function applyProcSurface(mat, span, alb){
-  if(alb && albedoDetailWanted(mat)){ applyObjDetail(mat, _albDetailFreq(span), true); mat.userData._odSpan = true; }
+  if(alb && albedoDetailWanted(mat)){
+    /* build 1384: mark BEFORE patching — applyObjDetail reads it to decide the program variant */
+    mat.userData._odTex = true; mat.userData._odTexF = _propTexFreq(span);
+    applyObjDetail(mat, _albDetailFreq(span), true); mat.userData._odSpan = true;
+  }
   const set = _procSet(_procRepeatFor(span)); if(!set || !mat) return mat;
   for(const k of PROC_SLOTS) if(!mat[k]) mat[k] = set[k];   // never displace a texture a creator set
   mat.userData.procSurf = set;   // remembered, because assigning it once is not enough — see below
@@ -9910,8 +9914,11 @@ function retileProcSurface(root, span){
     if(m.userData._odSpan){
       const _f = _albDetailFreq(span);
       m.userData._odFreq = _f;
+      const _tf = _propTexFreq(span);
+      m.userData._odTexF = _tf;
       const u = m.userData._odU;
       if(u && u.uOdFreq) u.uOdFreq.value = _f;
+      if(u && u.uOdTexF) u.uOdTexF.value = _tf;   /* build 1384: the texture's density is a physical size too */
     }
     const cur = m.userData.procSurf; if(!cur || cur === set) return;
     let hit = false;
@@ -9976,6 +9983,67 @@ const OBJ_DETAIL_ALB = 0.30;     // +/- fraction it swings the authored albedo, 
 // touched) — what is bought above 0.13 is amplitude, which is the thing that actually hides a repeat.
 // 0.30 is also, independently, where build 1379's sweep put the knee for the same kind of term.
 const MACRO_DETAIL_ALB = 0.30;
+// ---- build 1384: A PRIMITIVE GETS REAL MATERIAL STRUCTURE ----------------------------------------------
+// A cold critic put the stock level at 3/10 and a GENERATED arena at 6/10 off the same renderer, and named
+// the difference exactly: the generator gives every piece it builds a real per-material albedo, while the
+// hand-built level's crates, ramps and pillars are untextured primitives. 1379's noise gave them variation;
+// it cannot give them STRUCTURE — panel lines, brushed grain, wear — which is what reads as a material.
+//
+// A plain `map` cannot be the answer here and that is the whole design problem. Build 1378 could compensate
+// `floorMat`'s base colour because the engine owns it; a primitive's colour is the CREATOR'S, chosen in a
+// picker, and a map multiplies it — every prop in every level ever saved would have gone ~60% darker.
+//
+// So the texture is a MEAN-1.0 MODULATION, not an albedo: its LUMINANCE, divided by that luminance's own
+// mean. Three consequences, all wanted:
+//   * the mean albedo does not move, so nothing re-exposes and no authored colour changes;
+//   * the texture's own colour cast is divided out, so the CREATOR's colour still decides the hue;
+//   * what survives is the structure, which is the thing that was missing.
+// Neutrality is true BY CONSTRUCTION rather than by tuning, because the constant below is the mean of the
+// exact quantity the shader computes — sRGB-space luminance, then decoded — measured on the PNG that ships.
+const PROP_TEX_URL = 'img/tex/prop-metal.png';
+const PROP_TEX_LUM = 0.414947;   /* mean of srgb2lin(luma(texel)) over img/tex/prop-metal.png — test-1384 re-derives it */
+// SWEPT on a SUN-LIT target (window luminance 37, against the 12.3 that invalidated the first attempt),
+// with build 1379's own term as a positive control firing at 34.79% and the control returning to 0.00%:
+//     amp 0.35 / density 2    1.027x unique colours    5.68% of pixels
+//     amp 0.55 / density 2    1.050x                   9.72%    <- shipped
+//     amp 0.55 / density 5    1.016x                   7.77%
+//     amp 0.90 / density 2    1.088x                  15.51%
+//     amp 0.90 / density 5    1.044x                  14.14%
+// 0.55 gives twice 1379's frame-wide gain for -0.39% of exposure (the control drifts -0.00%, and 1378's
+// standard is 1%). 0.90 nearly doubles it again, but `mix(1, r, 0.9)` swings albedo 0.19x..2.01x — near
+// black in the crevices and blown at the peaks, which stops being a modulation and starts being a texture
+// overriding the colour the creator chose. At 0.55 the swing is 0.50x..1.62x.
+const PROP_TEX_AMT = 0.55;
+// DENSITY 2 BEAT DENSITY 5 at both amplitudes, which is build 1379's pixel-subtense argument for the third
+// time: the first guess put ~5.6 tiles across the target, whose period is sub-pixel at the range a level is
+// played at, so it averaged back toward flat. Per METRE keeps the physical scale 1139 requires, and the
+// floor keeps a small prop readable — a 1 m crate would otherwise get a quarter of one tile.
+const PROP_TEX_PER_M = 0.25;
+const PROP_TEX_MIN_CYC = 1.5;    /* minimum tiles across the object, whatever its size */
+let _propTex = null;
+function _ensurePropTex(){
+  if(_propTex !== null) return _propTex;
+  _propTex = undefined;   /* in flight */
+  try{
+    const l = new THREE.TextureLoader();
+    l.load(PROP_TEX_URL, (t)=>{
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      /* deliberately NOT sRGB-tagged: this is sampled by a hand-written patch, never by three's map path,
+         and the decode happens in the shader so it matches the constant above exactly */
+      if('colorSpace' in t) t.colorSpace = THREE.NoColorSpace; else if('encoding' in t) t.encoding = 3000;
+      _propTex = t; _propTexU.value = t;
+    }, undefined, ()=>{ _propTex = null; _propTexU.value = _propTexWhite; });
+  }catch(e){ _propTex = null; }
+  return _propTex;
+}
+const _propTexWhite = (function(){
+  try{ const t = new THREE.DataTexture(new Uint8Array([255,255,255,255]), 1, 1); t.needsUpdate = true; return t; }
+  catch(e){ return null; }
+})();
+const _propTexU = { value: _propTexWhite };
+function _propTexFreq(span){
+  return Math.max(PROP_TEX_MIN_CYC, PROP_TEX_PER_M * Math.max(0.05, Math.min(200, +span || 1)));
+}
 // Cycles per WORLD METRE for a primitive. The object-space field is locked to the mesh (1145's reason:
 // world-space noise SWIMS as a prop is carried), but its DENSITY has to be a physical size or a 22 m deck
 // and a 1 m crate read as two differently-zoomed photographs of one material — which is exactly the fault
@@ -10054,6 +10122,10 @@ function applyObjDetail(mat, freq, albOnly){
   // assigned further down the file and won. Build 1286 recorded this exact rule for the bake's patch and
   // it never reached here. `hasOwnProperty` and not truthiness — three declares a no-op on the PROTOTYPE
   // (build 1379), so a truthiness test chains three's own empty function forever.
+  // build 1384: the texture modulation is its OWN program variant — three extra samples are not free, and
+  // floorMat/wallMat (which take the macro mode) must not pay them.
+  const texOn = !!(albOnly && mat.userData._odTex);
+  if(texOn) _ensurePropTex();
   const _odPrev = Object.prototype.hasOwnProperty.call(mat, 'onBeforeCompile') ? mat.onBeforeCompile : null;
   mat.onBeforeCompile = (shader, renderer)=>{
     if(_odPrev){ try{ _odPrev.call(mat, shader, renderer); }catch(e){} }   /* a throwing predecessor must not take this patch down with it */
@@ -10063,14 +10135,21 @@ function applyObjDetail(mat, freq, albOnly){
     /* build 1382: per-material, defaulting to the detail amplitude — the macro layer needs its own, and a
        uniform written before its shader exists is a write to nothing (1379), so it lives on the material */
     shader.uniforms.uOdAlb = { value: (mat.userData._odAmp > 0) ? mat.userData._odAmp : OBJ_DETAIL_ALB };
+    if(texOn){
+      shader.uniforms.uOdTex  = _propTexU;                       /* BY REFERENCE: one texture, every prop */
+      shader.uniforms.uOdTexM = { value: PROP_TEX_LUM };
+      shader.uniforms.uOdTexA = { value: PROP_TEX_AMT };
+      shader.uniforms.uOdTexF = { value: mat.userData._odTexF > 0 ? mat.userData._odTexF : PROP_TEX_PER_M };
+    }
     // kept so a later resize can move the density without recompiling anything (retileProcSurface)
     mat.userData._odU = shader.uniforms;
-    shader.vertexShader = 'varying vec3 vOdPos;\n' + shader.vertexShader
-      .replace('#include <begin_vertex>', 'vOdPos = position;\n#include <begin_vertex>');
+    shader.vertexShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\n' + shader.vertexShader
+      .replace('#include <begin_vertex>', 'vOdPos = position;\nvOdNrm = normal;\n#include <begin_vertex>');
     // _odP and _odBase are shader-globals on purpose: three's meshphysical fragment shader runs
     // roughnessmap_fragment BEFORE normal_fragment_maps, so the field is evaluated once in the first
     // patch and reused by the second — four noise evaluations per pixel instead of five.
-    shader.fragmentShader = 'varying vec3 vOdPos;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump; uniform float uOdAlb;\n'
+    shader.fragmentShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump; uniform float uOdAlb;\n'
+      + (texOn ? 'uniform sampler2D uOdTex; uniform float uOdTexM; uniform float uOdTexA; uniform float uOdTexF;\n' : '')
       + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase;\n' + shader.fragmentShader
       // build 1379: the field is evaluated HERE now, at map_fragment, because that is the earliest chunk
       // where diffuseColor is final and it runs BEFORE roughnessmap_fragment — so the albedo, roughness
@@ -10086,6 +10165,24 @@ function applyObjDetail(mat, freq, albOnly){
         // 1.0 and the surface's mean albedo — the thing every level's lighting was tuned against — does
         // not move. That is the whole reason this can be retrofitted onto colours creators already chose.
         'diffuseColor.rgb *= mix(1.0 - uOdAlb, 1.0 + uOdAlb, _odBase);',
+        // build 1384: TRIPLANAR, in the same object space the noise already uses. A primitive's UVs run
+        // 0..1 per FACE whatever that face's real size is, so a stretched box would stretch the texture —
+        // build 1378's 17:1 boundary wall, one layer down. Projecting from vOdPos cannot stretch, needs no
+        // UVs at all, and stays locked to the object as it moves (1145's reason for object space).
+        (texOn ? [
+          'if( uOdTexA > 0.0 ){',
+          '  vec3 _tb = abs(normalize(vOdNrm)); _tb = _tb*_tb; _tb = _tb*_tb; _tb /= max(1e-4, _tb.x+_tb.y+_tb.z);',
+          '  vec2 _tf = vec2(uOdTexF);',
+          '  vec3 _ts = texture2D(uOdTex, vOdPos.zy*_tf).rgb*_tb.x',
+          '            + texture2D(uOdTex, vOdPos.xz*_tf).rgb*_tb.y',
+          '            + texture2D(uOdTex, vOdPos.xy*_tf).rgb*_tb.z;',
+          // LUMINANCE only: the texture's own cast must not override the colour the creator picked.
+          '  float _ty = dot(_ts, vec3(0.2126, 0.7152, 0.0722));',
+          // decode with the exact sRGB EOTF, because uOdTexM is the mean of this same quantity
+          '  float _tl = (_ty <= 0.04045) ? (_ty/12.92) : pow((_ty+0.055)/1.055, 2.4);',
+          '  diffuseColor.rgb *= mix(1.0, _tl/uOdTexM, uOdTexA);',
+          '}',
+        ].join('\n') : ''),
       ].join('\n'))
       // Roughness next: this is the term that breaks a swept highlight into a surface. roughnessFactor
       // is declared by the chunk, so the patch has to come AFTER it.
@@ -10115,7 +10212,7 @@ function applyObjDetail(mat, freq, albOnly){
   const _odPrevKey = Object.prototype.hasOwnProperty.call(mat, 'customProgramCacheKey') ? mat.customProgramCacheKey : null;
   mat.customProgramCacheKey = function(){
     let p = ''; if(_odPrevKey){ try{ p = String(_odPrevKey.call(mat) || ''); }catch(e){} }
-    return (albOnly ? 'objDetailA' : 'objDetail') + (_odPrev ? '+c' : '') + p;
+    return (albOnly ? 'objDetailA' : 'objDetail') + (texOn ? 'T' : '') + (_odPrev ? '+c' : '') + p;
   };
   mat.needsUpdate = true;
   return mat;
@@ -32658,7 +32755,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1383 · 2026-08-05';
+const BUILD_VERSION = 'build 1384 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
