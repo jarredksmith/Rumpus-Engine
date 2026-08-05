@@ -14,7 +14,7 @@ assert(/urls\.forEach\(u=>\{ try\{ loadGLTFCached\(u, \(\)=>\{\}, \(\)=>\{\}\); 
 
 // startGame runs the prewarm BEFORE the asset gate, so _glbPending reflects the enemy loads
 const sg = extractFunction('startGame');
-assert(/_prewarmMatchModels\(\);[\s\S]*?if\(_levelAssetsPending\(\)\)\{ showLevelLoader\(\); waitAssetsThenReveal\(\); \}/.test(sg), 'prewarm happens before the loading-screen gate');
+assert(/_prewarmMatchModels\(\);[\s\S]*?if\(_levelAssetsPending\(\) \|\| _loadCover\)\{ _loadCover=false; showLevelLoader\(\); waitAssetsThenReveal\(\); \}/.test(sg), 'prewarm happens before the loading-screen gate');
 
 // the gate counts models still loading, and the loader has a safety timeout
 const lap = extractFunction('_levelAssetsPending');

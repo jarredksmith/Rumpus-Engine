@@ -1857,6 +1857,93 @@ it does not call it.** A pin must not be satisfiable by prose — this file reco
 Seven pins moved (1145 x2, 1379, 1382, 1384, 1388 x2), every one a GLSL literal that gained the multiply,
 every assertion unchanged in intent.
 
+## A doorway between levels, not a level select (build 1394)
+
+Asked for from use: *"is there a way to trigger the next level? I think it could be useful to break out
+large rooms or levels into separate json files. There could be a trigger that when the player walks into a
+certain zone, it shows a 'loading...' message and then picks up the game with the newly loaded scene.
+Half-Life and Portal do this regularly."*
+
+The transition itself has existed since build 1352 — a trigger zone fires an event, an event node pulses a
+`goto` node, `goto` loads a campaign level. Checked against the level-CLEAR path (`gameWon`) before building
+anything, and it already had two of the three things that make room-splitting *work* rather than merely
+function:
+
+| | clear path | `goto` before this build |
+|---|---|---|
+| weapons / ammo / HP | `_captureLoadout` → `_restoreLoadout` | **nothing** |
+| a transition card | `showCampaignInterstitial` | it explicitly CLEARS one |
+| where you arrive | n/a | always the destination's own spawn |
+
+So walking through a door reset your guns and health to whatever the next room's loadout happened to be, and
+put you at its spawn point rather than at the matching door. **A hub world wants exactly that; a room split
+out of one level does not** — which is why the loadout carry is a FLAG (`keep`) and not a behaviour change,
+and why a node authored before this build is byte-identical.
+
+### The landmark is a TAG
+
+Half-Life solves the arrival with landmark entities. Here the landmark is a tag, which every prop already
+carries and every other place-taking verb already resolves — so a creator places a marker, rotates it to
+face into the room, and types its tag. **The marker's own facing IS the arrival facing**: player yaw and a
+prop's `rotation.y` share the engine's −Z forward, so it is the identity mapping rather than a conversion.
+
+Three decisions:
+- **The FIRST prop with the tag wins**, deliberately unlike `_lgPlaceAt`, which picks at random so a spawned
+  squad scatters. An arrival is one place; a random one is a different door on every visit.
+- **`at` has NO datalist.** The tags a dropdown could offer are the ones in the level being EDITED, and the
+  marker is in the DESTINATION. Autocompleting a creator into a tag that does not exist there is worse than
+  offering none, so an unresolved tag is REPORTED at run time (1214's channel) instead.
+- **An arrival outranks a saved checkpoint**, for the same reason build 1224's test pose does: a graph that
+  named a door has named a place, and a checkpoint from a previous visit must not quietly override it.
+
+### Two call sites, because one would serve half the markers
+
+A marker built from a PRIMITIVE is in the scene when `startGame` ends — `spawnProp` calls its builder
+synchronously — so the common case lands before a frame is ever drawn. A marker that is an imported model is
+still in flight. So `_arriveApply()` runs at the end of `startGame` AND in `reveal()`, is idempotent by
+consuming its own request, and reports by name if the second attempt still cannot find the tag.
+
+### The forced cover, and the deadlock it would have been
+
+`startGame` only raises the loader `if(_levelAssetsPending())`, so a room-to-room transition with everything
+already cached was a hard cut with no feedback at all. `_loadCover` forces it — **through the same
+`showLevelLoader(); waitAssetsThenReveal();` pair**, and that is load-bearing: `showLevelLoader()` alone
+would leave the screen up FOREVER, because the reveal is the only thing that takes it down and startGame's
+later intro-cover block skips when the loader is already active. `waitAssetsThenReveal` also supplies the
+beat for free — its 240 ms zero-grace is a natural minimum rather than an invented delay.
+
+The label names the destination (`Entering Reactor Hall…`), as `textContent`, because a level name is level
+data (1325).
+
+### Measured live, on a real two-room campaign
+
+```
+PLAIN goto      Reactor Hall, spawn (0, 2.9, 30), hp 100, owned [rifle], mag 30
+                cover up reading "Entering Reactor Hall", then down      <- pre-1394 behaviour + the beat
+SEAMLESS goto   (120, 1.70, -80) = the marker at (120, 0, -80) + EYE, yaw -1.571 = the marker's own facing
+                hp 43 carried, mag 7 carried, owned [pistol, rifle] carried
+                landed IMMEDIATELY, in startGame, before a frame was drawn
+BAD TAG         the level's own spawn, and Level Check reads the tag by name
+GUARDS          out of range / zero / not-in-a-campaign all refuse; nothing armed, no cover left behind
+```
+
+**The probe's first run reported every transition doing nothing.** `_lgPulse(id, pin)` takes an ID and
+resolves it out of `logicGraph.nodes`; I passed a node OBJECT, so it returned at its first line. A probe that
+drives the wrong signature is indistinguishable from a feature that does not work — and build 1352's own
+entry says the reason it drives the real switch is that `goto` once shipped into the wrong dispatcher.
+
+**Seven pins moved**, five of them the one loader-gate line. The seventh is build 1352's own, and it is the
+**character-budget trap again**: `pulse.slice(indexOf("case 'goto':"), indexOf(...) + 1600)`. This build added
+~1,200 characters to that case and pushed two assertions off the end **with both still true**. It ends on the
+next `case` now.
+
+### Still open, and stated rather than implied
+
+The transition is host/solo only (1352's guard, unchanged) — in co-op a client does not follow the host
+through a door, and that needs a level-change message of its own. And a *seamless* transition in the
+Half-Life sense — no cover at all, the next room streamed in behind you — is a different build; this one
+shows a beat, because the engine tears the scene down and rebuilds it.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

@@ -24,7 +24,7 @@ assert(/const _texFin=\(\)=>\{ if\(_tdone\) return; _tdone=true; _texPending=Mat
 assert((lsm.match(/_texFin\(\)/g)||[]).length >= 4, '_texFin not wired into success + all failure paths');
 
 // startGame shows the loader for ANY pending asset kind (not just GLBs)
-assert(/if\(_levelAssetsPending\(\)\)\{ showLevelLoader\(\); waitAssetsThenReveal\(\); \}/.test(src), 'startGame gate not widened to all assets');
+assert(/if\(_levelAssetsPending\(\) \|\| _loadCover\)\{ _loadCover=false; showLevelLoader\(\); waitAssetsThenReveal\(\); \}/.test(src), 'startGame gate not widened to all assets');
 // reveal waits on all asset kinds
 assert(/if\(!_levelAssetsPending\(\)\)\{ if\(!zeroAt\) zeroAt=now;/.test(src), 'reveal does not wait on all assets');
 

@@ -12969,7 +12969,23 @@ function _lgPulse(id, pin){
         if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "Go to level" node asked for level '+_n1+', but this campaign has '+_tot+'.');
         break;
       }
-      try{ campaignIdx = _n1 - 1; _clearInterstitial(); _campaignLoad(campaignIdx); }catch(e){}
+      // ---- build 1394: the three things that make this a DOORWAY rather than a level select ---------
+      // Verified before building: the level-CLEAR path (gameWon) already does the first of these and the
+      // goto verb never did, so walking through a door reset your weapons, ammo and health to whatever the
+      // next room's loadout happened to be. For a hub world that is right; for a room split out of one
+      // level it is exactly wrong, which is why it is a FLAG and not a behaviour change.
+      const _carry = p.keep ? _captureLoadout() : null;
+      const _dest = campaign.levels[_n1 - 1];
+      _loaderTitle = 'Entering ' + String((_dest && _dest.name != null) ? _dest.name : ('Level ' + _n1)).slice(0, 60);
+      _loadCover = true;   // a level change always gets a beat, even with every asset already cached
+      // The arrival is armed BEFORE the load, because startGame reads it at the end of its own run.
+      _arrivePending = (typeof p.at === 'string' && p.at.trim()) ? { tag: p.at.trim().slice(0, 60) } : null;
+      try{
+        campaignIdx = _n1 - 1; _clearInterstitial(); _campaignLoad(campaignIdx);
+        /* AFTER the load, exactly as gameWon does it: _campaignLoad ends in startGame(), which resets every
+           weapon's magazine and reserve (build 1190's loop), so restoring first would be overwritten. */
+        if(_carry && typeof _restoreLoadout === 'function') _restoreLoadout(_carry);
+      }catch(e){ _loadCover = false; _loaderTitle = ''; _arrivePending = null; }
       break; }
     case 'lose': { try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){} break; }   // the death-zone path: ends the run through the normal defeat flow
     default: break;   // start / event / interval / onkill / onwave / onspot / onhurt are entries — they only ever FIRE, never receive
@@ -13318,7 +13334,11 @@ const LG_DEFS = {
      My first draft put it in the `do` dropdown while implementing it as a node type, which is build 1277's
      exact defect — a verb offered in the UI that the dispatcher never routes to a handler. The probe caught
      it before it shipped: the node resolved, nothing loaded, and campaignIdx never moved. */
-  goto:     { t:'Go to level',     cat:'ac', ins:['in'], outs:[],        params:[{k:'n',l:'level #',w:64,listId:'lgVarList'}] },
+  /* build 1394: `at` is deliberately given NO listId. The tags a datalist could offer are the ones in the
+     level being edited, and the arrival marker is in the DESTINATION — offering the wrong level's tags
+     would autocomplete a creator straight into a tag that does not exist there, which is worse than
+     offering none. A tag nothing carries is reported at run time instead (build 1214's channel). */
+  goto:     { t:'Go to level',     cat:'ac', ins:['in'], outs:[],        params:[{k:'n',l:'level #',w:64,listId:'lgVarList'},{k:'at',l:'arrive at tag',w:96},{k:'keep',l:'keep gear',chk:1}] },
   lose:     { t:'Lose level',      cat:'ac', ins:['in'], outs:[],        params:[] },
 };
 const LG_CATS = { ev:['EVENTS','#35e0d6'], fl:['FLOW','#ffd75e'], st:['STATE','#8fe05a'], ac:['ACTIONS','#ff9b5b'] };
@@ -15925,6 +15945,12 @@ function cancelGLBDownload(u){ _glbCancel[u]=true; const ac=_glbAborters[u]; if(
 let _skyPending = false;   // sky HDRI / panorama load in flight
 let _texPending = 0;       // world floor/wall surface-map loads in flight
 let _levelLoaderEl=null, _levelLoaderActive=false;   // declared early: loop() reads _levelLoaderActive before the loader-UI section runs
+/* build 1394: a level-to-level transition wants a loading beat even when every asset is already cached —
+   otherwise walking through a door is a hard cut with no feedback at all. `_loadCover` forces the existing
+   loader up for one load; `_loaderTitle` names where you are going. Declared HERE, beside the loader they
+   drive, because startGame reads them ~34,000 lines below and `typeof` does not guard a temporal dead zone
+   (builds 1127, 1331, 1350). */
+let _loadCover=false, _loaderTitle='';
 // Model loads are throttled to a few at a time and retried on failure. Restoring a level full of props used
 // to fire every GLB at once, bursting the CORS proxy / model host into HTTP 429 (rate-limited) so most models
 // silently failed. The queue keeps concurrency low; transient failures (esp. 429) retry with backoff.
@@ -30607,6 +30633,47 @@ const flyPos = new THREE.Vector3();   // free-fly camera position (seeded from t
 // startGame (a later Deploy from the main menu must never inherit a stale test pose), applied only in
 // solo (NET.mode==='off'), and never serialized: this is a test convenience, not level data.
 let _testStart = null;   // { pos:{x,y,z}, yaw, pitch, wave }
+// ---- build 1394: ARRIVE SOMEWHERE ------------------------------------------------------------------
+// Asked for from use: "is there a way to trigger the next level? I think it could be useful to break out
+// large rooms into separate json files... a trigger that shows a loading message and then picks up with
+// the newly loaded scene. Half-Life and Portal do this regularly."
+//
+// The transition itself has existed since build 1352 (a trigger zone fires an event, a `goto` node loads
+// the campaign level). What it could not do is the part that makes room-splitting work: you always
+// appeared at the destination's own player start, so a door on the west wall could not receive you.
+// Half-Life solves this with landmark entities; here the landmark is a TAG, which the engine already has
+// on every prop and which every other place-taking verb already resolves.
+//
+// It is a SEPARATE override from `_testStart` rather than a field on it, and deliberately so: `_testStart`
+// is an editor convenience that must never serialize and is solo-only (build 1224), while an arrival is
+// gameplay that a published level depends on. Sharing the slot would have tied one to the other's guards.
+let _arrivePending = null;   // { tag } — consumed ONCE, by whichever reveal path gets there first
+function _arriveResolve(tag){
+  const raw = String(tag == null ? '' : tag).trim().slice(0, 60);   // level data is untrusted input (1325)
+  if(!raw || typeof propModels === 'undefined') return null;
+  for(const o of propModels){
+    if(!o || !o.userData || o.userData.tag !== raw) continue;
+    // The marker's own FACING is the arrival facing. A door you walk through should turn you into the room,
+    // and a creator who rotates the marker has already said which way that is — player yaw and a prop's
+    // rotation.y share the engine's -Z forward, so this is the identity mapping and not a conversion.
+    return { x:o.position.x, y:o.position.y, z:o.position.z, yaw:+o.rotation.y || 0 };
+  }
+  return null;   // several props could share the tag; the FIRST wins, because an arrival is one place
+}
+// Returns whether it landed. Called from two places on purpose — see the comment at each.
+function _arriveApply(){
+  if(!_arrivePending) return false;
+  const p = _arriveResolve(_arrivePending.tag);
+  if(!p) return false;                      // not spawned yet: leave it pending for the later call site
+  _arrivePending = null;
+  const gy = (typeof terrainHeightAt === 'function') ? terrainHeightAt(p.x, p.z) : 0;
+  /* clamped above the ground the same way build 1224's test pose is, so a marker authored slightly under
+     the floor cannot drop the player through the world on arrival */
+  player.pos.set(p.x, Math.max(p.y, gy) + EYE, p.z);
+  player.yaw = p.yaw; player.pitch = 0;
+  player.vel.set(0, 0, 0); player.onGround = false;
+  return true;
+}
 function _edTestPose(){   // the pose the creator is LOOKING FROM, per editor camera mode
   const th = (x,z)=> (typeof terrainHeightAt==='function') ? terrainHeightAt(x,z) : 0;
   if(typeof editorTopView!=='undefined' && editorTopView)
@@ -32945,7 +33012,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1393 · 2026-08-05';
+const BUILD_VERSION = 'build 1394 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42481,7 +42548,8 @@ function _importCampaignFile(file, onDone){
 let campaignActive=false, campaignIdx=0, _campaignComplete=false;
 let campaignEditIdx=-1;   // campaign slot currently loaded in the editor for re-editing (-1 = none)
 function _campaignLoad(i){ const lv=campaign.levels[i]; if(!lv) return; loadLevelFromNet(lv); startGame(); }
-function startCampaign(){ if(!campaign.levels.length){ if(typeof flashToast==='function') flashToast('No campaign yet \u2014 build one in the editor under Files > Campaign'); return; } campaignActive=true; campaignIdx=0; _campaignComplete=false; campaignVars={}; _campaignLoad(0); }   // build 1075: a new run starts from zero — a level that opts into saving re-seeds from the store as it loads
+function startCampaign(){ _arrivePending=null; _loaderTitle=''; _loadCover=false;   /* build 1394: a fresh run never inherits a transition left armed by a previous one */
+  if(!campaign.levels.length){ if(typeof flashToast==='function') flashToast('No campaign yet \u2014 build one in the editor under Files > Campaign'); return; } campaignActive=true; campaignIdx=0; _campaignComplete=false; campaignVars={}; _campaignLoad(0); }   // build 1075: a new run starts from zero — a level that opts into saving re-seeds from the store as it loads
 function _captureLoadout(){ const a={}; for(const k of owned){ const w=WEAPONS[k]; if(w) a[k]={ mag:w.mag, reserve:w.reserve }; } return { owned:[...owned], wep:curWep, hp:player.hp, ammo:a }; }
 function _interEsc(x){ return String(x==null?'':x).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function _clearInterstitial(){ _interActive=false; if(_interTimer){ clearTimeout(_interTimer); _interTimer=null; } if(_interKeyGo){ document.removeEventListener('keydown', _interKeyGo, true); _interKeyGo=null; } const c=document.getElementById('campaignCard'); if(c) c.style.display='none'; }
@@ -50480,12 +50548,24 @@ function waitAssetsThenReveal(){
   // The physics world was built at deploy, possibly before async model geometry finished loading, so its
   // static colliders can be incomplete (player passes through). Rebuild it now that all assets are in,
   // so the character controller collides against the fully-loaded scene.
-  const reveal=()=>{ try{ if(physWorld) buildPhysWorld(); }catch(e){} if(_cineIntroPending){ _cineIntroPending=false; try{ maybeStartIntroCine(); }catch(e){} } hideLevelLoader(); try{ startMusic(); }catch(e){} };   // build 554/555: start (and paint) the cinematic BEFORE the loader fades; start the world music only now that loading is done (it used to begin behind the loader)
+  const reveal=()=>{ try{ if(physWorld) buildPhysWorld(); }catch(e){} 
+    /* build 1394: the LAST chance to land the arrival — a tagged marker on an imported model is not in the
+       scene when startGame ends, so the arrival is retried here, after every asset has settled. If it still
+       cannot be found the creator is TOLD, rather than being silently dropped at the level's own spawn and
+       left to wonder why the door does not line up (build 1214's channel). */
+    try{ _arriveApply(); if(_arrivePending){ const _t=_arrivePending.tag; _arrivePending=null;
+      if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "Go to level" node was set to arrive at "'+_t+'", but nothing in the level it loaded carries that tag \u2014 the player spawned at the level start instead.'); } }catch(e){}
+    _loaderTitle='';
+    if(_cineIntroPending){ _cineIntroPending=false; try{ maybeStartIntroCine(); }catch(e){} } hideLevelLoader(); try{ startMusic(); }catch(e){} };   // build 554/555: start (and paint) the cinematic BEFORE the loader fades; start the world music only now that loading is done (it used to begin behind the loader)
   const tick=()=>{
     if(!_levelLoaderActive) return;
     const now=performance.now();
     const lab=_levelLoaderEl && _levelLoaderEl.querySelector('#levelLoaderLabel');
-    if(lab){ const parts=[]; if(_glbPending>0) parts.push(_glbPending+' model'+(_glbPending===1?'':'s')); if(_texPending>0) parts.push(_texPending+' texture'+(_texPending===1?'':'s')); if(_skyPending) parts.push('sky'); lab.textContent = parts.length ? ('Loading '+parts.join(', ')+'\u2026') : 'Loading level\u2026'; }
+    if(lab){ const parts=[]; if(_glbPending>0) parts.push(_glbPending+' model'+(_glbPending===1?'':'s')); if(_texPending>0) parts.push(_texPending+' texture'+(_texPending===1?'':'s')); if(_skyPending) parts.push('sky');
+      /* build 1394: when a transition named its destination, SAY where you are going. textContent, because
+         a level name is level data (build 1325). */
+      lab.textContent = _loaderTitle ? (_loaderTitle + (parts.length ? ' \u2014 ' + parts.join(', ') + '\u2026' : '\u2026'))
+                                     : (parts.length ? ('Loading '+parts.join(', ')+'\u2026') : 'Loading level\u2026'); }
     if(!_levelAssetsPending()){ if(!zeroAt) zeroAt=now; if(now-zeroAt>=240){ reveal(); return; } }
     else { zeroAt=0; }
     if(now-t0>=15000){ reveal(); return; }   // safety: never trap the player behind the loader
@@ -50529,7 +50609,10 @@ function startGame(){
   if(typeof _wakeLockTry==='function') setTimeout(_wakeLockTry, 0);   // build 908: keep the phone awake during play (gameOn is set below; next tick reads it true)
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
   if(typeof requestSceneProbe==='function') requestSceneProbe();   // build 1186: reflections of THIS level, captured once it settles
-  if(_levelAssetsPending()){ showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game
+  /* build 1394: `_loadCover` rides the SAME pair. Forcing the loader up without also arming
+     waitAssetsThenReveal would leave it on screen forever — the reveal is the only thing that takes it
+     down, and startGame's later intro-cover block already skips when the loader is active. */
+  if(_levelAssetsPending() || _loadCover){ _loadCover=false; showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game
   clearMovementInput();   // start fresh: no input held over from a previous round/death
   mapWaypoint=null;   // drop any waypoint left over from a previous mission (e.g. a solo marker bleeding into a multiplayer round)
   if(_pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; }   // hide editor path markers during play
@@ -50644,7 +50727,19 @@ function startGame(){
   if(_ts && _ts.pos){ const _gy = terrainHeightAt(_ts.pos.x, _ts.pos.z);
     player.pos.set(_ts.pos.x, Math.max(_ts.pos.y, _gy + 0.4), _ts.pos.z);
     player.yaw = +_ts.yaw||0; player.pitch = +_ts.pitch||0; player.onGround = false; player.vel.set(0,0,0); }
-  if(typeof _persistResume==='function') _persistResume(!!(_ts && _ts.pos));   // build 1227: carried inventory + checkpoint return AFTER the wipes; a test pose outranks the checkpoint
+  /* build 1394: the FIRST of two arrival attempts. A marker built from a PRIMITIVE is in the scene by now
+     (spawnProp calls its builder synchronously), so the common case lands here, before the first frame is
+     ever drawn — the player never appears at the level's own spawn and slides across to the door. A marker
+     that is an imported model is still loading; reveal() picks that one up. Placed AFTER the test-pose
+     block because a creator running "play from here" is iterating, and must outrank an arrival that a
+     graph asked for. */
+  const _arriveWanted = !!_arrivePending;
+  if(_ts && _ts.pos) _arrivePending = null;                                  // the test pose wins outright
+  else if(_arrivePending) try{ _arriveApply(); }catch(e){}
+  /* build 1227's checkpoint resume is skipped for an arrival for the same reason it is skipped for a test
+     pose: a graph that said "arrive at the east door" has named a place, and a checkpoint saved on a
+     previous visit to this room must not quietly override it. */
+  if(typeof _persistResume==='function') _persistResume(!!((_ts && _ts.pos) || _arriveWanted));   // build 1227: carried inventory + checkpoint return AFTER the wipes; a test pose outranks the checkpoint
   updateHUD(); updateBuffs(0);
   resetDynamicProps();        // dynamic objects return to their authored spots each deploy
   teardownInstancing(); buildInstancing();   // (re)collapse repeated static shapes for play

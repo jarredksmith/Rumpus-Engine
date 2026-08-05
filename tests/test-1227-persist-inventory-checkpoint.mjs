@@ -122,7 +122,7 @@ const drive = (setup, run) => {
   const sg = extractFunction('startGame');
   const iWipe = sg.indexOf('inventory.length=0'), iRes = sg.indexOf('_persistResume(');
   assert(iWipe > 0 && iRes > iWipe, 'startGame resumes AFTER the inventory wipe — logicStart runs before it, so seeding there would be erased');
-  assert(/_persistResume\(!!\(_ts && _ts\.pos\)\)/.test(sg), '...and hands the resume the play-from-here flag');
+  assert(/_persistResume\(!!\(\(_ts && _ts\.pos\) \|\| _arriveWanted\)\)/.test(sg), '...and hands the resume the play-from-here flag');
   const sc = extractFunction('setCheckpoint');
   assert(/persistCp && \(typeof NET==='undefined' \|\| NET\.mode==='off'\)/.test(sc) && /_persistStore\(\)/.test(sc),
     'reaching a checkpoint writes through (solo)');

@@ -15,7 +15,7 @@ assert(/for\(const k in enemyModels\)/.test(pw) && /myCharCfg/.test(pw), 'enemy 
 
 // the prewarm runs BEFORE the gate check in startGame
 const sg = extractFunction('startGame');
-assert(/_prewarmMatchModels\(\);[\s\S]*?if\(_levelAssetsPending\(\)\)\{ showLevelLoader\(\); waitAssetsThenReveal\(\); \}/.test(sg), 'prewarm precedes the asset gate');
+assert(/_prewarmMatchModels\(\);[\s\S]*?if\(_levelAssetsPending\(\) \|\| _loadCover\)\{ _loadCover=false; showLevelLoader\(\); waitAssetsThenReveal\(\); \}/.test(sg), 'prewarm precedes the asset gate');
 
 // the intro cutscene is deferred while the loader/loads are pending (so it never frames a half-loaded scene)
 assert(/if\(_levelLoaderActive\) _cineIntroPending = true;/.test(sg), 'cutscene deferred while the loading screen is up');

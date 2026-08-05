@@ -22,7 +22,7 @@ assert(/loadGLTFCached\(u, \(\)=>\{\}, \(\)=>\{\}\)/.test(pw), 'kicks off the mo
 // (c) startGame calls the prewarm BEFORE the asset gate
 const sg = extractFunction('startGame');
 const pi = sg.indexOf('_prewarmMatchModels()');
-const gi = sg.indexOf('_levelAssetsPending()){ showLevelLoader()');
+const gi = sg.indexOf('_levelAssetsPending() || _loadCover){ _loadCover=false; showLevelLoader()');
 assert(pi>=0 && gi>=0 && pi<gi, 'prewarm runs before the loader gate');
 // build 576: model cache eviction by reference count + LRU. Model the policy and check it frees only safe entries.
 {
