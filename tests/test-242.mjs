@@ -44,7 +44,9 @@ const mk = () => {
   assert(calls.anim.length === 1 && calls.abc.join(',') === '3', 'anim action plays + broadcasts'); }
 
 // --- emitters wired ---
-assert(/obj\.userData\._shattered = true;[\s\S]*?if\(typeof NET==='undefined' \|\| NET\.mode!=='client'\)\{ try\{ fireSignals\(obj, 'destroyed'\); \}catch\(e\)\{\} \}/.test(extractFunction('shatterProp')), 'destroyed fires authoritative-side only');
+/* build 1397: the fire goes through `_lgPropEvent`, which sets the prop's payload around it and unwinds
+   it afterwards. The assertion — that it is authoritative-side only — is unchanged. */
+assert(/obj\.userData\._shattered = true;[\s\S]*?if\(typeof NET==='undefined' \|\| NET\.mode!=='client'\)\{ try\{ _lgPropEvent\(obj, 'destroyed', _propCtx\(obj\)\); \}catch\(e\)\{\} \}/.test(extractFunction('shatterProp')), 'destroyed fires authoritative-side only');
 const it = extractFunction('interact');
 assert((it.match(/fireSignals\(o, 'interacted'\);/g)||[]).length === 3, 'all three interact branches emit (anim / mechanism / build-1035 Interactable checkbox)');
 const xI = it.indexOf("xaToggle(o)");
@@ -57,7 +59,7 @@ assert(extractFunction('_applyPropEntry').includes('if(Array.isArray(p.sg)) obj.
 
 // --- editor + level check ---
 assert(/edFold\(behaveHost, 'signals', 'Signals', false, 'Tag this prop/.test(src), 'Signals fold in the inspector (title + subtitle, build 362)');
-assert(/\[\['destroyed','On destroyed'\],\['interacted','On E'\],\['contact','On object placed'\]\]/.test(src) && /\[\['toggle','Toggle'\],\['open','Open'\],\['close','Close'\],\['anim','Play anim'\],\['unlock','Unlock'\],\['win','Win level'\],\['cutscene','Play cutscene'\],\['objective','Set objective'\],\['checkpoint','Set checkpoint'\],\['sound','Play sound'\],\['emit','\\u2192 Logic event'\],\['spawn','Spawn enemies'\]/.test(src), 'when/do dropdowns (incl. Play sound 750; Logic event 1027; the world verbs 1073)');
+assert(/\[\['destroyed','On destroyed'\],\['damaged','On hit'\],\['interacted','On E'\],\['contact','On object placed'\]\]/.test(src) && /\[\['toggle','Toggle'\],\['open','Open'\],\['close','Close'\],\['anim','Play anim'\],\['unlock','Unlock'\],\['win','Win level'\],\['cutscene','Play cutscene'\],\['objective','Set objective'\],\['checkpoint','Set checkpoint'\],\['sound','Play sound'\],\['emit','\\u2192 Logic event'\],\['spawn','Spawn enemies'\]/.test(src), 'when/do dropdowns (incl. Play sound 750; Logic event 1027; the world verbs 1073)');
 assert(/A signal targets tag '"\+s\.target\+"', but no prop carries that tag\./.test(extractFunction('levelIssues')), 'Level check flags dangling signal targets');
 // --- build 750: "Play sound" signal action (light switch / button click) ---
 assert(/if\(s\.do==='sound'\)\{ if\(s\.sound && typeof playSample==='function'\)\{ if\(!playSample\(s\.sound\) && typeof loadSound==='function'\) loadSound\(s\.sound\); \} return; \}/.test(src), 'a sound signal plays its clip (loads it if not ready), no target needed');

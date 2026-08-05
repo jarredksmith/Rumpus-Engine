@@ -13846,6 +13846,29 @@ function _renderPersistUI(host){
 // Firing applies the action to every prop whose userData.tag matches. Each action uses the existing
 // per-action net broadcast, so peers converge without a new message type; to avoid double-fires,
 // 'destroyed' signals only run on the authoritative side (solo/host) — clients see the broadcast results.
+// build 1397: a prop event that carries a PAYLOAD, the way build 1221 gave the enemy events one.
+//
+// The signal system and the logic graph meet at the `emit` verb (build 1027) — a prop signal fires a named
+// event and an `On event` node picks it up. What that bridge never carried is CONTEXT, so a graph could be
+// told "a plate was hit" and could not ask where, or how badly. `#x` / `#z` / `#hp` / `#hpf` / `#here` all
+// already exist and resolve through `_lgNum`; this hands them the prop's own numbers.
+//
+// Both prop events go through it, deliberately. Carrying a payload on `damaged` and not on `destroyed`
+// would be exactly the inconsistency this file keeps recording — and it changes nothing that works today,
+// because `#here` in a destroyed-chain currently resolves to NULL, and a verb handed a null place does
+// nothing and reports it (build 1214). No level can be relying on that.
+function _lgPropEvent(o, when, ctx){
+  const _pv = _lgCtx; _lgCtx = ctx || {};
+  try{ fireSignals(o, when); } finally { _lgCtx = _pv; }
+}
+// The payload for a prop, from the prop. Rounded to 2 dp because a graph COMPARES these and an unrounded
+// float never equals anything with `==` (build 1352's rule for the position stats).
+function _propCtx(o){
+  const u = (o && o.userData) || {};
+  const hp = +u.hp || 0, mx = +u.maxHp || 0;
+  return { x: +(o.position.x).toFixed(2), z: +(o.position.z).toFixed(2), hp: +hp.toFixed(2),
+           hpf: mx > 0 ? +Math.max(0, Math.min(1, hp / mx)).toFixed(2) : 0 };
+}
 function fireSignals(o, when){
   const sigs = o && o.userData && o.userData.signals; if(!sigs || !sigs.length) return;
   for(const s of sigs){
@@ -33039,7 +33062,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1396 · 2026-08-05';
+const BUILD_VERSION = 'build 1397 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34987,7 +35010,7 @@ function shatterProp(obj, point, dir, power, byId){
   obj.userData._shattered = true;
   if(obj.userData._fireGroup && typeof _removePropFireVisual==='function') _removePropFireVisual(obj);   // drop its flames with it
   if(typeof releaseModelLights==='function') releaseModelLights(obj);   // build 1157: a destroyed lamp gives its budget slot back (restoreDestroyedProps re-adopts it)
-  if(typeof NET==='undefined' || NET.mode!=='client'){ try{ fireSignals(obj, 'destroyed'); }catch(e){} }   // clients converge via the actions' own broadcasts
+  if(typeof NET==='undefined' || NET.mode!=='client'){ try{ _lgPropEvent(obj, 'destroyed', _propCtx(obj)); }catch(e){} }   // clients converge via the actions' own broadcasts · build 1397: with the prop's own payload, so `#here` finally resolves in a destroyed chain
   obj.updateMatrixWorld(true);
   _shBox.setFromObject(obj, true); _shBox.getSize(_shSize); _shBox.getCenter(_shCtr);
   if(typeof navDirtyRect==='function') navDirtyRect(_shBox.min.x,_shBox.min.z,_shBox.max.x,_shBox.max.z);   /* build 1200: a destroyed wall opens a route */
@@ -35084,6 +35107,17 @@ function damageProp(obj, dmg, point, dir, power, byId){
   // brief impact flash on the prop
   obj.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive){ o.material.emissive.setHex(0x661a00); o.material.emissiveIntensity = Math.max(o.material.emissiveIntensity||0, 0.8); } });
   obj.userData._flash = performance.now();
+  /* build 1397: ON HIT. Verified before building — a prop could signal `destroyed`, `interacted` and
+     `contact`, and nothing else. So a shooting-range plate could only ever score by being DESTROYED, and
+     "hit the target, +1" was unbuildable: the whole reason build 1390 made a target static and 1391 gave it
+     a reset was so it could be shot repeatedly, and it could not report any of those shots.
+     It fires on EVERY landed hit INCLUDING the lethal one — the killing shot is a hit, and `destroyed` is a
+     different question that fires beside it. A shotgun's eight pellets are eight hits, correctly, and the
+     graph's own 400-pulse budget is what bounds that. Host/solo only, like `destroyed`: a client's shot
+     reaches the host as `propHit` and converges from there. */
+  if(typeof NET==='undefined' || NET.mode!=='client'){
+    try{ _lgPropEvent(obj, 'damaged', _propCtx(obj)); }catch(e){}
+  }
   if(obj.userData.hp <= 0){ shatterProp(obj, point, dir, power, byId); return true; }
   return false;
 }
@@ -45139,7 +45173,7 @@ function buildSignalsUI(sgBody, store, rerender){
   const sigs = store.signals || (store.signals=[]);
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
-    r.appendChild(mkSel([['destroyed','On destroyed'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));
+    r.appendChild(mkSel([['destroyed','On destroyed'],['damaged','On hit'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));   /* build 1397: On hit — a target that can report a shot without having to be destroyed by it */
     r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies']], s.do, v=>{ s.do=v; }));
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag (or: this)'; ti.value=s.target||'';
     if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagListThis'); }

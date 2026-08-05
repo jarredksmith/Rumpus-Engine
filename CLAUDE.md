@@ -2025,6 +2025,70 @@ Four harnesses moved (237, 451, 470, 80). Two of them quoted the `1e9` sentinel 
 back"* — they **execute `_puOnce`** now, with an ordinary pad as the control, which is what they always meant
 and is immune to how the rule happens to be spelled.
 
+## The target could not report the shot (build 1397)
+
+Found by asking what the gauntlet's first booth — a shooting range — actually needs, and checking rather
+than assuming. A prop could signal exactly three things:
+
+```
+destroyed · interacted · contact
+```
+
+**There is no "on hit".** So a plate could only ever score by being DESTROYED — which is the precise opposite
+of what builds 1390 (a target that stays bolted down) and 1391 (a target that comes back) exist for. Those
+two builds made a target shootable repeatedly and resettable, and it could not report a single one of those
+shots. "Hit the plate, +1" was unbuildable, and it is the first thing a range needs.
+
+**The bridge to the graph was already there** — the `emit` signal verb (build 1027) fires a named logic event
+that an `On event` node picks up. What was missing was a trigger, so this build is one new `when` value plus
+the payload the prop events never had.
+
+Three decisions:
+- **It fires on EVERY landed hit, including the lethal one.** The killing shot IS a hit, and `destroyed` is a
+  different question that fires beside it. A range scoring one point per hit must not silently drop the last
+  one. A shotgun's eight pellets are eight hits, correctly, and the graph's own 400-pulse budget bounds it.
+- **After the damage lands, before the shatter branch**, so `#hp` and `#hpf` describe the prop as the player
+  just left it. Firing first would report the health it had before the shot.
+- **Host/solo only**, exactly like `destroyed`. A client's shot reaches the host as `propHit`; firing on both
+  sides would double every score in co-op.
+
+### The payload, and why `destroyed` got it too
+
+Build 1221 gave the enemy events `#x / #z / #hp / #hpf` and the PROP events never got them, so a graph could
+be told *a plate was hit* and could not ask where, or how hard. `_lgPropEvent(o, when, ctx)` sets the payload
+around the fire and unwinds it in a `finally` — 1221's exact shape.
+
+Both prop events go through it. Carrying a payload on one and not the other is the inconsistency this file
+keeps recording, and **it changes nothing that works today**: `#here` in a destroyed-chain resolved to NULL,
+and a verb handed a null place does nothing and reports it (1214), so no working level can be relying on it.
+
+`when` is stored as `s.w` and round-trips verbatim — there is no allow-list of trigger names anywhere, which
+is why this build touches neither loader. Asserted rather than assumed: a sanitizer that silently dropped an
+unknown `when` would make this a feature that works until you save.
+
+### Measured through the WHOLE chain, not its ends
+
+Build 1277 found six verbs that had shipped and never worked because only the ends were pinned. So the probe
+drives a real shot → `damageProp` → the `damaged` signal → `emit` → `logicEvent` → an `On event` node → Math
+nodes reading the payload:
+
+```
+fresh               score 0                     hp 60/60
+1 rifle shot        score 1   #hpf 0.75         hp 45
+3 shots             score 3   #hpf 0.25         hp 15
+4th (LETHAL)        score 4   AND downs 1       hp 0     <- both events fire on the killing blow
+reset, shoot again  score 5                     hp 45    <- the plate comes back and reports again
+dynamic crate       score 6                              <- not target-only; any damageable prop
+payload             #x 17 and #hpf 0.40 exactly, and _lgCtx UNWOUND afterwards (no leak)
+no signals          nothing fires at all
+```
+
+The unwind is tested against a THROWING signal action as well, because a leaked payload would silently
+misplace every later `#here` in the level.
+
+Two pins moved (242), both quoting the bare `fireSignals` call and the `when` dropdown; both assertions —
+authoritative-side only, and the dropdown's membership — are unchanged.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its
