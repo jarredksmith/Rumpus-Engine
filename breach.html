@@ -7541,14 +7541,19 @@ const _SUN_PX_STEP = [1.0, 0.5, 0.5, 0.25];   // multiplier of SUN_SHADOW_PX per
 // derivation), which is far below the sampling limit at any rung and does not alias.
 const _OD_BUMP_STEP = [1.0, 0.6, 0.4, 0.25];
 const _odBumpU = { value: 0 };
+// build 1388: the prop texture's own relief, in METRES, faded on the SAME rung ladder. It is a
+// derivative-based bump — quantised to the 2x2 fragment quad — so it is exactly the high-frequency normal
+// detail build 1383 exists to fade out from under a shedding antialiaser. One ladder, not two.
+const _odTexNU = { value: 0 };
 // `_applyPixelRatio()` is CALLED at boot, ~2,500 lines above `OBJ_DETAIL_BUMP` — and `typeof` does NOT
 // guard a temporal dead zone (builds 1127, 1331 and 1350 each lost something to exactly this; the boot
 // test caught this one). So the base is HANDED OVER at the constant's own declaration site rather than
 // read from here, which also means the literal is written once and cannot drift.
-let _odBumpBase = 0;
+let _odBumpBase = 0, _odTexNBase = 0;
 function _syncOdBump(){
   const i = Math.max(0, Math.min(_OD_BUMP_STEP.length - 1, (typeof _prStepI === 'undefined' ? 0 : _prStepI) | 0));
   _odBumpU.value = _odBumpBase * _OD_BUMP_STEP[i];
+  _odTexNU.value = _odTexNBase * _OD_BUMP_STEP[i];
 }
 function _sunShadowPxFor(step){
   const m = _SUN_PX_STEP[Math.max(0, Math.min(_SUN_PX_STEP.length-1, step|0))];
@@ -7712,6 +7717,36 @@ const LEGACY_EXPOSURE = 0.78;   // build 1115: see applyWorldCfg — compat for 
 // the hemisphere plus 0.12 of the probe. At a full 1.0 the ratio is 1.58:1, which reads flat.
 const SKY_ENV_FLOOR = 0.12;
 const _envInten = (metal, bright) => Math.max(SKY_ENV_FLOOR, +metal || 0) * ((bright == null) ? 1 : bright);
+// ---------- build 1386: the SAME coupling, one property over, and this one had no floor ----------
+// The floor's and the wall's `specularIntensity` were each assigned that material's own `metalness`,
+// which is 1144's mistake exactly: a metalness slider driving a term that is not about metal. (Written
+// out in prose rather than as the literal statement ON PURPOSE — two source pins in this suite matched
+// the removed line inside a COMMENT quoting it, and reported the defect as still present / still fixed
+// depending on which way they were phrased. A comment that quotes code is a decoy for every grep.)
+// In r149's lights_physical_fragment it scales BOTH dielectric terms:
+//     material.specularF90  = mix( specularIntensityFactor, 1.0, metalnessFactor );
+//     material.specularColor = mix( min(pow2((ior-1)/(ior+1)) * specularColorFactor, 1.0)
+//                                   * specularIntensityFactor, diffuseColor.rgb, metalnessFactor );
+// So the floor at metalness 0.1 got F0 = 0.04 x 0.1 = 0.004 — a TENTH of what every dielectric in nature
+// reflects at normal incidence — and F90 = mix(0.1, 1.0, 0.1) = 0.19, where F90 is 1.0 for every material
+// there is: at grazing incidence everything is a mirror. That is not a stylistic knob, and the two
+// surfaces it was applied to are the largest in any frame. Every OTHER material in the engine is a
+// MeshStandardMaterial, which has no `.ior` and therefore takes the chunk's `#else`: F0 0.04, F90 1.0.
+// The two engine surfaces were the only ones in the game that were not physical.
+//
+// "matte" is high ROUGHNESS, not absent specular — floorRough is already 0.95, which spreads the lobe
+// until it reads as concrete. Killing F0 as well does not make it matte, it makes it not a material.
+//
+// Measured on a 266-pixel window, every pixel raycast-proven to be the floor mesh and proven unoccluded
+// toward the sun, world paused, grain and auto-exposure off (same-condition control: 0.00%, return: 0.00%):
+//   shipped 0.1 -> 1.0   +38.0% mean luminance
+//   near band (15.6 m)   +29.6%        far band (68.6 m)   +54.2%
+// The gain GROWS with the grazing angle, which is the Fresnel signature and is the thing a flat lift
+// cannot fake. 10x overdrive gave +152.5%, so the instrument produces positives.
+//
+// Named once because two sites must agree — 1143's lesson. There is no parameter here: metalness already
+// does the metal/dielectric blend inside `specularColor`, so the physical value is three's own default.
+const DIELECTRIC_SPEC = 1;
 THREE.ColorManagement.legacyMode = false;
 renderer.outputEncoding = THREE.sRGBEncoding;
 // build 1095: anisotropic filtering — ground textures at grazing angles stop dissolving into mush.
@@ -9878,6 +9913,25 @@ const PROC_TILE_M = 2.2;                                  // metres per tile of 
 // span divided by this, per axis, so a tile is the same size in metres in every level and on every face.
 const SURF_TILE_M = 4;                                    // metres per tile of authored surface texture
 function _surfRepeat(spanM){ return Math.max(1, Math.round((+spanM || 1) / SURF_TILE_M)); }
+// build 1385: A SHARED MATERIAL CARRIES ONE REPEAT, AND THE PILLAR IS NOT A BOUNDARY WALL.
+// `wallMat` is shared, and build 1378 derives its repeat from the boundary wall's own span — 35 across
+// ARENA*2 and 2 up H. Before 1378 `wallTex` was '' so that repeat governed nothing; the moment the wall
+// gained a texture, every other mesh sharing the material inherited a tiling tuned for a 140 x 8 m box.
+// On the decorative pillar (a 16 m cylinder, ~7.5 m around) that is 0.2 m per tile around and 8 m per tile
+// up: a 37:1 stretch, on four objects standing at the default level's spawn.
+//
+// The fix is per-geometry UVs, not a per-object material: a clone would stop tracking the creator's wall
+// colour and texture through applyWorldCfg, and one material per pillar is a draw call per pillar. Scaling
+// the UV attribute is free, and the factor is a pure RATIO OF SPANS — `own / the span the repeat was
+// derived from` — so it stays correct when a creator resizes the arena and both move together, and it
+// never needs to know SURF_TILE_M at all.
+function _uvRescale(geo, su, sv){
+  const uv = geo && geo.attributes && geo.attributes.uv;
+  if(!uv || !(su > 0) || !(sv > 0)) return geo;
+  for(let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+  uv.needsUpdate = true;
+  return geo;
+}
 const _PROC_STEPS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128];
 function _procRepeatFor(span){
   const want = Math.max(1, (+span || 1) / PROC_TILE_M);
@@ -10020,6 +10074,11 @@ const PROP_TEX_AMT = 0.55;
 // floor keeps a small prop readable — a 1 m crate would otherwise get a quarter of one tile.
 const PROP_TEX_PER_M = 0.25;
 const PROP_TEX_MIN_CYC = 1.5;    /* minimum tiles across the object, whatever its size */
+// build 1388: how deep the texture's structure is, in METRES — a physical quantity, not a gain, because
+// the surface gradient below divides a height derivative by a POSITION derivative and both are in view
+// units. At the shipped ~4 m tile, 1.8 cm is a shallow cast-concrete relief.
+const PROP_TEX_RELIEF = 0.018;
+_odTexNBase = PROP_TEX_RELIEF; _syncOdBump();   /* hand-off at the declaration site: _applyPixelRatio() runs at boot, thousands of lines above this, and `typeof` does not guard a temporal dead zone (1127/1331/1383) */
 let _propTex = null;
 function _ensurePropTex(){
   if(_propTex !== null) return _propTex;
@@ -10140,6 +10199,7 @@ function applyObjDetail(mat, freq, albOnly){
       shader.uniforms.uOdTexM = { value: PROP_TEX_LUM };
       shader.uniforms.uOdTexA = { value: PROP_TEX_AMT };
       shader.uniforms.uOdTexF = { value: mat.userData._odTexF > 0 ? mat.userData._odTexF : PROP_TEX_PER_M };
+      shader.uniforms.uOdTexN = _odTexNU;                        /* BY REFERENCE, like uOdBump — the rung fade is one CPU write */
     }
     // kept so a later resize can move the density without recompiling anything (retileProcSurface)
     mat.userData._odU = shader.uniforms;
@@ -10149,8 +10209,8 @@ function applyObjDetail(mat, freq, albOnly){
     // roughnessmap_fragment BEFORE normal_fragment_maps, so the field is evaluated once in the first
     // patch and reused by the second — four noise evaluations per pixel instead of five.
     shader.fragmentShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump; uniform float uOdAlb;\n'
-      + (texOn ? 'uniform sampler2D uOdTex; uniform float uOdTexM; uniform float uOdTexA; uniform float uOdTexF;\n' : '')
-      + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase;\n' + shader.fragmentShader
+      + (texOn ? 'uniform sampler2D uOdTex; uniform float uOdTexM; uniform float uOdTexA; uniform float uOdTexF; uniform float uOdTexN;\n' : '')
+      + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase; float _odTexL;\n' + shader.fragmentShader
       // build 1379: the field is evaluated HERE now, at map_fragment, because that is the earliest chunk
       // where diffuseColor is final and it runs BEFORE roughnessmap_fragment — so the albedo, roughness
       // and normal patches all share ONE evaluation instead of the roughness patch owning it. three's
@@ -10180,6 +10240,7 @@ function applyObjDetail(mat, freq, albOnly){
           '  float _ty = dot(_ts, vec3(0.2126, 0.7152, 0.0722));',
           // decode with the exact sRGB EOTF, because uOdTexM is the mean of this same quantity
           '  float _tl = (_ty <= 0.04045) ? (_ty/12.92) : pow((_ty+0.055)/1.055, 2.4);',
+          '  _odTexL = _tl;',   /* the SAME sample the albedo used — that is what makes the relief describe the same surface (build 1387's rule, one layer down) */
           '  diffuseColor.rgb *= mix(1.0, _tl/uOdTexM, uOdTexA);',
           '}',
         ].join('\n') : ''),
@@ -10194,7 +10255,45 @@ function applyObjDetail(mat, freq, albOnly){
       // single loudest "this is an untextured model" tell; a few degrees of micro-relief is what breaks
       // it. The gradient is projected onto the tangent plane so the perturbation cannot tilt the normal
       // away from the surface it belongs to.
-      .replace('#include <normal_fragment_maps>', albOnly ? '#include <normal_fragment_maps>' : [
+      // build 1388: a primitive's relief, derived from the SAME triplanar sample its albedo already used.
+      // Zero extra texture fetches — `_odTexL` is the luminance computed at map_fragment above — and
+      // therefore correlated with the colour BY CONSTRUCTION, which is the whole of build 1387's argument
+      // applied to the surface that actually dominates the stock frame (the engine floor plane is 3% of it;
+      // the instanced primitive deck is ~90%).
+      //
+      // Mikkelsen's surface gradient, which is what three's own `perturbNormalArb` computes: it needs no
+      // UVs and no tangent basis, so it works on a primitive of any shape at any scale. dHdxy and
+      // dFdx(surf_pos) are both per-pixel, so the ratio is dimensionless and PROP_TEX_RELIEF is a real
+      // depth in metres rather than a gain to guess at.
+      //
+      // THE #if IS LOAD-BEARING. `dFdx` needs GL_OES_standard_derivatives on WebGL 1, and three emits that
+      // directive only for `extensionDerivatives || envMapCubeUVHeight || bumpMap || tangentSpaceNormalMap
+      // || clearcoatNormalMap || flatShading || shaderID === 'physical'`. Every define named here is one of
+      // those terms, so the code cannot compile without the extension that makes it legal — and a shader
+      // that fails to compile takes every prop in the level with it, silently, which this file has lost a
+      // subsystem to twice. test-1388 asserts the correspondence against the real three build.
+      .replace('#include <normal_fragment_maps>', (albOnly && texOn) ? [
+        '#include <normal_fragment_maps>',
+        '#if defined( TANGENTSPACE_NORMALMAP ) || defined( USE_BUMPMAP ) || defined( FLAT_SHADED ) || defined( PHYSICAL )',
+        // The branch condition is TWO UNIFORMS, deliberately: a derivative taken inside non-uniform control
+        // flow is undefined in GLSL ES, so every dFdx/dFdy here has to sit where the whole quad agrees it
+        // runs. That is also why the degenerate case is a SELECT at the end rather than an early out.
+        'if( uOdTexN > 0.0 && uOdTexA > 0.0 ){',
+        '  vec3 _bSx = dFdx( -vViewPosition ), _bSy = dFdy( -vViewPosition );',
+        '  float _bH = _odTexL * uOdTexN;',
+        '  float _bHx = dFdx( _bH ), _bHy = dFdy( _bH );',
+        '  vec3 _bR1 = cross( _bSy, normal ), _bR2 = cross( normal, _bSx );',
+        '  float _bDet = dot( _bSx, _bR1 );',
+        '  vec3 _bG = sign( _bDet ) * ( _bHx * _bR1 + _bHy * _bR2 );',
+        // three\'s own perturbNormalArb ends `normalize( abs(fDet)*surf_norm - vGrad )`, which is NaN when
+        // the surface derivative degenerates (an edge-on quad, a frame with no motion in the derivative):
+        // sign(0) is 0, so the whole vector is 0 and normalize(0) is NaN. One dot product buys the
+        // unperturbed normal instead of a black pixel.
+        '  vec3 _bN = abs( _bDet ) * normal - _bG;',
+        '  normal = ( dot( _bN, _bN ) > 1e-20 ) ? normalize( _bN ) : normal;',
+        '}',
+        '#endif',
+      ].join('\n') : albOnly ? '#include <normal_fragment_maps>' : [
         '#include <normal_fragment_maps>',
         '{ float _odE = 0.6;',
         '  vec3 _odG = vec3(_odField(_odP + vec3(_odE,0.0,0.0)) - _odBase,',
@@ -19725,7 +19824,11 @@ loadHostedProps();
 // A glowing pillar as a single selectable/deletable unit (cylinder + ring + its point light).
 function buildPillar(){
   const g = new THREE.Group();
-  const pil = new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.2,16,12), wallMat);
+  // build 1385: wallMat's repeat is derived from (ARENA*2, H) — the boundary wall. Rescale this cylinder's
+  // UVs by its OWN spans over those, so one shared material tiles both at the same physical size.
+  const _pilR = 1.2, _pilH = 16;
+  const pil = new THREE.Mesh(_uvRescale(new THREE.CylinderGeometry(_pilR,_pilR,_pilH,12),
+    (2 * Math.PI * _pilR) / (ARENA * 2), _pilH / H), wallMat);
   pil.position.y = 8;
   const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.4,.6,12),
     new THREE.MeshStandardMaterial({ color:0x0c1418, emissive:0x38f5b5, emissiveIntensity:1 }));
@@ -20627,7 +20730,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
 // the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
 // crushed red channel survives the restaging.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'img/tex/floor-concrete-n.png', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'img/tex/wall-panels-n.png', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -20978,7 +21081,7 @@ function applyWorldCfg(){
     if(worldCfg.floorRough!=null) floorMat.roughness = Math.max(0, Math.min(1, +worldCfg.floorRough));
     if(worldCfg.floorMetal!=null) floorMat.metalness = Math.max(0, Math.min(1, +worldCfg.floorMetal));
     floorMat.envMapIntensity = _envInten(floorMat.metalness, worldCfg.skyBright);   // build 1144: metal drives REFLECTION strength, but never below the floor every surface needs to see the sky at all
-    floorMat.specularIntensity = floorMat.metalness;   // metal 0 => no dielectric sun-sheen (truly matte)
+    floorMat.specularIntensity = DIELECTRIC_SPEC;   // build 1386: every dielectric has an F0; roughness is what makes it matte
     if(+worldCfg.floorTile>0 && !(+worldCfg.floorTileU>0) && !(+worldCfg.floorTileV>0)){ worldCfg.floorTileU=worldCfg.floorTileV=+worldCfg.floorTile; worldCfg.floorTile=0; }   // migrate legacy uniform tile
     const fAuto = _surfRepeat(ARENA*2);   // build 1378: the ground plane is ARENA*2 across, UV 0..1 — so this is metres, not a ratio
     const fu = +worldCfg.floorTileU>0 ? +worldCfg.floorTileU : fAuto, fv = +worldCfg.floorTileV>0 ? +worldCfg.floorTileV : fAuto;
@@ -20990,7 +21093,7 @@ function applyWorldCfg(){
     if(worldCfg.wallRough!=null) wallMat.roughness = Math.max(0, Math.min(1, +worldCfg.wallRough));
     if(worldCfg.wallMetal!=null) wallMat.metalness = Math.max(0, Math.min(1, +worldCfg.wallMetal));
     wallMat.envMapIntensity = _envInten(wallMat.metalness, worldCfg.skyBright);   // build 1144
-    wallMat.specularIntensity = wallMat.metalness;   // metal 0 => matte (no sun-sheen)
+    wallMat.specularIntensity = DIELECTRIC_SPEC;   // build 1386
     if(+worldCfg.wallTile>0 && !(+worldCfg.wallTileU>0) && !(+worldCfg.wallTileV>0)){ worldCfg.wallTileU=worldCfg.wallTileV=+worldCfg.wallTile; worldCfg.wallTile=0; }   // migrate legacy uniform tile
     // build 1378: a boundary wall's wide face is ARENA*2 by H, so ONE repeat for both axes stretched the
     // texture by the aspect ratio (17:1 at the default). Derived per axis from the real span instead.
@@ -32755,7 +32858,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1384 · 2026-08-05';
+const BUILD_VERSION = 'build 1388 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

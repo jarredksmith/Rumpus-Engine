@@ -3210,6 +3210,33 @@ if (which === 'tex') {   // fast iteration: node tools/levelgen.mjs tex <library
     writeFileSync(outPng, pngEncode(toBytes(px), S2, S2, 4));
   } else writeFileSync(outPng, pngEncode(toBytes(t.rgb), S2, S2, 3));
   console.log(id, '->', outPng, S2 + 'px');
+  // build 1387: the AUX maps, off the same make() call. That is the whole point — a normal map generated
+  // from a different field than the albedo is a printed photograph with unrelated bumps on it, which reads
+  // worse than no relief at all. Same seed, same size, same height field, so the crack in the albedo and
+  // the crease in the normal are the same crack.
+  //
+  // The strength convention is the glTF bake's, verbatim: `2.2 * S/256` (so world-space relief is constant
+  // across resolutions) TIMES the library entry's own `nrm`. It is baked INTO the map rather than left to
+  // `material.normalScale`, because floorMat/wallMat are SHARED and a creator's own normal map would
+  // otherwise inherit whatever scale was left behind (build 1139's rule).
+  const stem = outPng.replace(/\.png$/i, '');
+  const aux = (q0, s0) => { let q = q0, ss = s0, div = +(process.env.TEXAUX || 2);
+    while (div > 1 && ss > 1) { q = halfPx(q, ss, 3); ss >>= 1; div >>= 1; } return [q, ss]; };
+  const nrmScale = (MATLIB[id].opts && MATLIB[id].opts.nrm) || 1;
+  if (t.h && !process.env.NONRM) {
+    const [q, s] = aux(normalPx(t.h, S2, 2.2 * S2 / 256 * nrmScale), S2);
+    writeFileSync(stem + '-n.png', pngEncode(toBytes(q), s, s, 3));
+    console.log(id, '->', stem + '-n.png', s + 'px  normal (strength x' + nrmScale + ')');
+  } else if (!t.h) console.log(id, ': no height field, no normal map');
+  if (t.mr && !process.env.NOMR) {
+    // glTF packing: roughness in G, metalness in B. three reads roughnessMap's GREEN and metalnessMap's
+    // BLUE, so ONE image serves both slots and matches every other texture this generator emits.
+    const px = new Float64Array(S2 * S2 * 3);
+    for (let i = 0; i < S2 * S2; i++) { px[i * 3 + 1] = t.mr[i * 2]; px[i * 3 + 2] = t.mr[i * 2 + 1]; }
+    const [q, s] = aux(px, S2);
+    writeFileSync(stem + '-r.png', pngEncode(toBytes(q), s, s, 3));
+    console.log(id, '->', stem + '-r.png', s + 'px  roughness in G, metalness in B');
+  } else if (!t.mr) console.log(id, ': no roughness field, no MR map');
   process.exit(0);
 }
 if ((which !== 'arena' && !LAYOUTS[which]) || !out) {

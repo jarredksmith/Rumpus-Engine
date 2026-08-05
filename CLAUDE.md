@@ -967,6 +967,294 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The deck gets relief off its own colour, for no extra fetches (build 1388)
+
+Build 1387 gave the two ENGINE surfaces an authored normal map correlated with their albedo — and the census
+its own tooling made possible said the engine floor plane is **3% of the stock frame** while the instanced
+primitive deck is **~90%**. Primitives cannot use those maps: build 1384's texture modulation is triplanar
+and object-space, and their `normalMap` slot holds 1139's procedural value-noise, which is a *different
+field* from the one modulating their colour. 1387's defect exactly, one layer down, on the surface that
+actually fills the frame.
+
+**The height is `_odTexL` — the luminance build 1384's albedo modulation already sampled.** One sample, two
+uses: still exactly three `texture2D(uOdTex` fetches, and the relief is correlated with the colour BY
+CONSTRUCTION rather than by a matching pair of files that could drift. It is Mikkelsen's surface gradient
+(what three's own `perturbNormalArb` computes), which needs no UVs and no tangent basis, so it works on a
+primitive of any shape at any scale.
+
+`PROP_TEX_RELIEF = 0.018` is a **depth in metres**, not a gain: the surface gradient divides a height
+derivative by a POSITION derivative and both are per-pixel view units, so the ratio is dimensionless and the
+constant has to be a real distance. 1.8 cm is a shallow cast-concrete relief at the shipped ~4 m tile.
+
+### Three things in the GLSL, each of which is a defect without it
+
+- **The `#if` is what makes `dFdx` legal.** On WebGL 1 it needs `GL_OES_standard_derivatives`, and three
+  emits that directive only for `extensionDerivatives || envMapCubeUVHeight || bumpMap ||
+  tangentSpaceNormalMap || clearcoatNormalMap || flatShading || shaderID === 'physical'`. Every define in
+  the guard — `TANGENTSPACE_NORMALMAP`, `USE_BUMPMAP`, `FLAT_SHADED`, `PHYSICAL` — is one of those terms, so
+  the code cannot compile without the extension that makes it legal. `test-1388` asserts that
+  correspondence **against the real three build**, because if an upgrade changes either side the guard stops
+  guarding and nothing errors. Probed live: **16 of 16** materials carrying `_odTex` also carry a
+  tangent-space normal map, so the gate is satisfied for every one of them.
+- **The branch is on TWO UNIFORMS, deliberately.** A derivative taken inside non-uniform control flow is
+  undefined in GLSL ES. That is also why the degenerate case is a SELECT at the end rather than an early
+  out — all four `dFdx`/`dFdy` calls have to sit where the whole quad agrees they run.
+- **`normalize()` of a degenerate surface gradient is NaN, and three's own version carries it.**
+  `perturbNormalArb` ends `normalize( abs(fDet)*surf_norm - vGrad )`; when the surface derivative
+  degenerates, `sign(0)` is 0, the whole vector is 0, and `normalize(0)` is NaN. One dot product buys the
+  unperturbed normal instead of a black pixel.
+
+### Measured — and the shader's health first, because that is what this build could get catastrophically wrong
+
+```
+glGetError 0 · 66 programs · 338 draw calls · 24,528 tris · 0 program diagnostics
+22 patched materials · 16 carrying uOdTexN · 16 of 16 tangent-space normal mapped
+window 19,728 pixels, drawn: instanced BoxGeometry 19,400 · floorMat 736 · wedge 319
+
+control (same condition)   uniq  +0.02%   grad  -0.01%
+EFFECT (relief 0 -> 0.018) uniq +12.86%   grad +24.46%   lum -0.09%
+x4                         uniq +51.15%   grad +105.19%
+return                     uniq  -0.31%   grad  -0.04%
+```
+
+`grad` is the mean absolute difference between horizontal neighbours — relief is LOCAL variation. **Three
+times 1387's effect (+24.5% against +7.8%), because it lands on the surface that is 90% of the frame rather
+than the one that is 3%**, and the mean luminance moves 0.09%, so it is structure and not exposure.
+
+It rides build 1383's rung ladder through the same `_syncOdBump` — **one ladder, two amplitudes.** This is
+derivative-based bump, quantised to the 2x2 fragment quad, so it is precisely the high-frequency normal
+detail that must not outrun a shedding antialiaser; that argument is 1383's and it applies here unchanged.
+
+**A `sed`-proof note on the ordering, inherited from 1379:** `_odTexL` is written at `map_fragment` and read
+at `normal_fragment_maps`. `test-1388` asserts three still emits them in that order — get it backwards and
+the height is read before it is written, which is silent garbage rather than an error.
+
+One pin moved (1383's `let _odBumpBase = 0;` gained a second declarator on the same line; its intent — the
+base is declared above the boot call that reads it — is unchanged and still asserted).
+
+### Container rollback #14, mid-build
+
+The tree reverted to build 1381 between two commands, with the tell being `tools/probe/drawn-at.mjs`
+vanishing on import and `ls tests | wc -l` reading 1128 against 1134. `git log` first, then
+`git fetch origin <branch> && git reset --hard FETCH_HEAD` restored everything, because every build is
+pushed the moment it lands. Fourteenth occurrence; the protocol cost about ninety seconds.
+
+## Relief that describes the same surface as the colour (build 1387)
+
+The critic's second verified finding: `PROC_SLOTS` is `normalMap` + `roughnessMap` fed ONLY by build 1139's
+procedural value-noise, so no authored normal or roughness map was loaded anywhere in the level. Build 1378
+gave the ground and the boundary walls a real albedo and left `floorTexN`/`wallTexN` empty — structure in
+the colour, unrelated micro-noise in the relief, which is a printed photograph with bumps on it.
+
+**The machinery was already there and the CLI just never wrote it out.** Every entry in the generator's
+texture library carries a height field `t.h`, and `normalPx(t.h, S, strength)` is what the arena bake has
+used for hundreds of builds. `node tools/levelgen.mjs tex <id> <out.png>` emitted the albedo alone. It now
+writes `<stem>-n.png` and `<stem>-r.png` beside it, off the SAME `make()` call.
+
+**That sameness is the entire design, and it is proven by hash rather than asserted.** Regenerating the
+albedo at the shipped size produced a file **byte-identical** to the one already committed (`335e47af…`,
+`43198910…`) — so the normal map provably comes from the same seed and the same height field, and the crack
+in the albedo and the crease in the normal are the same crack. `test-1387` re-derives both maps from the
+real generator and compares decoded pixels: **worst channel delta 0.**
+
+Three conventions carried over rather than reinvented: the strength is the glTF bake's own
+`2.2 x S/256` (world-space relief constant across resolutions) times the library entry's `nrm`, so an engine
+surface and a generated arena agree about how deep a concrete crack is; it is **baked into the map** rather
+than left to `material.normalScale`, because `floorMat`/`wallMat` are SHARED and a creator's own map would
+inherit whatever scale was left behind (1139's rule, and the test asserts nothing writes `normalScale`); and
+the aux maps are half-res like the bake's, which is 30 KB against 112 KB for 3.7x less relief detail than
+the eye can use at a 4 m tile.
+
+**The roughness slot stays EMPTY, and that is the honest half.** Neither `concrete` nor `panels` carries an
+`mr` field — about half the 34 library entries do — so there is nothing to source a roughness map from.
+Deriving one from the height field would be making data up. An empty slot is not a hole: `_procFallback`
+restores 1139's procedural roughness.
+
+### Measured — 21,058 pixels, every one proven-DRAWN floor plane
+
+```
+control (same condition)        uniq  0.00%   grad  0.00%
+none -> procedural (was)        uniq +5.04%   grad +21.25%
+none -> authored (this build)   uniq +10.31%  grad +30.73%
+proc -> authored                uniq +5.01%   grad  +7.82%    lum -0.01%
+x4 / x40 overdrive              grad +133.6% / +397.5%        return 0.00%
+```
+
+`grad` is the mean absolute difference between horizontal neighbours — relief is LOCAL variation, not a
+level shift, and the mean luminance moving 0.01% is that stated as a measurement. The authored map does
+about twice the work the procedural field was doing, and the procedural field was doing real work.
+
+### The measurement was wrong three times, and the third failure is the useful one
+
+| # | it reported | why |
+|---|---|---|
+| 1 | authored vs procedural: −2.3%, and a 4x overdrive only +0.45% | a positive control that barely fires invalidates every null beside it. Something was wrong |
+| 2 | removing the normal map ENTIRELY changed 0.00%, and x40 changed 0.03% | not a subtle effect — the map was not reaching those pixels at all |
+| 3 | the compiled program had `USE_NORMALMAP`, the sampler, `perturbNormal2Arb` and `normalMap, vUv` | the shader was fine. **The WINDOW was not the floor** |
+
+Painting `floorMat` bright red moved the 7,621-pixel window by **0.01** while moving the whole frame by 2.2.
+The window filter accepted a pixel when the first *Standard/Physical* raycast hit was `floor` — and r149
+reports an `InstancedMesh` hit against the SHARED unit-box geometry (build 1139's documented signature), so
+a `distance < 2.0` cut threw the deck away and the floor behind it won every time.
+
+`tools/probe/drawn-at.mjs` is the durable fix: **what the RENDERER draws**, which is the first hit whose
+object and every ancestor is visible and which is not the sky dome — no material filter and no distance cut,
+because a nearer hit you filtered out still occludes. Re-verified with it, build 1386's window was **262 of
+266 pixels genuinely `floorMat`**, so that build's record stands as written.
+
+### And the finding nobody was looking for: the engine floor is 3% of the stock frame
+
+The census that `drawnAt` made possible, by pose:
+
+```
+spawn (0,30) pitch -0.28    FLOOR-PLANE  3.4%    instanced BoxGeometry 89.8%
+spawn (0,30) pitch -0.10    FLOOR-PLANE  3.0%    instanced BoxGeometry 74.2%   sky 16.1%
+spawn (0,30) pitch -0.55    FLOOR-PLANE  0.0%    instanced BoxGeometry  100%
+open ground (40,40)         FLOOR-PLANE 89.6%
+```
+
+**Where the game puts the player, essentially all the visible ground is the level's own primitive deck**, and
+a primitive has no texture slots wired to these maps at all — build 1384's modulation is the only structure
+it carries. So this build is correct, cheap and measurable, and it lands mostly on open ground and on empty
+levels (which are nothing BUT the engine floor). Getting authored relief onto primitives is the next build,
+and it is a bigger one: `applyObjDetail`'s triplanar path already samples a texture per fragment, so the
+normal would ride the same three fetches rather than adding any.
+
+## The two engine surfaces were the only non-physical materials in the game (build 1386)
+
+The cold critic's #1 was that the frame is *"less flat-COLOURED than before and exactly as flat-LIT — no
+highlight, no fresnel edge, no reflection... nothing tells the eye this is lit, only that it is coloured."*
+Builds 1378-1385 all attacked albedo variation and none of them touched lighting response. The cause was
+one assignment, made twice, and it is **build 1144's mistake one property over**:
+
+    floorMat.specularIntensity = floorMat.metalness;   // "metal 0 => truly matte"
+    wallMat.specularIntensity  = wallMat.metalness;
+
+In r149's `lights_physical_fragment` that property scales **both** dielectric terms:
+
+```glsl
+material.specularF90  = mix( specularIntensityFactor, 1.0, metalnessFactor );
+material.specularColor = mix( min(pow2((ior-1)/(ior+1)) * specularColorFactor, 1.0)
+                              * specularIntensityFactor, diffuseColor.rgb, metalnessFactor );
+```
+
+So the floor at `metalness 0.1` had **F0 = 0.04 x 0.1 = 0.004** — a tenth of what every dielectric in nature
+reflects head-on — and **F90 = mix(0.1, 1.0, 0.1) = 0.19**, where F90 is 1.0 for *every material there is*:
+at grazing incidence everything is a mirror. The wall was 5x and 2.8x off the same two numbers.
+
+**And it was exactly two surfaces, provably.** The physical fragment shader opens
+`#ifdef PHYSICAL / #define IOR / #define SPECULAR`, so that branch is reached by a `MeshPhysicalMaterial`
+and by nothing else — and the engine constructs exactly two, `floorMat` and `wallMat`. Every other material
+in the file is a `MeshStandardMaterial`, which takes the chunk's `#else`: F0 0.04, F90 1.0, already
+physical. **The ground plane and the boundary walls were the only surfaces in the game that were not**, and
+they are the largest in any frame.
+
+*"Matte" is high ROUGHNESS, not absent specular.* `floorRough` is already 0.95, which spreads the lobe until
+it reads as concrete. Killing F0 as well does not make a surface matte; it makes it not a material.
+
+### Measured, with the control that makes it mean something
+
+266 pixels, each **raycast-proven to be the floor mesh** and proven unoccluded toward the sun — the window
+is derived by projecting two ground points at fixed forward distance, never picked by eye. World paused,
+grain and auto-exposure off:
+
+```
+control (0.1 vs 0.1)      0.00%      <- byte-identical, so the noise floor is zero
+shipped 0.1 -> 1.0      +38.00%      near band (15.6 m) +29.6%   far band (68.6 m) +54.2%
+10x overdrive          +152.52%      <- monotonic: the instrument can produce a positive
+return to 0.1             0.00%
+```
+
+**The gain grows with the grazing angle, and that is the finding rather than the +38%.** A flat lift cannot
+have that shape; F90 is the only term in the pipeline that does. It is a Fresnel gradient appearing on a
+surface that had none.
+
+In the SHIPPED configuration — auto-exposure left live at 0.7, so the frame is allowed to meter the extra
+energy back out — the change is a **redistribution**, which is the honest way to state it:
+
+```
+repeat spread, same condition   frame 0.02-0.18%   grazing 0.08-0.27%    <- the real noise floor
+EFFECT                          frame +0.68%       grazing band +5.90%   steep ground -0.18% (nil)
+clipped pixels                  0.001% -> 0.001%   unique colours 19,066/19,380 -> 19,485/19,800
+```
+
+So: nothing blows out, the frame barely moves, steep-angle ground is unchanged — and the grazing band gains
+**20x its own noise floor**. The ground stops being a flat albedo patch and acquires an angle-dependent
+response. That is what the critic asked for, and it is a smaller *number* than the isolated measurement
+precisely because the eye adapts, which is correct behaviour and not something to hide.
+
+**The first shipped-config run was thrown away and it is worth saying why.** It sampled before
+auto-exposure had settled — exposure climbed 1.7237 -> 1.7523 -> 1.7510 and never returned — so every
+figure carried a one-way drift and the "return" condition did not return. A single A/B cannot tell an
+effect from a settling curve. The probe now warms up for 30 s and then **alternates**, which is what
+produced the repeat spread above.
+
+### A comment that quotes code is a decoy for every grep
+
+Both stale pins in this build were asserting the DEFECT (`test-1144`'s *"the coupling that IS correct
+stays"*, `test-164`'s *"floor matte at metal 0"*), which is ordinary. What is worth recording is that
+**`test-164`'s floor assertion PASSED against the removed line — by matching this build's own comment
+quoting it** — while its wall assertion failed. Half a pin silently satisfied by prose. My new test hit the
+identical trap ten minutes earlier, from the other direction: an assertion that the coupling was *gone*
+failed because the comment was still there to find.
+
+Two things came out of it, both applied here: the source comment states the removed line **in prose rather
+than as the literal statement**, and every pin on it is scoped to real ASSIGNMENT STATEMENTS
+(`/^\s*\w+(\.\w+)*\.specularIntensity = [^;]+;/gm`) rather than being a bare grep. This is the
+character-budget trap's cousin: *a source pin is only as good as the uniqueness of what it matches, and a
+build's own documentation is the most likely thing to collide with it.*
+
+`test-1386` pins the whole premise against the **real vendored three** — both chunk lines, the
+`#ifdef PHYSICAL` define block, the `#else` branch's `vec3(0.04)`/`1.0`, and that a `MeshStandardMaterial`
+does not have the property at all — because if an upgrade moves any of that the rationale is void and the
+engine must fail loudly rather than quietly go back to matte. `SKY_ENV_FLOOR` and `_envInten` are
+deliberately untouched: build 1144 measured that value and 1150 re-derived it against a sweep, and it is a
+different property answering a different question.
+
+## The pillar was tiled like a boundary wall (build 1385)
+
+Found by a cold rendering critic and verified at the line. **`wallMat` is shared**, and build 1378 derives
+its texture repeat from the boundary wall's own span — `_surfRepeat(ARENA*2)` across and `_surfRepeat(H)`
+up. Before 1378 `wallTex` was `''`, so that repeat governed nothing. The moment the wall gained a texture,
+every other mesh sharing the material inherited a tiling tuned for a 140 x 8 m box — and `buildPillar`
+shares it for a **16 m cylinder about 7.5 m around**:
+
+```
+             one tile spanned          after
+around        0.22 m  (35 repeats)     ~3.8 m
+up            8.0 m   (2 repeats)      ~4.0 m
+             a 37:1 stretch            within 1.6x of the geometry's own aspect
+```
+
+On four objects standing at the default level's spawn. That is a 1378 regression, and it is the general
+hazard of a shared material: its repeat belongs to whichever consumer it was derived for.
+
+**The fix is per-geometry UVs, not a per-object material.** A clone would stop tracking the creator's wall
+colour and texture through `applyWorldCfg`, and one material per pillar is a draw call per pillar. Scaling
+the UV attribute is free — and the factor is a pure **ratio of spans**, `own / the span the repeat was
+derived from`, so it never names `SURF_TILE_M` (which cancels out entirely), it stays correct when a
+creator resizes the arena because both move together, and it survives a retune of the tile size.
+
+`_uvRescale` refuses a zero, negative, NaN or missing factor rather than collapsing the geometry, and
+`test-1385` executes all of that against the real three build — including that `CylinderGeometry` still
+has UVs at all, since an upgrade dropping them would make this a silent no-op.
+
+**One test-writing note worth keeping:** `BufferAttribute.needsUpdate` is a **set-only accessor** in three.
+It bumps `version` and reads back `false`, so asserting `=== true` fails against correct code. The
+observable effect is the version.
+
+### What the critic said that this build does NOT address
+
+Its sharper finding is that the frame is **less flat-coloured than before and exactly as flat-LIT**:
+*"no highlight, no fresnel edge, no reflection... nothing tells the eye this is lit, only that it is
+coloured."* Everything in builds 1378-1384 attacks albedo variation; none of it touches lighting response.
+It scored the stock level **4/10** and explicitly declined to claim a delta from its earlier 3/10, because
+no valid before-frame existed to measure one — which is the right call and is why `docs/frames/` now exists.
+
+Its second verified defect is also open: `PROC_SLOTS` feeds only the procedural value-noise field, so no
+authored normal or roughness map is loaded anywhere in the level. Combined with the flat specular that is
+the real ceiling, and it is a bigger build than this one.
+
 ## A primitive gets material structure (build 1384)
 
 A cold critic put the stock level at **3/10** and a GENERATED arena at **6/10** off the same renderer, and
