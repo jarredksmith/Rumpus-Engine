@@ -64,4 +64,13 @@ for (const d of ['img']) {
   fs.cpSync(from, path.join(out, d), { recursive: true });
 }
 
-console.log('probe.html written to ' + out);
+// build 1389: STAMP THE BUILD. This container has rolled back fourteen times, and `mkprobe` reads whatever
+// `breach.html` happens to be on disk — so a rollback mid-session produces a probe of an OLD build that
+// boots fine, measures fine, and answers a question about code that is no longer in the tree. It happened:
+// a probe staged during a rollback window reported `_odBumpU is not defined` about a build that had
+// declared it five builds earlier, and everything measured through that staging was about build 1381.
+// `docs/frames/README.md` has said "know what BUILD you are measuring — stamp it or diff it" since 1382;
+// this is that, enforced rather than remembered. `driver.mjs` refuses to run against a stale stamp.
+const _bv = (src.match(/const BUILD_VERSION = '([^']*)'/) || [, 'UNKNOWN'])[1];
+fs.writeFileSync(path.join(out, 'BUILD'), _bv + '\n');
+console.log('probe.html written to ' + out + '   [' + _bv + ']');
