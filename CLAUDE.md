@@ -2145,6 +2145,60 @@ The comment says to read the tiers, not the name.
 Judged not worth tooling: it is a module-parse error, so node reports it instantly and unambiguously and the
 cost is one wasted probe run rather than a wrong result. Recorded so the count is honest.
 
+## The panel that was on screen was the one that did not get built (build 1399)
+
+Two halves of one report about the pickup authoring surface.
+
+### 1. Build 1293's gate had a hole in it
+
+*"There's something going on with the pickup tab in gameplay. It doesn't show correctly unless you click
+another dropdown tab and then go back to it. Even then it's a little finnicky."*
+
+Build 1293 stopped rendering the big global sections when none is on screen. **Its own comment says the block
+is skipped "only when NONE of the SIX is on screen" — and the list it checks has FIVE.** The Pickups panel is
+BUILT INSIDE that block and was never in the list that decides whether the block runs. So opening the
+Pickups fold while those five happened to be collapsed skipped the whole thing, and the panel that was
+actually on screen was the one that did not get built. Toggling any other fold made one of the five visible,
+the block ran, and Pickups filled in — the reported workaround, exactly.
+
+**Cutscenes is the same shape and had the same bug, unreported.** Both hosts are now resolved beside the
+others and both are in the gate, so it tests every host it builds.
+
+**Node counts alone could not have proven this.** With the block skipped the panel is not CLEARED either, so
+it keeps stale content rather than going empty — which is what "a little finnicky" describes. The decisive
+measurement is whether the panel FOLLOWS a change: with only Pickups open, adding spots and re-rendering made
+it read "1 placed" then "3 placed".
+
+### 2. A spawned pickup could not be one-shot
+
+Build 1396 gave AUTHORED pickup spots a `once` flag. A pad spawned by the graph or by a prop signal had none
+and came back forever. It rides through to the live pad now, where 1396's `_puOnce` / `_puConsume` already
+know what to do with it — **the rule is still written once**, so an authored spot and a spawned pad cannot
+come to different answers about the same kind. Both doors get the option: the Do node's params and the signal
+editor's own row, which gained a checkbox helper beside its `lab`/`sel`/`txt` siblings.
+
+```
+once OFF vs ON   predicate false/true · after taking, gone false/true
+                 20 s later, standing away: ordinary pad ready+visible (respawns 1),
+                 one-shot still not ready and not visible
+spawned key      one-shot by its kind, with no flag set
+```
+
+**The respawn row first read both pads as not-ready**, which looked like the flag failing on both. The probe
+had spawned them at the player start and the ordinary pad was respawning under the player's feet and being
+instantly re-collected. Standing 300 m away made the control produce its positive — build 1316's rule again:
+before believing a null, prove the instrument can produce a positive.
+
+Three pins moved (1293, 243, 846), all quoting the host resolution or the five-host list; every assertion
+unchanged in intent, and 1293's is now stronger — *any host the block BUILDS*, rather than a list of five.
+
+**Two test faults of my own, both about naming the wrong thing.** A sweep for stray `querySelector('#ed…')`
+caught fourteen legitimate ones belonging to panels outside the block, and would have failed on every
+unrelated future panel; it asks the precise question now (those two ids are each queried exactly once). And
+I extracted `_applySignalAction` to find the pickup handler, which lives in `_applyWorldAction` — `pickup` is
+a world verb and the signal router passes it onward. That is build 1390's mistake in miniature: naming the
+wrong function and asserting confidently against it.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its
