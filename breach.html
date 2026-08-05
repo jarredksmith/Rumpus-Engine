@@ -9878,6 +9878,25 @@ const PROC_TILE_M = 2.2;                                  // metres per tile of 
 // span divided by this, per axis, so a tile is the same size in metres in every level and on every face.
 const SURF_TILE_M = 4;                                    // metres per tile of authored surface texture
 function _surfRepeat(spanM){ return Math.max(1, Math.round((+spanM || 1) / SURF_TILE_M)); }
+// build 1385: A SHARED MATERIAL CARRIES ONE REPEAT, AND THE PILLAR IS NOT A BOUNDARY WALL.
+// `wallMat` is shared, and build 1378 derives its repeat from the boundary wall's own span — 35 across
+// ARENA*2 and 2 up H. Before 1378 `wallTex` was '' so that repeat governed nothing; the moment the wall
+// gained a texture, every other mesh sharing the material inherited a tiling tuned for a 140 x 8 m box.
+// On the decorative pillar (a 16 m cylinder, ~7.5 m around) that is 0.2 m per tile around and 8 m per tile
+// up: a 37:1 stretch, on four objects standing at the default level's spawn.
+//
+// The fix is per-geometry UVs, not a per-object material: a clone would stop tracking the creator's wall
+// colour and texture through applyWorldCfg, and one material per pillar is a draw call per pillar. Scaling
+// the UV attribute is free, and the factor is a pure RATIO OF SPANS — `own / the span the repeat was
+// derived from` — so it stays correct when a creator resizes the arena and both move together, and it
+// never needs to know SURF_TILE_M at all.
+function _uvRescale(geo, su, sv){
+  const uv = geo && geo.attributes && geo.attributes.uv;
+  if(!uv || !(su > 0) || !(sv > 0)) return geo;
+  for(let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+  uv.needsUpdate = true;
+  return geo;
+}
 const _PROC_STEPS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128];
 function _procRepeatFor(span){
   const want = Math.max(1, (+span || 1) / PROC_TILE_M);
@@ -19725,7 +19744,11 @@ loadHostedProps();
 // A glowing pillar as a single selectable/deletable unit (cylinder + ring + its point light).
 function buildPillar(){
   const g = new THREE.Group();
-  const pil = new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.2,16,12), wallMat);
+  // build 1385: wallMat's repeat is derived from (ARENA*2, H) — the boundary wall. Rescale this cylinder's
+  // UVs by its OWN spans over those, so one shared material tiles both at the same physical size.
+  const _pilR = 1.2, _pilH = 16;
+  const pil = new THREE.Mesh(_uvRescale(new THREE.CylinderGeometry(_pilR,_pilR,_pilH,12),
+    (2 * Math.PI * _pilR) / (ARENA * 2), _pilH / H), wallMat);
   pil.position.y = 8;
   const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.4,.6,12),
     new THREE.MeshStandardMaterial({ color:0x0c1418, emissive:0x38f5b5, emissiveIntensity:1 }));
@@ -32755,7 +32778,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1384 · 2026-08-05';
+const BUILD_VERSION = 'build 1385 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

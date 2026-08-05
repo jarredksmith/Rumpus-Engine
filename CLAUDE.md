@@ -967,6 +967,50 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The pillar was tiled like a boundary wall (build 1385)
+
+Found by a cold rendering critic and verified at the line. **`wallMat` is shared**, and build 1378 derives
+its texture repeat from the boundary wall's own span — `_surfRepeat(ARENA*2)` across and `_surfRepeat(H)`
+up. Before 1378 `wallTex` was `''`, so that repeat governed nothing. The moment the wall gained a texture,
+every other mesh sharing the material inherited a tiling tuned for a 140 x 8 m box — and `buildPillar`
+shares it for a **16 m cylinder about 7.5 m around**:
+
+```
+             one tile spanned          after
+around        0.22 m  (35 repeats)     ~3.8 m
+up            8.0 m   (2 repeats)      ~4.0 m
+             a 37:1 stretch            within 1.6x of the geometry's own aspect
+```
+
+On four objects standing at the default level's spawn. That is a 1378 regression, and it is the general
+hazard of a shared material: its repeat belongs to whichever consumer it was derived for.
+
+**The fix is per-geometry UVs, not a per-object material.** A clone would stop tracking the creator's wall
+colour and texture through `applyWorldCfg`, and one material per pillar is a draw call per pillar. Scaling
+the UV attribute is free — and the factor is a pure **ratio of spans**, `own / the span the repeat was
+derived from`, so it never names `SURF_TILE_M` (which cancels out entirely), it stays correct when a
+creator resizes the arena because both move together, and it survives a retune of the tile size.
+
+`_uvRescale` refuses a zero, negative, NaN or missing factor rather than collapsing the geometry, and
+`test-1385` executes all of that against the real three build — including that `CylinderGeometry` still
+has UVs at all, since an upgrade dropping them would make this a silent no-op.
+
+**One test-writing note worth keeping:** `BufferAttribute.needsUpdate` is a **set-only accessor** in three.
+It bumps `version` and reads back `false`, so asserting `=== true` fails against correct code. The
+observable effect is the version.
+
+### What the critic said that this build does NOT address
+
+Its sharper finding is that the frame is **less flat-coloured than before and exactly as flat-LIT**:
+*"no highlight, no fresnel edge, no reflection... nothing tells the eye this is lit, only that it is
+coloured."* Everything in builds 1378-1384 attacks albedo variation; none of it touches lighting response.
+It scored the stock level **4/10** and explicitly declined to claim a delta from its earlier 3/10, because
+no valid before-frame existed to measure one — which is the right call and is why `docs/frames/` now exists.
+
+Its second verified defect is also open: `PROC_SLOTS` feeds only the procedural value-noise field, so no
+authored normal or roughness map is loaded anywhere in the level. Combined with the flat specular that is
+the real ceiling, and it is a bigger build than this one.
+
 ## A primitive gets material structure (build 1384)
 
 A cold critic put the stock level at **3/10** and a GENERATED arena at **6/10** off the same renderer, and
