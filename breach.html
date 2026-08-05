@@ -30695,7 +30695,7 @@ function turretFire(){
     const hit=hits[0]; endPoint=hit.point.clone();
     const isHead=!!(hit.object.userData&&hit.object.userData.isHead);
     const dmg=TURRET_GUN.dmg*(isHead?HEADSHOT_MUL:1);
-    let dn=hit.object, dprop=null; while(dn&&!dprop){ if(dn.userData&&dn.userData.phys) dprop=dn; dn=dn.parent; }
+    let dn=hit.object, dprop=null; while(dn&&!dprop){ if(_isDamageable(dn)) dprop=dn; dn=dn.parent; }   /* build 1392 */
     if(dprop){ const dir=raycaster.ray.direction.clone().normalize();
       if(!clientMode){ if(!damageProp(dprop,dmg,hit.point,dir,7,NET.myId)) pushDynamic(dprop,dir,7,hit.point); }
       else if(NET.conn){ try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:dmg, dir:[dir.x,dir.y,dir.z], s:7, pt:[hit.point.x,hit.point.y,hit.point.z]}); }catch(e){} }
@@ -32878,7 +32878,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1391 · 2026-08-05';
+const BUILD_VERSION = 'build 1392 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34866,6 +34866,23 @@ function shatterProp(obj, point, dir, power, byId){
   if(obj.userData.phys) removeDynamicProp(obj);
   scene.remove(obj);
 }
+// build 1392: WHICH PROPS CAN BE HURT. Build 1390 taught `damageProp` that a static target opted in, and
+// stopped there — but nothing that FIRES resolves a prop through `damageProp`. The bullet and the turret
+// walk up the hit object's parents looking for `userData.phys`, and melee scans `dynamicProps`. All three
+// looked straight past a static target, so the feature shipped switched on and inert: the checkbox was
+// ticked, the HP was set, and the plate never broke.
+//
+// That is build 1277's defect exactly — the handler and the door were right and the WIRE was never driven —
+// and build 1390's own probe walked into it by calling `damageProp` directly instead of firing a shot.
+// One predicate now, asked by every site, so a fourth cannot quietly disagree.
+function _isDamageable(o){ return !!(o && o.userData && (o.userData.phys || o.userData.shootable)); }
+const _dmgProps = [];
+function damageableProps(){          // reused array (build 1168): a swing must not allocate a prop list
+  _dmgProps.length = 0;
+  for(const o of dynamicProps) _dmgProps.push(o);
+  for(const o of propModels){ if(o && o.userData && o.userData.shootable && !o.userData.phys) _dmgProps.push(o); }
+  return _dmgProps;
+}
 // Damage a breakable prop; returns true if it shattered.
 // build 1390: a target at a shooting range is BOLTED DOWN. Until now `damageProp` refused any prop that
 // was not `phys`, and the editor's Breakable checkbox lived inside `if(sel.userData.phys)` — so the only
@@ -35320,18 +35337,23 @@ function _meleeStrike(wep, RANGE, DMG){
   //
   // No line-of-sight gate, deliberately: build 539 established that "at melee range the sightline is moot"
   // for the enemy cone, and a prop test that disagreed with the enemy test is the defect being fixed.
-  if(dynamicProps.length){
+  /* build 1392: BOTH the gate and the ray read the damageable set, not `dynamicProps`. Build 1390 taught
+     `damageProp` about static targets and this block still asked the dynamic list two ways — so a swing at a
+     shooting-range plate found nothing to test and the reported "the prop never breaks" survived that build.
+     The list is a REUSED scratch array, so it is captured once and read three times rather than re-derived. */
+  const _mdp = damageableProps();
+  if(_mdp.length){
     _meleeRc.set(_meleeOrig.set(px, py, pz), _meleeDir.copy(fwd).normalize());
     _meleeRc.near = 0; _meleeRc.far = RANGE;   /* the reach IS the ray, so the hit test and the cone agree */
-    const ph = _meleeRc.intersectObjects(dynamicProps, true);
+    const ph = _meleeRc.intersectObjects(_mdp, true);
     let target=null, tpt=null;
     if(ph.length){   /* a dead-on strike still wins, and gives the exact contact point for the spark */
-      let o=ph[0].object; while(o && dynamicProps.indexOf(o)<0) o=o.parent;
+      let o=ph[0].object; while(o && !_isDamageable(o)) o=o.parent;   /* build 1392 */
       if(o){ target=o; tpt=ph[0].point; }
     }
     if(!target){
       let bestD=1e9;
-      for(const o of dynamicProps){
+      for(const o of _mdp){   /* build 1392: dynamic props AND static targets */
         if(!o || !o.userData || o.userData._shattered) continue;
         const b=o.userData.box; if(!b) continue;
         /* the closest point on the prop's own box to the player — clamped per axis */
@@ -35477,7 +35499,7 @@ function shoot(){
       const hsMul = isHead ? HEADSHOT_MUL : 1;
       // dynamic physics prop? push it (host/solo apply directly; clients ask the host)
       let dn = hit.object, dprop = null;
-      while(dn && !dprop){ if(dn.userData && dn.userData.phys) dprop = dn; dn = dn.parent; }
+      while(dn && !dprop){ if(_isDamageable(dn)) dprop = dn; dn = dn.parent; }   /* build 1392: a static target counts */
       if(dprop){
         const dir = raycaster.ray.direction.clone().normalize();
         const power = 6 + w.dmg*0.04;

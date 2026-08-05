@@ -1712,6 +1712,59 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The feature shipped switched on and inert (build 1392)
+
+Reported from play, against build 1390, with a screenshot of the panel filled in correctly: *"This isn't
+working. The prop never breaks."*
+
+Build 1390 taught `damageProp` that a static prop can opt in with `shootable`, and **stopped there.** Nothing
+that FIRES resolves a prop through that gate:
+
+| | how it resolved a prop |
+|---|---|
+| the bullet | walked the hit object's parents looking for `userData.phys` |
+| the turret | did the same |
+| **melee** | was **gated on `dynamicProps.length`** *and* **raycast `dynamicProps`** |
+
+So all three looked straight past a static target. The checkbox was ticked, the HP was set, and the plate was
+immortal — **build 1277's defect, committed by me four builds after writing the test that exists to catch it.**
+1390's own probe walked past it too, by calling `damageProp` directly instead of firing a shot.
+
+`_isDamageable(o)` is now the one question, asked at all three sites, and `damageableProps()` is the set —
+dynamic props plus static targets, into a **reused array** (1168), because a swing runs it.
+
+**The melee half needed THREE changes and the first draft made one.** Routing only the arc scan through the
+new set left the block gated on `dynamicProps.length` and raycasting `dynamicProps`, so a swing still found
+nothing to test and the reported symptom survived the fix. `test-1392` asserts the block contains **zero**
+occurrences of `dynamicProps` — counting the absence, because any one of the three surviving keeps the bug.
+
+### Four instrument failures, and only the control caught two of them
+
+Measured on a static target with a **dynamic control beside it** and a plain static prop as a negative control:
+
+```
+BULLET   30 -> 15 -> 0, shattered, invisible
+MELEE    static 60 damage   ·   dynamic control 60 damage
+BLAST    static 106         ·   dynamic control 104      (the difference is the distance falloff)
+CONTROL  a plain static wall keeps all 50 HP through three rifle rounds and a swing,
+         and is not in damageableProps() at all
+```
+
+| # | it reported | why |
+|---|---|---|
+| 1 | melee 0 on the target **and 0 on the dynamic control** | read hp synchronously after `meleeAttack`. Build 1303 split the swing from the contact — the blow lands on a 160 ms windup timer |
+| 2 | melee 0 on the target, control fine | the target had been **destroyed by the bullet test above it**, and I hand-poked `_shattered`/`_destroyed` back to false instead of calling build 1391's own `_restoreDestroyedProp` |
+| 3 | blast 0 on the target, 100 on the control | the blast was at distance **exactly 0** from the target's origin, and both sweeps guard `d>0.01` so an exploding barrel cannot damage itself |
+| 4 | a syntax error in the probe | a backtick inside a comment inside a template literal — **sixth time this session** (1328, 1342, 1357) |
+
+**#1 is the one that mattered.** A null in the control is the instrument, not the feature, and without the
+control I would have gone hunting a melee bug that did not exist. Build 1316 paid for that rule three times;
+this is the fourth.
+
+Two pins moved (1295, 1311), both anchored on `if(dynamicProps.length){`. Their assertions were all still true
+— and **`indexOf` returning −1 makes `slice(-1)` hand back the LAST CHARACTER rather than failing**, so a
+drifted anchor tests an empty block and passes on nothing. Both now assert the anchor was found.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

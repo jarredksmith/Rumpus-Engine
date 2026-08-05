@@ -96,7 +96,13 @@ const aim = (deg) => ({ x: Math.sin(deg * Math.PI / 180), y: 0, z: -Math.cos(deg
 // ---------------------------------------------------------------- the shape of the block
 {
   const ms = extractFunction('_meleeStrike');
-  const block = ms.slice(ms.indexOf('if(dynamicProps.length){'));
+  // build 1392: the block opens on `const _mdp = damageableProps();` now — the gate, the ray and this arc
+  // scan all read the damageable set rather than `dynamicProps`, so a static shooting-range target is a
+  // melee target. Every assertion below is unchanged. The found-check is new: indexOf -1 makes slice(-1)
+  // return the last character, so a drifted anchor tests an empty block and passes on nothing.
+  const _mi = ms.indexOf('const _mdp = damageableProps();');
+  assert(_mi >= 0, 'the prop half of the swing is findable');
+  const block = ms.slice(_mi);
   assert(/let target=null, tpt=null;/.test(block), 'the block resolves a target and a contact point');
   assert(/if\(ph\.length\)\{   \/\* a dead-on strike still wins/.test(block),
     'A DEAD-ON RAY STILL WINS — it gives the exact contact point, which the spark and the impact sound use');
