@@ -7526,6 +7526,30 @@ let _prStepI = 0;
 // geometry where a corner artifact is under a pixel, and dropping its `castShadow` WOULD change the
 // shadow-light count. Halving its map buys little and risks the thing this comment exists to avoid.
 const _SUN_PX_STEP = [1.0, 0.5, 0.5, 0.25];   // multiplier of SUN_SHADOW_PX per resolution rung
+// ---- build 1383: THE PROCEDURAL RELIEF FADES WITH THE ANTIALIASING THAT COVERS IT ----------------------
+// Builds 1145 and 1379 perturb the normal with a hashed field at ~34 cycles across a mesh — high frequency
+// by design, because that is what breaks a flat facet. High-frequency NORMAL noise is specular aliasing
+// waiting to happen: it needs the antialiasing to resolve it, and this engine's antialiasing is the first
+// thing the adaptive ladder throws away. Build 1342 moved motion blur ahead of it, but `_hiFxOn` still goes
+// false on the FX rung, and build 1126 MEASURED what replaces it: a 1.02-pixel MSAA coverage gradient on
+// 100 of 100 scanlines becomes a hard edge on 94 of 99 under FXAA. So exactly when the frame can least
+// resolve the noise, the noise is unchanged and the resolution is lower too — it outruns its own cover.
+//
+// The relief fades with the rung instead. It is ONE shared uniform object handed to every patched material
+// BY REFERENCE (build 1181's mechanism), so a rung change is a single CPU write and never a recompile.
+// Deliberately only the NORMAL: the albedo term runs at ~0.9 cycles per METRE (build 1379's pixel-subtense
+// derivation), which is far below the sampling limit at any rung and does not alias.
+const _OD_BUMP_STEP = [1.0, 0.6, 0.4, 0.25];
+const _odBumpU = { value: 0 };
+// `_applyPixelRatio()` is CALLED at boot, ~2,500 lines above `OBJ_DETAIL_BUMP` — and `typeof` does NOT
+// guard a temporal dead zone (builds 1127, 1331 and 1350 each lost something to exactly this; the boot
+// test caught this one). So the base is HANDED OVER at the constant's own declaration site rather than
+// read from here, which also means the literal is written once and cannot drift.
+let _odBumpBase = 0;
+function _syncOdBump(){
+  const i = Math.max(0, Math.min(_OD_BUMP_STEP.length - 1, (typeof _prStepI === 'undefined' ? 0 : _prStepI) | 0));
+  _odBumpU.value = _odBumpBase * _OD_BUMP_STEP[i];
+}
 function _sunShadowPxFor(step){
   const m = _SUN_PX_STEP[Math.max(0, Math.min(_SUN_PX_STEP.length-1, step|0))];
   return Math.max(512, Math.round(SUN_SHADOW_PX * m));
@@ -7546,7 +7570,7 @@ function _syncSunShadowRes(){
     if(typeof _dirtyShadows==='function') _dirtyShadows(2);
   }catch(e){}
 }
-function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); _syncSunShadowRes(); }
+function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); _syncSunShadowRes(); _syncOdBump(); }
 _applyPixelRatio();
 // Rolling frame-time monitor (always on, ~free). Targets ~50fps; if we miss it for a stretch, drop a
 // step; if we beat ~58fps comfortably for longer, climb back. Asymmetric: quick to relieve, slow to push.
@@ -9193,6 +9217,18 @@ function _fitSunShadow(cam){
   // this the map slides by a fraction of a texel every frame and every shadow edge crawls — the
   // classic shimmer, and far more distracting than a slightly stale shadow.
   const px = moon.shadow.mapSize.x || 2048, texel = (2 * E) / px;
+  // build 1380: penumbra texels per unit of NORMALISED depth gap, for the near cascade.
+  //   worldGap    = depthGap x (far - near)                 <- the ortho camera's depth is linear
+  //   penumbraM   = worldGap x tan(sun angular radius)
+  //   penumbraTex = penumbraM / texel
+  // All three terms are here and nowhere else, which is why this lives in the fit rather than the shader.
+  // Shed with the resolution ladder (build 1350's rule: a perf ADD needs a way out) — and shedding it is
+  // exactly free, because 0 makes getShadowPCSS return three's own getShadow.
+  if(typeof _pcssP !== 'undefined'){
+    const _sc = moon.shadow.camera, _dr = (_sc ? (_sc.far - _sc.near) : 0);
+    const _on = _pcssOk && (typeof _prStepI === 'undefined' || _prStepI === 0) && _dr > 0 && texel > 0;
+    _pcssP.x = _on ? (_dr * SUN_ANGLE_TAN) / texel : 0;
+  }
   _fitL.copy(moon.position).normalize();                       // light direction (it orbits the origin)
   _fitAx.set(-_fitL.z, 0, _fitL.x);                            // light-space right, flattened to the ground
   if(_fitAx.lengthSq() < 1e-6) _fitAx.set(1,0,0);
@@ -9341,6 +9377,100 @@ THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begi
 // added to every already-merged lit entry or it sits at GL zero and the far cascade never lights anything.
 THREE.UniformsLib.lights.csmSunP = { value:_csmP };
 for(const _clk in THREE.ShaderLib){ const _clu = THREE.ShaderLib[_clk].uniforms; if(_clu && _clu.directionalLights){ _clu.csmSunP = { value:_csmP }; } }
+
+// ---- build 1380: CONTACT-HARDENING SUN SHADOWS ------------------------------------------------------
+// Every shadow in the engine has the same edge softness whatever cast it, because PCF samples a FIXED
+// radius: `shadowRadius` texels, everywhere. Real shadows do not work that way — the penumbra grows with
+// the distance between the occluder and the receiver, which is why a chair leg is razor-sharp where it
+// meets the floor and a roofline three storeys up is a soft band. A single softness reads as either "cut
+// out with scissors" (small radius) or "everything is out of focus" (large), and this file has spent three
+// builds — 1341, 1345, 1346 — on the artifacts of the first choice without ever questioning the model.
+//
+// PCSS is the standard answer and it is three passes over the same map: search for blockers, estimate the
+// penumbra from how far away they are, then PCF at THAT radius.
+//
+// Four decisions:
+//   * ONLY THE NEAR CASCADE. The call site is patched with `UNROLLED_LOOP_INDEX == 0`, so light 0 — the
+//     camera-following cascade (1185) — gets PCSS and the far cascade, every spot light and every point
+//     light keep three's own getShadow untouched. The far cascade's texel is 4x coarser by design and
+//     covers geometry where a penumbra is under a pixel, and a spot's shadow camera is PERSPECTIVE, so
+//     the depth-to-world scale derived below would simply be wrong for it.
+//   * `pcssP.x == 0` RETURNS getShadow VERBATIM. Off is not "a cheap approximation of on", it is the
+//     shipped 1346 path, byte for byte — which is what makes it safe to shed and safe to disable.
+//   * The disc is COMPUTED, not stored. GLSL ES 1.0 cannot index a const array with a loop variable, and
+//     a Vogel spiral (build 1247's bokeh disc) needs no array at all.
+//   * The scale is derived on the CPU, where the shadow camera's extent, depth range and map size all
+//     live, so the shader carries arithmetic rather than a second copy of the shadow fit.
+let _pcssOk = true;
+// Named ONCE: a guard that checks a different string from the one the replace uses is not a guard.
+const _PCSS_CALL = 'getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] )';
+const _pcssP = { x:0, y:6, z:22 };   /* x: penumbra texels per unit of normalised depth gap (0 = OFF, exactly) - y: blocker search radius, texels - z: penumbra ceiling, texels */
+// The tangent of the sun's apparent angular RADIUS. The real sun is ~0.0047 (0.27 degrees), which at this
+// engine's scale gives a penumbra under a texel for anything but a very tall occluder — i.e. it would
+// measure as no change at all. 0.020 is ~4x life size, which is the ordinary film/game exaggeration and
+// is what makes the effect visible at the distances a level is actually played at.
+const SUN_ANGLE_TAN = 0.020;
+// build 1381: THE THREE REPLACES ARE VERIFIED TO LAND, ALL-OR-NOTHING.
+// 1380 shipped them unguarded, and the test checked their anchors against PRISTINE three — but by the time
+// this runs, `lights_fragment_begin` has already been rewritten TWICE (build 1364's visible-guard and
+// build 1185's cascade select). A three upgrade, or either of those patches growing, silently misses the
+// anchor and PCSS quietly never runs: the frame renders, every material compiles, nothing errors.
+// Worse than silent is HALF: if the function lands and the call site does not, PCSS is dead code; if the
+// call site lands and the function does not, `getShadowPCSS` is undefined and EVERY LIT MATERIAL IN THE
+// ENGINE fails to compile. So both chunks are built into locals first and only committed together.
+// This is build 1364's own precedent, applied to the build that sits directly beneath it.
+{
+  const _s0 = THREE.ShaderChunk.shadowmap_pars_fragment, _l0 = THREE.ShaderChunk.lights_fragment_begin;
+  const _need = [[_s0, '#ifdef USE_SHADOWMAP'], [_s0, '\tvec2 cubeToUV'], [_l0, _PCSS_CALL]];
+  let _miss = 0;
+  for(const [txt, needle] of _need) if(typeof txt !== 'string' || txt.split(needle).length - 1 !== 1) _miss++;
+  if(_miss){
+    if(typeof console !== 'undefined') console.warn('[RUMPUS] PCSS patch: ' + _miss + '/3 anchors missing in three\u2019s shadow chunks \u2014 contact-hardening shadows are OFF and the chunks are UNTOUCHED (did a three upgrade move getShadow?)');
+    _pcssOk = false;
+  }
+}
+if(_pcssOk){
+THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment
+  .replace('#ifdef USE_SHADOWMAP', 'uniform vec3 pcssP;\n#ifdef USE_SHADOWMAP')
+  // appended AFTER getShadow, because it calls both getShadow and texture2DCompare, and GLSL has no
+  // forward declarations: put it earlier and every lit material in the engine fails to compile.
+  .replace('\tvec2 cubeToUV', [
+    '\tfloat getShadowPCSS( sampler2D shadowMap, vec2 shadowMapSize, float shadowBias, float shadowRadius, vec4 shadowCoord ) {',
+    '\t\tif ( pcssP.x <= 0.0 ) return getShadow( shadowMap, shadowMapSize, shadowBias, shadowRadius, shadowCoord );',
+    '\t\tvec3 sc = shadowCoord.xyz / shadowCoord.w;',
+    '\t\tsc.z += shadowBias;',
+    '\t\tbool inF = sc.x >= 0.0 && sc.x <= 1.0 && sc.y >= 0.0 && sc.y <= 1.0;',
+    '\t\tif ( !( inF && sc.z <= 1.0 ) ) return 1.0;',
+    '\t\tvec2 tsz = vec2( 1.0 ) / shadowMapSize;',
+    '\t\tfloat bSum = 0.0; float bN = 0.0;',
+    '\t\tfor ( int i = 0; i < 12; i ++ ) {',
+    '\t\t\tfloat fi = float( i );',
+    '\t\t\tfloat a = fi * 2.39996;',
+    '\t\t\tfloat r = sqrt( ( fi + 0.5 ) / 12.0 ) * pcssP.y;',
+    '\t\t\tfloat d = unpackRGBAToDepth( texture2D( shadowMap, sc.xy + vec2( cos( a ), sin( a ) ) * r * tsz ) );',
+    '\t\t\tif ( d < sc.z ) { bSum += d; bN += 1.0; }',
+    '\t\t}',
+    '\t\tif ( bN < 0.5 ) return 1.0;',
+    '\t\tfloat pen = clamp( ( sc.z - bSum / bN ) * pcssP.x, 1.0, pcssP.z );',
+    '\t\tfloat sh = 0.0;',
+    '\t\tfor ( int i = 0; i < 16; i ++ ) {',
+    '\t\t\tfloat fi = float( i );',
+    '\t\t\tfloat a = fi * 2.39996 + 1.0;',
+    '\t\t\tfloat r = sqrt( ( fi + 0.5 ) / 16.0 ) * pen;',
+    '\t\t\tsh += texture2DCompare( shadowMap, sc.xy + vec2( cos( a ), sin( a ) ) * r * tsz, sc.z );',
+    '\t\t}',
+    '\t\treturn sh / 16.0;',
+    '\t}',
+    '\tvec2 cubeToUV'].join('\n'));
+// Only light 0 — the near cascade. UNROLLED_LOOP_INDEX is three's own macro inside the unrolled loop.
+THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(
+  _PCSS_CALL,
+  '( UNROLLED_LOOP_INDEX == 0 ? getShadowPCSS' + _PCSS_CALL.slice(9) + ' : ' + _PCSS_CALL + ' )');   /* 9 = len('getShadow'), keeping the '(' — slicing 10 drops it and emits a GLSL syntax error that takes down every lit material */
+}
+// 1181's lesson again: ShaderLib merged UniformsLib at module load, so the VALUE has to be added to every
+// already-merged lit entry or the uniform sits at GL zero — which here means PCSS silently never runs.
+THREE.UniformsLib.lights.pcssP = { value:_pcssP };
+for(const _pk in THREE.ShaderLib){ const _pu = THREE.ShaderLib[_pk].uniforms; if(_pu && _pu.directionalLights){ _pu.pcssP = { value:_pcssP }; } }
 // Shadow-refresh bookkeeping lives HERE (not by the render loop) since build 855: applyWorldCfg runs at
 // boot and now calls _dirtyShadows when the sun moves — declaring these ~11k lines later was a TDZ crash.
 let _shadowDirtyFrames = 2;
@@ -9820,6 +9950,7 @@ function _propProcSpan(obj){ const s = obj && obj.scale; return s ? Math.max(Mat
 const OBJ_DETAIL_CYCLES = 34.0;  // noise cycles across a mesh's longest local axis
 const OBJ_DETAIL_ROUGH = 0.30;   // +/- fraction it swings the authored roughness
 const OBJ_DETAIL_BUMP = 0.35;    // normal perturbation, in gradient units
+_odBumpBase = OBJ_DETAIL_BUMP; _syncOdBump();   /* build 1383: the hand-off — see _syncOdBump for why it is not read from there */
 // build 1379: THE TERM 1139 COULD NOT HAVE. That build gave the detail set relief and roughness and
 // deliberately left ALBEDO out, for a reason that was correct about textures: "an albedo map cannot be
 // exposure-neutral. It multiplies the material colour, so it only darkens — neutrality would need values
@@ -9834,6 +9965,17 @@ const OBJ_DETAIL_BUMP = 0.35;    // normal perturbation, in gradient units
 // on its own — i.e. the exposure movement this term causes is smaller than the scene's own settling at
 // every amplitude, which is the neutrality claim measured on real pixels rather than argued.
 const OBJ_DETAIL_ALB = 0.30;     // +/- fraction it swings the authored albedo, centred on 1.0
+// MEASURED on the real textured ground, world-only window, world paused, control returning to exactly
+// zero at every threshold:
+//                  >1      >2      >3      >4      >6      >9      (code values moved)
+//     control      0.0%    0.0%    0.0%    0.0%    0.0%    0.0%
+//     0.13        10.3%    5.6%    1.8%    0.6%    0.0%    0.0%
+//     0.30        14.8%   11.5%    9.1%    7.1%    3.4%    0.8%
+// 0.13 was the first guess and it is SUB-THRESHOLD: almost all of it is one to three code values, which
+// cannot break a tile a viewer can see. The coverage barely grows above it (15.7% -> 19.2% of pixels
+// touched) — what is bought above 0.13 is amplitude, which is the thing that actually hides a repeat.
+// 0.30 is also, independently, where build 1379's sweep put the knee for the same kind of term.
+const MACRO_DETAIL_ALB = 0.30;
 // Cycles per WORLD METRE for a primitive. The object-space field is locked to the mesh (1145's reason:
 // world-space noise SWIMS as a prop is carried), but its DENSITY has to be a physical size or a 22 m deck
 // and a 1 m crate read as two differently-zoomed photographs of one material — which is exactly the fault
@@ -9846,6 +9988,32 @@ const OBJ_DETAIL_ALB = 0.30;     // +/- fraction it swings the authored albedo, 
 // evaluation per fragment. At 0.9 the broad octave is ~1.1 m — the scale of an architectural panel, which
 // is what reads across a room — and the field's second octave (3.1x, ~36 cm) is what carries it up close.
 const ALB_DETAIL_PER_M = 0.9;
+// ---- build 1382: MACRO VARIATION, over a surface that already has a texture ----
+// A cold rendering critic scored the engine 3/10 against AAA and named ONE tell in its blind verdict:
+// "regular, unbroken texture tiling on the two largest surfaces in frame." Verified — build 1378 gave the
+// ground and the boundary walls a real albedo at a 4 m tile, and 1379's break-up layer then EXCLUDED them,
+// because `albedoDetailWanted` refuses a material that has a map. So the two surfaces that are most of
+// every frame ended up with neither: a small tile pasted flat, edge to edge, ~35 times across 140 m.
+//
+// 1379's gate was written for a real reason — two detail systems on one surface is double grain — and that
+// reason does not cover this. A MACRO layer is a different technique from a detail layer: it runs at
+// several times the TILE period, so it breaks the repeat rather than competing with the texture's own
+// frequency. It is the same exposure-neutral multiplier, at a different scale.
+//
+// The period must NOT be an integer multiple of SURF_TILE_M, or it lands on the repeat it exists to hide
+// and reinforces it. 2.75x is deliberately awkward.
+const MACRO_TILE_MUL = 2.75;
+const MACRO_PERIOD_M = SURF_TILE_M * MACRO_TILE_MUL;   /* ~11 m against a 4 m tile */
+// Applied to a material whose geometry is in METRES and unscaled — `floorMat`'s plane is a real
+// PlaneGeometry(ARENA*2, ARENA*2) and a boundary wall is BoxGeometry(ARENA*2, H, 2), neither scaled — so
+// `vOdPos` spans 140 and the frequency is 1/period. The PRIMITIVE path's `_albDetailFreq` assumes a UNIT
+// local box scaled by the object and would be three orders of magnitude off here, which would look like
+// nothing happening rather than like an error.
+function applyMacroDetail(mat, periodM, amp){
+  if(!mat || !mat.isMeshStandardMaterial || mat.userData._objDetail) return mat;
+  mat.userData._odAmp = (amp > 0) ? amp : MACRO_DETAIL_ALB;
+  return applyObjDetail(mat, 1 / Math.max(0.5, +periodM || MACRO_PERIOD_M), true);
+}
 // One value-noise field, hashed rather than sampled: no texture, no UVs, no upload.
 const _OBJ_NOISE_GLSL = [
   'float _odHash(vec3 p){ p = fract(p*0.3183099 + vec3(0.71,0.113,0.419)); p *= 17.0;',
@@ -9879,11 +10047,22 @@ function applyObjDetail(mat, freq, albOnly){
   // exactly the surfaces it was meant to be visible on. A uniform written before its shader exists is a
   // write to nothing, and it fails silently, which is the only reason this needed a probe to find.
   mat.userData._odFreq = (freq > 0) ? freq : OBJ_DETAIL_CYCLES;
-  mat.onBeforeCompile = (shader)=>{
+  // build 1382: CHAIN any handler the material already owns. This assigned over the top until now, which
+  // was harmless for the UV-less imports 1145 wrote it for (they have no other patch) and NOT harmless
+  // the moment it met `floorMat`, which has carried its own onBeforeCompile for the paint splat since
+  // build 1139. Probed: the floor came back UNPATCHED while the wall patched, because the splat is
+  // assigned further down the file and won. Build 1286 recorded this exact rule for the bake's patch and
+  // it never reached here. `hasOwnProperty` and not truthiness — three declares a no-op on the PROTOTYPE
+  // (build 1379), so a truthiness test chains three's own empty function forever.
+  const _odPrev = Object.prototype.hasOwnProperty.call(mat, 'onBeforeCompile') ? mat.onBeforeCompile : null;
+  mat.onBeforeCompile = (shader, renderer)=>{
+    if(_odPrev){ try{ _odPrev.call(mat, shader, renderer); }catch(e){} }   /* a throwing predecessor must not take this patch down with it */
     shader.uniforms.uOdFreq = { value: mat.userData._odFreq };
     shader.uniforms.uOdRough = { value: OBJ_DETAIL_ROUGH };
-    shader.uniforms.uOdBump = { value: OBJ_DETAIL_BUMP };
-    shader.uniforms.uOdAlb = { value: OBJ_DETAIL_ALB };
+    shader.uniforms.uOdBump = _odBumpU;   /* BY REFERENCE (build 1181): one CPU write on a rung change reaches every patched material, and nothing recompiles */
+    /* build 1382: per-material, defaulting to the detail amplitude — the macro layer needs its own, and a
+       uniform written before its shader exists is a write to nothing (1379), so it lives on the material */
+    shader.uniforms.uOdAlb = { value: (mat.userData._odAmp > 0) ? mat.userData._odAmp : OBJ_DETAIL_ALB };
     // kept so a later resize can move the density without recompiling anything (retileProcSurface)
     mat.userData._odU = shader.uniforms;
     shader.vertexShader = 'varying vec3 vOdPos;\n' + shader.vertexShader
@@ -9931,7 +10110,13 @@ function applyObjDetail(mat, freq, albOnly){
   };
   // Every patched material produces the SAME program, so they can all share one — but three keys its
   // program cache on the material's own signature and would otherwise compile a variant per material.
-  mat.customProgramCacheKey = ()=> (albOnly ? 'objDetailA' : 'objDetail');
+  // build 1382: composed, not overwritten — a material that ALSO carries the paint splat compiles a
+  // different program from one that does not, and a single key would serve one of them the other's shader.
+  const _odPrevKey = Object.prototype.hasOwnProperty.call(mat, 'customProgramCacheKey') ? mat.customProgramCacheKey : null;
+  mat.customProgramCacheKey = function(){
+    let p = ''; if(_odPrevKey){ try{ p = String(_odPrevKey.call(mat) || ''); }catch(e){} }
+    return (albOnly ? 'objDetailA' : 'objDetail') + (_odPrev ? '+c' : '') + p;
+  };
   mat.needsUpdate = true;
   return mat;
 }
@@ -10474,6 +10659,12 @@ floorMat.onBeforeCompile = (shader)=>{
       '}',
     ].join('\n'));
 };
+// build 1382: the floor's macro layer is applied HERE, not beside applyProcSurface 500 lines above, because
+// the paint splat is assigned directly above and a plain assignment wins over whatever came before it.
+// applyObjDetail chains a predecessor now, so second is the safe position — and the probe is what settled
+// it: patched at the earlier site, floorMat came back with NO detail uniforms at all while wallMat, which
+// has no splat, patched fine.
+applyMacroDetail(floorMat, MACRO_PERIOD_M);   /* breaks the 4 m tile's repeat across a 140 m plane */
 function _paintLayerTexFor(url){ const t=loadTextureCached(url); if(t){ t.wrapS=t.wrapT=THREE.RepeatWrapping; t.needsUpdate=true; return t; } return _paintWhite; }
 // Sync uniforms + splat pixels from worldCfg.paint. Called from applyWorldCfg, so every path that loads
 // a level (boot autosave, editor load, share link, multiplayer host-adopt, undo) repaints correctly.
@@ -10547,6 +10738,7 @@ function _gridWanted(){
 // walls
 const wallMat = new THREE.MeshPhysicalMaterial({ color:0x1a242b, roughness:.8, metalness:.2 });
 applyProcSurface(wallMat, 140);   // build 1139: same, re-derived from the arena span in rebuildArena
+applyMacroDetail(wallMat, MACRO_PERIOD_M);   /* build 1382 */
 const colliders = [];
 // build 1188: THE COLLIDER GRID. Build 1148's tight collider tripled the box count (795 -> 2,291 on a
 // 3-storey block) and every hot query — the per-enemy obstacle resolve, per-bolt hit tests, segmentBlocked,
@@ -32466,7 +32658,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1379 · 2026-08-04';
+const BUILD_VERSION = 'build 1383 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

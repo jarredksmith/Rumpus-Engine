@@ -967,6 +967,356 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## An attempt that did not ship: texture modulation on primitives (after build 1383)
+
+A cold critic scored the stock level **3/10** and a GENERATED arena **6/10** off the same renderer, and named
+the difference precisely: the generator gives every piece it builds a real per-material albedo, while the
+hand-built level's crates, ramps and pillars are untextured primitives. Build 1379's noise gives them
+variation; it cannot give them STRUCTURE — panel lines, brushed grain, wear — which is what reads as a
+material. Recorded here because the design is sound, the implementation is NOT, and the next attempt should
+not re-derive the parts that are already settled.
+
+**A plain `map` cannot be the answer, and that is the real design constraint.** Build 1378 could compensate
+`floorMat`'s base colour because the ENGINE owns it. A primitive's colour is the CREATOR'S, chosen in a
+picker, and a map multiplies it — every prop in every level ever saved would have gone ~60% darker.
+
+So the texture has to be a **mean-1.0 MODULATION**: its LUMINANCE divided by that luminance's own mean.
+Three consequences, all wanted — the mean albedo does not move so nothing re-exposes, the texture's own
+colour cast divides out so the creator's colour still decides the hue, and what survives is the structure.
+Neutrality is true by CONSTRUCTION rather than by tuning, because the constant is the mean of the exact
+quantity the shader computes: `mean(srgb2lin(luma(texel)))`, measured on the PNG that ships. For
+`img/tex/prop-metal.png` (levelgen's `metal` at 256) that is **0.414947**, range 0.042..0.882.
+
+Projection must be **triplanar in object space**, not UV: a primitive's UVs run 0..1 per FACE whatever that
+face's real size is, so a stretched box stretches the texture — build 1378's 17:1 boundary wall one layer
+down. `vOdPos` is already there for the noise, cannot stretch, and stays locked to the object as it moves.
+
+### CORRECTION: "it measurably does nothing" was WRONG, and the instrument was the reason
+
+That is what this section said first, and it is false. The null was measured on a target whose window mean
+luminance was **12.3 of 255** — a near-black surface. An albedo MODULATION is multiplicative, so on a
+surface that renders black it produces a fraction of a code value whatever its amplitude. The measurement
+could not have seen the effect at any setting.
+
+The check that caught it is the one this file already tells itself to run and I did not: **before believing
+a null, prove the instrument can produce a positive.** Driving build 1379's `uOdAlb` — a term MEASURED
+working at 1.026x — through the same rig moved only 0.17% of pixels at a 10x amplitude. A positive control
+that barely fires invalidates every null taken beside it.
+
+Re-measured on build 1379's own rig (default pose, world-only window, mean luminance 68.5), with that
+control included and returning:
+
+```
+                        unique colours   pixels moved >1   mean |d|
+base                        1.000x            0.00%          0.000
+uOdAlb 1.2 (the control)    1.034x            8.25%          0.443   <- it fires
+uOdAlb back to 0.30         1.000x            0.62%          0.034   <- and returns
+texture modulation 0.55     0.998x            1.00%          0.066
+texture modulation 3.0      1.005x            3.94%          0.159   <- above the floor
+control back to 0           0.998x            1.18%          0.070
+```
+
+**So the mechanism WORKS** — 3.0 is clearly above the control — and the earlier conclusion was an
+instrument artifact, not a fact about the shader. What is true is narrower and still disqualifying for
+shipping as written: at the shipped 0.55 the effect sits INSIDE the noise floor, so it is not yet worth
+three texture fetches per fragment on 52 materials. The open question is amplitude and density, not whether
+it functions — and the density is very likely the same pixel-subtense problem build 1379 hit, since at a
+gameplay distance ten tiles across a prop that is thirty pixels wide average back to flat.
+
+The next attempt needs a close-up, WELL-LIT target and a sweep of both amplitude and cycles-per-metre. It
+does not need to re-litigate whether the patch reaches the frame.
+
+### The original (wrong) reasoning, kept because the elimination work still stands
+
+Verified present, all of it: the block IS in the shader the renderer compiled (read back through
+`gl.getShaderSource` — `uOdTexM` found in an 81,795-character program), the texture IS bound
+(`_propTexU.value` truthy), 52 of 57 prop materials carry the uniforms, `floorMat` correctly does NOT (it
+takes the macro mode and must not pay three extra fetches), 67 programs compiled, `glGetError` 0, zero
+shader console output.
+
+And with the camera aimed at a 3 x 4.5 x 14 prop from 2.4 m, the measurement window derived from that
+prop's OWN projected screen rect rather than guessed:
+
+```
+cond   unique colours   exposure drift   pixels moved >1
+amt 0        2042          0.000%             0.00%
+amt 0.55     2045         -0.019%             0.00%
+amt 3.0      2042         -0.039%             0.00%     <- 5.5x the shipped amplitude
+control 0    2044         -0.056%             0.01%     <- drifts MORE than any effect
+```
+
+Eliminated on the way: the density (swept 0.7 / 2.5 / 6.0 cycles per metre, all null), the camera distance,
+the window, and a **null sampler at program-build time** — the PNG loads asynchronously, so `_propTexU.value`
+is null when the first material compiles, which is build 1181's own trap; seeding it with a 1x1 white
+DataTexture changed nothing, and white would have made the props 78% brighter if the block were executing.
+
+**That last point is the strongest evidence and the reason for the revert**: a white seed texture makes
+`_tl/uOdTexM` a constant 2.41, so `mix(1.0, 2.41, 0.55)` is 1.78 — the props would have been visibly blown
+out. They were byte-identical. So the block is compiled into the program and is not affecting the fragment
+colour, which is a contradiction I could not resolve inside a reasonable budget.
+
+Shipping it would have cost three texture fetches per fragment on 52 materials for no measured effect. The
+design above is worth keeping; the next attempt should start by proving a *deliberately absurd* constant
+multiply on `diffuseColor` at that same patch site reaches the frame at all, before adding any sampling.
+
+### The instrument failures, because four of five runs were the rig and not the engine
+
+| # | it reported | why |
+|---|---|---|
+| 1 | 0.53% effect against a 0.65% control | the props in the window were 20-40 m away and `PROP_TEX_PER_M = 0.7` is a 1.43 m period — less than ONE cycle across a 1 m crate, so each crate got a near-flat multiplier. Build 1379's pixel-subtense lesson, inverted |
+| 2 | a 9x amplitude measured identical | the probe was a NEW page session and never aimed the camera, so the props were distant again |
+| 3 | NaN over the viewmodel window | the probe renders at **640x360**, not the 900x506 `shot.mjs` uses, so the coordinates ran off the end of the image |
+| 4 | — | the fix for all three: aim in the SAME session, and derive the window by PROJECTING the target's bounding box to screen rather than picking pixels by eye |
+
+#4 is the durable part. Every earlier failure in this file's log that reads "know where the camera is"
+(1124), "read WHO before attributing anything to a surface" (1151) or "the probe never posed the camera"
+(1379) is the same mistake, and projecting the target's own bbox removes the whole class.
+
+## The relief fades with the antialiasing that covers it (build 1383)
+
+The third of the critic's verified findings. Builds 1145 and 1379 perturb the normal with a hashed field at
+~34 cycles across a mesh — high frequency by design, because that is what breaks a flat facet. But
+high-frequency NORMAL noise is specular aliasing waiting to happen: it needs antialiasing to resolve it,
+and antialiasing is the first thing the adaptive ladder throws away. Build 1126 already MEASURED the
+replacement — a 1.02-pixel MSAA coverage gradient on 100 of 100 scanlines becomes a hard edge on 94 of 99
+under FXAA — so on the rung where the frame can least resolve the noise, the noise was unchanged and the
+resolution was lower as well. It outran its own cover.
+
+`_OD_BUMP_STEP` is `[1.0, 0.6, 0.4, 0.25]`. **Rung 0 is exactly 1.0**, so no frame anybody has ever seen at
+full quality moves. It is ONE shared uniform object handed to every patched material BY REFERENCE (build
+1181's mechanism), so a rung change is a single CPU write and never a recompile, hooked into
+`_applyPixelRatio` — which already means "the rung moved" and is called on every downshift, every climb and
+the adaptive-off restore, so there is no second list of call sites (build 1350 established that hook).
+
+**The ALBEDO term is deliberately not faded.** It runs at ~0.9 cycles per metre (1379's pixel-subtense
+derivation), a ~1.1 m period — nowhere near the sampling limit at any rung, so it does not alias and fading
+it would only remove variation.
+
+**The TDZ, caught by the boot test on the first draft.** `_applyPixelRatio()` is CALLED at boot, ~2,500
+lines above `OBJ_DETAIL_BUMP`, and the first version read the constant from inside the sync behind a
+`typeof` guard — which does **not** guard a temporal dead zone. Builds 1127, 1331 and 1350 each lost
+something to exactly that, and this file's own comment acknowledging the trap was written directly above
+the line that fell into it. The base is HANDED OVER at the constant's declaration site instead, which also
+means the literal is written once and cannot drift from the fade.
+
+### What this build does NOT claim, and why
+
+**No measured visual improvement.** Two honest reasons, and the second is the more useful one:
+
+- Specular aliasing is a **motion artifact** — it reads as crawl and shimmer as the camera moves — and a
+  still capture cannot contain it. This is a case where the frame is the wrong instrument by nature.
+- Probed live: the stock level has **`full: 0`** relief-patched materials. All 67 patched materials carry
+  the ALBEDO-only mode; the relief term's consumers are UV-less IMPORTS (the weapon, low-poly packs), and
+  none was on screen. So there was nothing in frame for the measurement to move.
+
+What IS verified, executed and live: all 67 materials hold the same shared object, the ladder moves it
+0.35 / 0.21 / 0.14 / 0.0875 across the four desktop rungs and restores, and rung 0 returns the authored
+value exactly.
+
+### Three instrument failures, and the first two are the same one twice
+
+| # | it reported | why |
+|---|---|---|
+| 1 | fading changed 0.1% against a control drift of 0.004 pts — a clean null | nothing in the window carried the relief patch. Every stock surface takes the albedo-only path, which SKIPS the normal patch entirely |
+| 2 | a **9x** amplitude measured identical to the shipped one | same cause — and I only noticed because the probe was changed to report the READBACK rather than the value I had passed in. It had never confirmed the write took |
+| 3 | the viewmodel window read NaN | the probe renders at **640x360**, not the 900x506 `shot.mjs` uses, so the coordinates were off the end of the image — and there is no weapon in that frame anyway |
+
+**#2 is the rule worth carrying**: a probe that echoes its own input tells you nothing. Report what the
+engine HOLDS, not what you asked it to hold. And #1/#3 are build 1124's rule for the third time in this
+session — know what is in the frame before attributing anything to it.
+
+## The macro layer, and the frames that were judged without a texture (build 1382)
+
+A cold rendering critic scored the engine **3/10 vs AAA** and its blind verdict named ONE tell: *"regular,
+unbroken texture tiling on the two largest surfaces in frame."* Verified, and it is an interaction between
+the two builds before it — **1378 and 1379 excluded each other from the surfaces that most needed both.**
+1378 gave the ground and boundary walls a real albedo at a 4 m tile; `albedoDetailWanted` refuses a
+material that has a `map`, so 1379's break-up layer then skipped them. The result was the worst of the
+three states: a small tile pasted flat, edge to edge, ~35 times across 140 m, with nothing on top of it.
+
+1379's gate was right about what it was written for — two detail systems at the SAME scale is double grain
+— and that reason does not cover a MACRO layer, which runs at several times the tile period and breaks the
+repeat rather than competing with the texture's own frequency.
+
+**The period is derived from the thing it hides, and must not be an integer multiple of it.** `MACRO_TILE_MUL
+= 2.75` against `SURF_TILE_M`: an integer multiple lands on the tile boundary every period and *strengthens*
+the repeat, which is the opposite of the point.
+
+**The frequency semantics are NOT the primitive path's, and this is the trap the build was specified around.**
+`_albDetailFreq(span) = ALB_DETAIL_PER_M x span` assumes a UNIT local box scaled by the object. `floorMat`'s
+plane is a real `PlaneGeometry(ARENA*2, ARENA*2)` and a boundary wall is `BoxGeometry(ARENA*2, H, 2)` —
+neither is scaled — so `vOdPos` spans 140 m and the frequency there is `1 / period`. The primitive form
+would have been ~1000x off, and would have looked like nothing happening rather than like an error.
+
+### The amplitude, measured — and the first guess was sub-threshold
+
+World-only window, world paused, control returning to exactly zero at every threshold:
+
+```
+              >1      >2      >3      >4      >6      >9     (code values moved)
+control      0.0%    0.0%    0.0%    0.0%    0.0%    0.0%
+0.13        10.3%    5.6%    1.8%    0.6%    0.0%    0.0%
+0.30        14.8%   11.5%    9.1%    7.1%    3.4%    0.8%
+```
+
+0.13 was the first guess and it is **sub-threshold**: almost all of it is one to three code values, which
+cannot break a tile a viewer can see. Coverage barely grows above it (15.7% -> 19.2% of pixels touched), so
+what is bought above 0.13 is AMPLITUDE — which is the thing that actually hides a repeat. 0.30 is also,
+independently, where build 1379's sweep put the knee for the same kind of term.
+
+### Chain, never clobber — and the probe is what found it
+
+`applyObjDetail` ASSIGNED over `mat.onBeforeCompile`. Harmless for the UV-less imports 1145 wrote it for
+(they carry no other patch) and not harmless the moment it met `floorMat`, which has had its own handler for
+the paint splat since build 1139. Probed: **the floor came back UNPATCHED while the wall patched**, because
+the splat is assigned 500 lines further down and simply won. Build 1286 recorded this exact rule for the
+bake's patch and it never reached here.
+
+So the handler chains its predecessor (guarded by `hasOwnProperty`, not truthiness — three declares a no-op
+on the PROTOTYPE, so a truthiness test chains three's own empty function forever), inside a `try`, and the
+program cache key COMPOSES: a material carrying both patches compiles a different program from one carrying
+only this, and a single key would serve one of them the other's shader. The floor's call also moved below
+the splat's assignment, because chaining only helps the patch that runs second.
+
+### Every frame between 1378 and 1382 was judged on a ground with no albedo on it
+
+`tools/probe/mkprobe.mjs` staged `breach.html` and the vendored scripts and **not `img/`**. The stock floor
+and wall textures are served at a path relative to the game, so they 404'd, `_loadSurfaceMap`'s error branch
+left `floorMat.map` NULL, and nothing errored. The probe reported `floorHasMap: false` — on a build whose
+whole subject was that texture.
+
+That silently invalidates the visual half of builds 1378-1381's verification. What survives untouched is
+everything measured in Node against the real files (1378's compensation is re-derived from the shipped PNGs,
+1379's neutrality from the shipped GLSL, 1380's scale from the real shadow camera) and 1380's shadow
+measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
+does not fail — it quietly photographs a different game.**
+
+## The next build, specified (critic pass after build 1381)
+
+A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its
+blind verdict names ONE tell: *"regular, unbroken texture tiling on the two largest surfaces in frame."*
+The finding is verified in source and is worth writing down precisely, because it is a real interaction
+between the two builds that came before it:
+
+**Builds 1378 and 1379 exclude each other from the surfaces that most need both.** `albedoDetailWanted`
+requires `!mat.map`, and 1378 gave `floorMat` and `wallMat` an authored map — so the ground plane and the
+boundary walls are the only surfaces in the engine that get NEITHER a break-up layer (1379 refuses them)
+NOR macro variation (the texture is a 4 m tile repeated ~35x across 140 m with nothing on top of it).
+
+1379's gate was written for a real reason — *two detail systems on one surface is double grain* — and that
+reason does not cover this case. A MACRO layer is a different technique from a detail layer: at 2-3x the
+tile period it breaks the visible repeat rather than competing with the texture's own frequency.
+
+What the build has to get right, and neither is a free choice:
+- **The period must NOT be an integer multiple of `SURF_TILE_M`**, or it reinforces the repeat it exists to
+  hide. ~11 m against a 4 m tile is 2.75x.
+- **The frequency semantics differ from the primitive path.** `_albDetailFreq(span) = ALB_DETAIL_PER_M x
+  span` assumes a UNIT local box scaled by the object. `floorMat`'s geometry is a real
+  `PlaneGeometry(ARENA*2, ARENA*2)` and the boundary walls are `BoxGeometry(ARENA*2, H, 2)` — both
+  unscaled, in metres — so `vOdPos` spans 140, and the frequency there is `1 / periodMetres`, not
+  `perMetre x span`. Using the primitive derivation on them would put the macro layer three orders of
+  magnitude off, and it would look like nothing at all rather than like an error.
+
+The critic's other two findings, both verified: point lights still cannot cast shadows (build 1132, and
+build 1142 counts 29 of them around the stock spawn), and there is no temporal or specular AA, so the
+1145/1379 procedural normal noise aliases with nothing to suppress it once MSAA sheds — its suggestion is
+to fade `uOdBump` down with `_prStepI` so the noise never outruns the AA meant to cover it.
+
+## The shadow patches are verified to land (build 1381)
+
+Build 1380 shipped three `.replace` calls on three's own chunks **unguarded**, and its test checked their
+anchors against PRISTINE three. By the time they run, `lights_fragment_begin` has already been rewritten
+TWICE — build 1364's visible-guard and build 1185's cascade select — so the test could pass while the
+engine's own replace missed. That is this file's most-repeated failure shape, and 1364 had already written
+the answer down four builds earlier.
+
+**HALF is worse than none**, which is why the two chunks are now committed together behind one flag:
+
+| what lands | what happens |
+|---|---|
+| function, not call site | PCSS is dead code. Silent — every material compiles and the frame renders |
+| call site, not function | `getShadowPCSS` is UNDEFINED and **every lit material in the engine** fails to compile |
+
+The needle is named ONCE (`_PCSS_CALL`) and used by the guard and by both ternary branches, because a guard
+that checks a different string from the one the replace uses is not a guard. An anchor that has become
+AMBIGUOUS counts as missing too — two matches would patch both sites and is not "landed". A failure warns
+by name and says what to look for, and `_fitSunShadow` refuses to derive a scale, so `pcssP.x` can never be
+non-zero for a shader with no `getShadowPCSS` in it.
+
+**The build found a live syntax error in itself while being written.** The call is built as
+`'getShadowPCSS' + _PCSS_CALL.slice(n)`, and the first draft used `n = 10` where `'getShadow'.length` is
+**9** — which drops the `(` and emits `getShadowPCSS directionalShadowMap[ i ], ...`, a GLSL syntax error
+in a chunk included by every lit material. It was caught by PRINTING the generated string instead of
+assuming it, and `test-1381` now derives `n` from the name's own length and checks the result's parens
+balance. Two pins moved in 1380, both quoting the literal call text that became a construction.
+
+## A shadow's softness is the distance to what cast it (build 1380)
+
+Every shadow in the engine had the SAME edge softness whatever cast it, because PCF samples a fixed radius
+— `shadowRadius` texels, everywhere. Real shadows do not work that way: the penumbra grows with the
+distance between the occluder and the receiver, which is why a chair leg is razor-sharp where it meets the
+floor and a roofline three storeys up is a soft band. One softness reads as either *cut out with scissors*
+or *everything is out of focus*.
+
+**Builds 1341, 1345 and 1346 all spent themselves on the artifacts of the first choice** — the normal bias,
+then the depth bias, then the map resolution — without ever questioning the model underneath them. This
+build changes the model. PCSS is three passes over the map three already renders: search for blockers,
+estimate the penumbra from how far away they are, PCF at THAT radius.
+
+Four decisions, each of which is a defect without it:
+
+- **Only the NEAR cascade.** The call site is patched with `UNROLLED_LOOP_INDEX == 0`, so light 0 gets PCSS
+  and the far cascade, every spot light and every point light keep three's own `getShadow` untouched. The
+  far cascade's texel is 4× coarser by design and covers geometry where a penumbra is under a pixel — and a
+  **spot's shadow camera is PERSPECTIVE**, so the depth-to-world scale derived below would be wrong for it.
+- **`pcssP.x == 0` returns `getShadow` VERBATIM.** Off is not a cheap approximation of on; it is the shipped
+  1346 path, called. That is what makes it safe to shed on the adaptive ladder (build 1350's rule that a
+  perf *add* needs a way out) and what makes shedding it exactly free.
+- **The disc is COMPUTED, not stored.** GLSL ES 1.0 cannot index a const array with a loop variable, and a
+  golden-angle Vogel spiral (build 1247's bokeh disc) needs no array at all. `sqrt` radius, so it is uniform
+  over the disc rather than centre-heavy.
+- **The scale is derived on the CPU**, inside `_fitSunShadow`, where the extent, the depth range and the map
+  size already live — so the shader carries arithmetic instead of a second copy of the shadow fit:
+  `penumbraTexels = depthGap × (far − near) × tan(sunRadius) / texel`.
+
+`SUN_ANGLE_TAN = 0.020` against the real sun's **0.0047**. At life size the penumbra is under one texel for
+anything but a very tall occluder — it would measure as no change at all. At 0.020 an occluder 10 m above
+its receiver casts a ~7-texel (20 cm) penumbra while one touching the ground gets the 1-texel floor, which
+IS the contact hardening.
+
+### Measured — and the first four runs measured nothing but the HUD
+
+```
+                    world pixels moved by >6      mean |d|
+control  0 vs 0              0.000%                0.0047
+shipped  (tan 0.020)         0.232%                0.0396
+3x                           0.842%                0.1376
+10x                          1.566%                0.3017
+```
+Monotonic in amplitude, replicating to four significant figures across an independent repeat, with the
+control returning to zero. 0.232% is small because **shadow edges are a small fraction of any frame** —
+that is what this build touches and all it should touch. Stated rather than inflated.
+
+Verified on the real GPU path before any of that: **65 programs compiled, `glGetError` 0, zero shader
+console output, frame not black.** A GLSL error in a chunk patch takes down every lit material in the
+engine, and this file has lost a subsystem to a silent shader failure twice.
+
+### Three instrument failures, and the second is a standing rule
+
+| # | it reported | why |
+|---|---|---|
+| 1 | effect 5.14% against a control of 7.34% — a clean null | the **HUD** was inside the window. The minimap dots, the wave banner and the coach pill animate, and they were the entire noise floor. Excluding them took the control from 1.14% of pixels >6 to **0.000%** |
+| 2 | a **10× amplitude** produced exactly the same 5.06% | `_fitSunShadow` REWRITES `_pcssP.x` every frame, so the probe's assignment was undone before the next render and **both conditions rendered identically**. Pinned with `Object.defineProperty` instead |
+| 3 | — | `paused = true` is what makes any of this measurable at all: in a running game the scene is the noise floor, and it is far larger than any shading change worth making |
+
+**#2 is build 1345's lesson arriving again, in a build that quotes it**: *know who else writes what you are
+setting.* The frame loop owns the camera, the shadow fit owns `normalBias` — and now it owns this too.
+
+**And the uniform is the half that would have made the whole build a silent no-op.** `ShaderLib` merged
+`UniformsLib` at module load (build 1181), so adding to the lib alone reaches nothing already built and
+`seqWithValue` silently drops a program uniform with no value — `pcssP` would have sat at GL zero forever,
+which reads exactly like the feature working correctly with itself turned off.
+
 ## The props stop being one flat colour (build 1379)
 
 Build 1139 built the procedural detail set and deliberately left ALBEDO out of it, for a reason that is

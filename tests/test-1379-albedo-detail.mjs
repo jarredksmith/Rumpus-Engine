@@ -90,7 +90,9 @@ assert(ALB > 0 && ALB < 0.5, 'the albedo swing is a modest fraction (' + ALB + '
   eq((f.match(/_odBase = _odField\(_odP\);/g) || []).length, 1, 'the field is evaluated exactly once per pixel, not once per patch');
   assert(/albOnly \? '#include <roughnessmap_fragment>'/.test(f), 'albedo-only mode skips the roughness patch');
   assert(/albOnly \? '#include <normal_fragment_maps>'/.test(f), '...and the normal patch');
-  assert(/customProgramCacheKey = \(\)=> \(albOnly \? 'objDetailA' : 'objDetail'\)/.test(f),
+  // build 1382 made the key COMPOSE with any the material already carried; the two modes are still two
+  // distinct programs, which is what this always meant.
+  assert(/\(albOnly \? 'objDetailA' : 'objDetail'\)/.test(f),
     'two modes are TWO programs, never one per material (build 1145\'s reason for the key)');
   assert(/mat\.userData\._odU = shader\.uniforms;/.test(f), 'the uniforms are kept so a resize can move the density without a recompile');
   // THE FREQUENCY MUST NOT LIVE ONLY IN THE UNIFORM. onBeforeCompile does not run until the material is
