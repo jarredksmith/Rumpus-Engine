@@ -31,8 +31,10 @@ const key = new Function('NET', extractFunction('_hwVarKey') + '; return _hwVarK
 { // the regex admits `@`, matching the toast node it should always have matched
   const t = extractFunction('_hwText');
   assert(/\\\{\(\[\\w#@\]\+\)\\\}/.test(t) || /\[\\w#@\]\+/.test(t), 'the HUD interpolation accepts a trailing @');
-  const toast = src.slice(src.indexOf("case 'toast':"), src.indexOf("case 'toast':") + 200);
-  assert(/\[\\w#@\]\+/.test(toast), '...the same class the toast node has used since build 1231');
+  // build 1402: the toast's own interpolation moved into `_lgName`, which every field that names something
+  // shares. The class this asserts is the same one, at its new address.
+  assert(/\[\\w#@\]\+/.test(extractFunction('_lgName')),
+    '...the same class the toast node has used since build 1231');
 }
 { // EXECUTED: interpolation end to end
   const run = (label, vars, myId) => new Function('logicVars', 'NET', 'w', '_hwFmtTimer', '_lgNum',

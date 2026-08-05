@@ -49,6 +49,9 @@ const src = gameSource();
   const api = new Function(
     'let _lgCtx = {}; const player = { pos: { x: 0, y: 2, z: 0 } }; const EYE = 1.6;\n' +
     'function terrainHeightAt(x, z){ return 1; }\n const triggerZones = []; const propModels = [];\n' +
+    /* build 1402: the place field interpolates, so the resolver needs the real interpolator */
+    'let logicVars = {}; const LG_NAME_MAX = 64;\n' + extractFunction('_lgVarKey') + '\n' +
+    extractFunction('_lgName') + '\n' +
     extractFunction('_lgPlaceAt') +
     '\nreturn { at:_lgPlaceAt, setCtx:(c)=>{ _lgCtx = c; } };')();
 

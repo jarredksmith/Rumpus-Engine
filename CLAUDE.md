@@ -2256,6 +2256,70 @@ block. And my replacement pin `/g\.view==='chase'/` silently matched the tail of
 as well — six hits where one was meant. **A short variable name in a source pin is a substring of everything
 that ends with it**; that one asks `extractFunction('_applyGameCfg')` instead.
 
+## The graph could not name a thing it computed (build 1402)
+
+Found by asking what the gauntlet's first booth — a shooting gallery — actually needs, and checking rather
+than assuming. A gallery is N plates popped one at a time in a random order, and **every piece was already
+there**: `showprop`/`hideprop`/`resetprop` by tag (1170/1391), a random integer from Set variable, the
+`damaged` event to score with (1397). The JOIN between them was not.
+
+**`{score}` interpolation had existed since the toast node and reached NOTHING else.** Every field that
+names a thing in the world took a LITERAL, so *"show plate&lt;n&gt;"* was unsayable — eight plates meant eight
+hand-wired branches, and a ninth meant editing the graph.
+
+Measured on build 1401, with a literal tag as the control:
+
+```
+BEFORE   literal `plate2` hid plate2  ·  `plate{n}` with n=2 hid NOTHING
+         _lgPlaceAt('mark7') -> {60,60}  ·  _lgPlaceAt('mark{k}') -> null
+AFTER    both hide plate2  ·  the place field resolves to the same mark
+GALLERY  three nodes — event -> Set variable (random 1..3) -> `showprop plate{n}` — drew 24 times and
+         popped plate3 x10, plate1 x7, plate2 x7
+```
+
+**Three nodes instead of one branch per plate**, and adding a ninth plate is now a `max` field.
+
+### Where it lands, and why those places
+
+- **`_lgPlaceAt`'s first line**, so the goto node's arrival tag (1394), the prop-position stats (1352) and
+  every spawn/teleport verb inherit it with **no list of call sites to keep in step**. It is IDEMPOTENT — a
+  resolved name has no braces left — which is what lets it sit there AND at the dispatch site above without
+  either having to know about the other.
+- **The `do` node's four naming fields** — the tag, the prefab, the item, and the text a player reads. The
+  enums and urls beside them (`clip`, `sound`, `etype`, `pk`, `who`, `stat`, `cmd`) deliberately do not:
+  interpolating an enum can only ever produce an invalid one.
+- **Before the tag check**, so a computed tag that resolves to nothing is reported by the name it actually
+  resolved to: *"A `hideprop` action targets the tag `plate99`, but no placed prop has that tag."* — build
+  1214's channel, naming the real miss rather than the template.
+
+**The toast's own inline copy is gone.** Two implementations of one syntax is how the two drift, and a
+creator who learns `{score}` in a toast must get the same answer in a tag. Build 1231's per-player scoping
+rides along for free, because it is `_lgVarKey` that does the lookup: `plate{lane@}` is THIS player's lane.
+
+**The HUD widget's `interp` stays separate, and that is not an oversight** — build 1287 resolves through
+`_hwVarKey`, which asks a different question (*"what is MY number"*, outside any event) and must not adopt
+the event context's pid.
+
+### Eight harnesses moved, and five of them were rigs rather than pins
+
+1027, 1073, 1077, 1214, 1221 each EXECUTE engine source in a constructed scope, so a new dependency is
+genuinely missing there; each is now handed `_lgName` **lifted from the source**, never restated — a rig that
+restates a helper keeps passing against a stale copy. 1277 and 1073's param pins quoted the literal-only
+forms; 1231's and 1287's quoted the toast's inline regex, and 1231's is now stronger, asserting the
+`{coins@}` scoping **by execution** rather than by the shape of a regex literal.
+
+### And a probe fault worth the line, because it read as the feature not working
+
+The probe reset its plates between rounds by hand-setting `.visible`. show/hide track their own state (build
+1170 also drops the collider and the body), so the next hide early-returned and the computed tag measured as
+doing nothing — while the literal control, which ran first, worked. **The fix is to reset through the same
+verb.** Alongside it, `tools/probe/feature-sweep.mjs` was setting `userData.phys = true` by hand for its
+melee fixture; build 1392 made every damage consumer resolve through `damageableProps()`, and a prop that
+merely carries the flag is in neither list. That check had been reporting a broken melee arc against a
+fixture the engine could never produce — it uses `setPropDynamic` now, and the sweep reads **22/22**.
+
+Backticks inside a template literal, for the eighth time this session (1328/1342/1357).
+
 ## A co-op joiner was playing a different level (build 1401)
 
 Build 1400 swept the `game` block's FIELDS against its loaders. This is the same sweep one tier up: every

@@ -42,7 +42,12 @@ await withGame(async (P) => {
       spawnProp('box', [x, 0, z, 0, 0, 0, 2, 2, 2], (obj) => { o = obj; });
       if(!o) return null;
       o.userData.tag = tag;
-      if(dyn){ o.userData.phys = true; o.userData.breakable = true; o.userData.hp = 50; o.userData.maxHp = 50; }
+      /* Build 1392 made every damage consumer resolve through damageableProps() — dynamic props plus
+         static shootables — so a prop that merely CARRIES userData.phys is in neither list. Setting the flag
+         by hand is not the same as being a physics body, and the melee check below read as a broken feature
+         for exactly that reason. setPropDynamic is the real door. */
+      if(dyn){ if(typeof setPropDynamic==='function') setPropDynamic(o, true);
+               o.userData.breakable = true; o.userData.hp = 50; o.userData.maxHp = 50; }
       return o;
     };
     window.__byTag = function(t){ return propModels.find(o => o && o.userData && o.userData.tag === t); };
@@ -222,7 +227,8 @@ await withGame(async (P) => {
     const r = await safe(P, `(function(){
       const o = window.__mk('meleeTgt', 0, -3, false);
       if(!o) return { err:'no prop' };
-      o.userData.hp = 100; o.userData.maxHp = 100; o.userData.phys = true; o.userData.breakable = true;
+      o.userData.hp = 100; o.userData.maxHp = 100; o.userData.breakable = true;
+      if(typeof setPropDynamic==='function') setPropDynamic(o, true);   /* a real body, not a hand-set flag */
       player.pos.set(0, 1.7, 0); player.yaw = 0; player.pitch = 0;   /* forward is (-sin yaw, -cos yaw): yaw 0 faces -Z, where the prop is */
       camera.position.copy(player.pos); camera.rotation.set(0,0,0,'YXZ');
       camera.rotation.y = player.yaw; camera.updateMatrixWorld(true);

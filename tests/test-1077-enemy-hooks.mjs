@@ -75,7 +75,8 @@ const CMDS = new Function('return ' + src.match(/const LG_CMDS = \{[^}]*\};/)[0]
 eq(Object.keys(CMDS).join(','), 'hunt,patrol,hold,alert,calm,post', 'six commands');
 eq(CMDS.calm, 'Lose the player', 'the stealth one is named for what the player experiences, not for a flag');
 
-const W = new Function(`
+const W = new Function('let logicVars={}; let _lgCtx={pid:0}; const LG_NAME_MAX = 64;\n'
+  + extractFunction('_lgVarKey', src) + '\n' + extractFunction('_lgName', src) + '\n' + `
   const EYE=1.6, alerts=[];
   const player={ pos:{x:0,y:1.6,z:0,set(){}}, vel:{set(){}}, extVel:{set(){}}, hp:50, maxHp:100 };
   const playerSpawn={x:0,y:0,z:0};

@@ -92,8 +92,17 @@ const mk = () => new Function(TRIG + '\nreturn { _trigStepActor, _trigStep };')(
     '...and List, which writes through `var` rather than `name`, scopes it too (build 1269)');
   assert(/const k = _lgVarKey\(String\(name\|\|''\)\.trim\(\)\)/.test(extractFunction('_lgList')),
     '...as do LIST NAMES themselves, so `hand@` is this player\u2019s hand');
-  assert(/\\\{\(\[\\w#@\]\+\)\\\}/.test(pulse) && /logicVars\[_lgVarKey\(k\)\]/.test(pulse),
-    'toast interpolation accepts {coins@} and scopes it');
+  // build 1402: the toast's inline interpolation became `_lgName`, the ONE interpolator, which every field
+  // that names something now shares. The property asserted here is unchanged and is now proven by execution
+  // rather than by the shape of a regex literal.
+  {
+    const interp = new Function('logicVars', '_lgCtx', 'LG_NAME_MAX',
+      extractFunction('_lgVarKey') + '\n' + extractFunction('_lgName') + '\nreturn _lgName;')(
+        { 'coins@7': 12, coins: 999 }, { pid: 7 }, 64);
+    eq(interp('you have {coins@}'), 'you have 12', 'toast interpolation accepts {coins@} and scopes it');
+    eq(interp('you have {coins}'), 'you have 999', '...while a plain name is unscoped, as it always was');
+    assert(/case 'toast': \{ const msg=_lgName\(/.test(pulse), '...and the toast is what routes through it');
+  }
 }
 { // onkill knows the killer
   const ke = extractFunction('killEnemy');
