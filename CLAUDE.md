@@ -991,7 +991,42 @@ Projection must be **triplanar in object space**, not UV: a primitive's UVs run 
 face's real size is, so a stretched box stretches the texture — build 1378's 17:1 boundary wall one layer
 down. `vOdPos` is already there for the noise, cannot stretch, and stays locked to the object as it moves.
 
-### Why it was reverted: it measurably does nothing, and I cannot say why
+### CORRECTION: "it measurably does nothing" was WRONG, and the instrument was the reason
+
+That is what this section said first, and it is false. The null was measured on a target whose window mean
+luminance was **12.3 of 255** — a near-black surface. An albedo MODULATION is multiplicative, so on a
+surface that renders black it produces a fraction of a code value whatever its amplitude. The measurement
+could not have seen the effect at any setting.
+
+The check that caught it is the one this file already tells itself to run and I did not: **before believing
+a null, prove the instrument can produce a positive.** Driving build 1379's `uOdAlb` — a term MEASURED
+working at 1.026x — through the same rig moved only 0.17% of pixels at a 10x amplitude. A positive control
+that barely fires invalidates every null taken beside it.
+
+Re-measured on build 1379's own rig (default pose, world-only window, mean luminance 68.5), with that
+control included and returning:
+
+```
+                        unique colours   pixels moved >1   mean |d|
+base                        1.000x            0.00%          0.000
+uOdAlb 1.2 (the control)    1.034x            8.25%          0.443   <- it fires
+uOdAlb back to 0.30         1.000x            0.62%          0.034   <- and returns
+texture modulation 0.55     0.998x            1.00%          0.066
+texture modulation 3.0      1.005x            3.94%          0.159   <- above the floor
+control back to 0           0.998x            1.18%          0.070
+```
+
+**So the mechanism WORKS** — 3.0 is clearly above the control — and the earlier conclusion was an
+instrument artifact, not a fact about the shader. What is true is narrower and still disqualifying for
+shipping as written: at the shipped 0.55 the effect sits INSIDE the noise floor, so it is not yet worth
+three texture fetches per fragment on 52 materials. The open question is amplitude and density, not whether
+it functions — and the density is very likely the same pixel-subtense problem build 1379 hit, since at a
+gameplay distance ten tiles across a prop that is thirty pixels wide average back to flat.
+
+The next attempt needs a close-up, WELL-LIT target and a sweep of both amplitude and cycles-per-metre. It
+does not need to re-litigate whether the patch reaches the frame.
+
+### The original (wrong) reasoning, kept because the elimination work still stands
 
 Verified present, all of it: the block IS in the shader the renderer compiled (read back through
 `gl.getShaderSource` — `uOdTexM` found in an 81,795-character program), the texture IS bound
