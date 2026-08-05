@@ -1980,6 +1980,51 @@ decay block, which the comment explaining what it *used to* walk satisfies. A pi
 prose and must not be defeatable by prose either; it asserts the LOOP now. Third sighting — builds 164 and
 1393 record the same trap.
 
+## A pickup can be taken once and stay taken (build 1396)
+
+Reported from play: *"there needs to be an option for spawned pickups that it doesn't keep respawning after
+the item has been picked up. Right now it just infinitely keeps popping back up after a little bit."*
+
+Correct — every pad but a key or an inventory item returned on `POWERUP_COOLDOWN` forever, with no per-spot
+control. A health pad in a corridor is right to come back; the shotgun hidden at the end of a puzzle room is
+not, and there was no way to say which.
+
+**The one-shot rule already existed — as `p.cd = 1e9`, a cooldown of thirty-one years, written out at BOTH
+grant sites.** A sentinel standing in for a fact, duplicated, in exactly the shape this file records as
+drifting (1266, 1272, 1280). So most of this build is deleting duplication that was already there:
+`_puOnce(p)` is the predicate, `_puConsume(p)` is the one writer of a pad's taken state, and `gone` is a real
+flag rather than a countdown that still ticked every frame of every match for a pad that could never return.
+
+Three decisions:
+- **Once per RUN, not once forever.** `gone` lives on the live pad and `spawnPowerups` rebuilds those every
+  deploy — the same scope the key ring has always had. The label says so (*"does not respawn this run"*),
+  because "once" alone reads as *never again, ever*.
+- **A key or an item shows the box TICKED AND DISABLED**, not hidden. A control that vanishes for some kinds
+  reads as a bug (1348), and one that is unticked while the pad demonstrably never returns is a lie (1338).
+- **An unknown kind falls through to respawning.** A pad that silently never returns is the harder failure to
+  diagnose than one that comes back when you did not expect it.
+
+Measured with a RESPAWNING pad beside the one-shot in every run, because a one-shot that stays gone while
+the control also stays gone would mean the clock and not the flag:
+
+```
+_puOnce over three pads      [true, false, true]     (authored, ordinary, key)
+just taken     gone [true, false, true], all three hidden
+20 s later     the ORDINARY pad is back and visible; the one-shot and the key are not
+220 s later    unchanged — it is not a longer timer, it never returns
+redeploy       all three ready and visible again
+round trip     `once:1` written for the authored pad alone
+```
+
+Two test faults of my own, both the same shape and both worth the line: a count of `_puConsume(p)` matched
+the **definition** as well as the two calls, and build 1395's count of `dynamicProps` was satisfied by the
+**comment** explaining what the code used to walk. A pin that counts a bare name counts prose and
+declarations too.
+
+Four harnesses moved (237, 451, 470, 80). Two of them quoted the `1e9` sentinel to mean *"a key never comes
+back"* — they **execute `_puOnce`** now, with an ordinary pad as the control, which is what they always meant
+and is immune to how the rule happens to be spelled.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

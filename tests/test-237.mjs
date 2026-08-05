@@ -46,7 +46,13 @@ assert(it.indexOf('if(!tryUnlockProp(o)) return;', xI) > xI && it.indexOf('if(!t
 // --- per-run reset + key pickup application + one-shot pads ---
 assert(/runKills=0; playerKeys=\{\}; if\(typeof renderKeyChips==='function'\) renderKeyChips\(\);/.test(extractFunction('startGame')), 'key ring resets every deploy');
 assert(/POWERUP_KINDS\[kind\] && POWERUP_KINDS\[kind\]\.key\)\{ playerKeys\[POWERUP_KINDS\[kind\]\.key\]=true; renderKeyChips\(\);/.test(extractFunction('applyPowerupLocal')), 'picking up a key fills the ring + chips');
-assert(/p\.cd=\(\(POWERUP_KINDS\[p\.kind\]&&POWERUP_KINDS\[p\.kind\]\.key\)\|\|p\.kind==='item'\)\?1e9:POWERUP_COOLDOWN;/.test(extractFunction('updatePowerups')), 'key + item pads never respawn');
+/* build 1396 moved this. It quoted the `1e9` cooldown sentinel that expressed "never comes back"; that
+   sentinel is now a predicate, so the assertion is EXECUTED instead of matched — which is what it always
+   meant and is immune to how the rule happens to be spelled. */
+{ const _once = new Function('POWERUP_KINDS', extractFunction('_puOnce') + '\nreturn _puOnce;')(
+    { health:{}, item:{}, key_red:{ key:'red' } });
+  assert(_once({ kind:'key_red' }) && _once({ kind:'item' }), 'key + item pads never respawn');
+  assert(!_once({ kind:'health' }), '...while an ordinary pad still does (the control)'); }
 
 // --- net: unlock broadcast, host relay, client apply ---
 assert(/function broadcastUnlock\(i\)\{/.test(src), 'broadcastUnlock exists');

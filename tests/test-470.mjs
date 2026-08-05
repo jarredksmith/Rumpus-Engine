@@ -3,8 +3,8 @@ const src = gameSource();
 // build 616: pickups can require an E press (with a prompt) instead of auto-collecting on walk-over.
 
 // flag threads through spawn / load / serialize
-assert(/interact:!!spot\.interact, ready:true/.test(src), 'runtime powerup carries the interact flag from its spot');
-assert(/scale:\(s\.scale!=null\?\+s\.scale:1\), interact:!!s\.interact \}\)\)/.test(src), 'saved spots restore the interact flag');
+assert(/interact:!!spot\.interact, once:!!spot\.once, ready:true/.test(src), 'runtime powerup carries the interact flag from its spot');   /* build 1396 added `once` beside it */
+assert(/scale:\(s\.scale!=null\?\+s\.scale:1\), interact:!!s\.interact, once:!!s\.once \}\)\)/.test(src), 'saved spots restore the interact flag');   /* build 1396 added `once` beside it */
 assert(/\.\.\.\(s\.interact\?\{interact:1\}:\{\}\)/.test(src), 'interact flag persists with the level');
 
 // auto-grant is gated: the LOCAL player must press E; remotes still auto-collect (host-authoritative)
@@ -20,7 +20,10 @@ assert(/prompt\.innerHTML = `<b>\$\{_uk\}<\/b> Pick up \\u2014 \$\{_pickupLabel\
 // interact() collects it for the local player + consumes the pad
 const it = extractFunction('interact');
 assert(/if\(nearTarget\.type==='pickup'\)\{/.test(it), 'interact handles a pickup target');
-assert(/grantPowerup\(\{ id:NET\.myId \}, p\.kind, p\.item\); p\.ready=false; p\.cd=\(\(POWERUP_KINDS\[p\.kind\]&&POWERUP_KINDS\[p\.kind\]\.key\)\|\|p\.kind==='item'\)\?1e9:POWERUP_COOLDOWN; if\(p\.mesh\) p\.mesh\.visible=false;/.test(it), 'E grants to the local player and consumes the pad');
+/* build 1396: the pad state is written by ONE shared `_puConsume` now, so this asserts the grant and the
+   consume rather than re-quoting the three statements the consume contains. Same intent, and it no longer
+   passes only for the interact path's own copy of them. */
+assert(/grantPowerup\(\{ id:NET\.myId \}, p\.kind, p\.item\); _puConsume\(p\);/.test(it), 'E grants to the local player and consumes the pad');
 
 // ---- executable: the label helper ----
 const lbl = new Function('WEAPONS','POWERUP_KINDS','keyDisplayName','invCatalog', extractFunction('_pickupLabel') + '; return _pickupLabel;')(

@@ -21,7 +21,10 @@ assert(/function applyPowerupLocal\(kind, item\)/.test(src), 'applyPowerupLocal 
 assert(/if\(kind==='item'\)\{ if\(item && typeof giveItem==='function'\) giveItem\(item\); return; \}/.test(ap), 'collecting an item pickup calls giveItem');
 const up = extractFunction('updatePowerups');
 assert(/grantPowerup\(near, p\.kind, p\.item\)/.test(up), 'proximity grant passes the item');
-assert(/\|\|p\.kind==='item'\)\?1e9:POWERUP_COOLDOWN/.test(up), 'item pickups are one-shot (no respawn)');
+/* build 1396: executed rather than quoting the 1e9 sentinel it used to be spelled with */
+{ const _once = new Function('POWERUP_KINDS', extractFunction('_puOnce') + '\nreturn _puOnce;')({ item:{}, ammo:{} });
+  assert(_once({ kind:'item' }), 'item pickups are one-shot (no respawn)');
+  assert(!_once({ kind:'ammo' }), '...unlike an ammo pad (the control)'); }
 
 // multiplayer path carries the item id
 assert(/sendToPlayer\(playerEntry\.id, \{ t:'power', k:kind, item:item \}\)/.test(extractFunction('grantPowerup')), 'remote grant sends the item');

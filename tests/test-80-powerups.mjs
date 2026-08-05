@@ -9,8 +9,10 @@ assert(/function buildPowerupMesh/.test(src) && /function powerupLayout/.test(sr
 
 const up = extractFunction('updatePowerups');
 assert(/const players = allPlayers\(\);/.test(up), 'checks all players (host + remotes)');
-assert(/if\(!p\.ready\)\{ p\.cd -= dt; if\(p\.cd<=0\)\{ p\.ready=true;/.test(up), 'cooldown then respawn');
-assert(/if\(near && nd < 2\.0 && !\(p\.interact && near\.id===NET\.myId\)\)\{ grantPowerup\(near, p\.kind, p\.item\); p\.ready=false; p\.cd=\(\(POWERUP_KINDS\[p\.kind\]&&POWERUP_KINDS\[p\.kind\]\.key\)\|\|p\.kind==='item'\)\?1e9:POWERUP_COOLDOWN;/.test(up), 'grant on proximity + start cooldown (keys/items one-shot)');
+assert(/if\(!p\.ready\)\{ if\(p\.gone\) continue;[\s\S]{0,120}?p\.cd -= dt; if\(p\.cd<=0\)\{ p\.ready=true;/.test(up), 'cooldown then respawn');   /* build 1396: unless it was taken for good */
+/* build 1396: one shared `_puConsume` writes the pad state for both grant paths — the 1e9 expression this
+   used to quote was written out twice, which is how "does this come back" stops agreeing with itself. */
+assert(/if\(near && nd < 2\.0 && !\(p\.interact && near\.id===NET\.myId\)\)\{ grantPowerup\(near, p\.kind, p\.item\); _puConsume\(p\);/.test(up), 'grant on proximity + start cooldown (keys/items one-shot)');
 
 const gp = extractFunction('grantPowerup');
 assert(/playerEntry\.id===NET\.myId\) applyPowerupLocal\(kind, item\)/.test(gp) && /sendToPlayer\(playerEntry\.id, \{ t:'power', k:kind, item:item \}\)/.test(gp), 'local apply vs remote grant');
