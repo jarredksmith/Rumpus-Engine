@@ -2089,6 +2089,116 @@ misplace every later `#here` in the level.
 Two pins moved (242), both quoting the bare `fireSignals` call and the `when` dropdown; both assertions —
 authoritative-side only, and the dropdown's membership — are unchanged.
 
+## The target saved and was never read back (build 1398)
+
+Reported from play: *"marking a prop as a target that is breakable doesn't save with the level. When I
+re-open or refresh, I can't break the prop and have to go back and tick the box again."*
+
+The flag **saved correctly**. It was never **read back**. `applyPropDynState` opened with
+
+```js
+if(!p || !p.dyn) return;
+```
+
+and build 1390 put the static-target restore INSIDE it — below a gate a static target can never pass, since
+a static target has `sht:1` and no `dyn`. So `propEntry` wrote `sht`, `hp` and `bst`, the file carried them,
+and the loader returned at its first line.
+
+**The write side was already split and the read side never was.** `propEntry` has three tiers — `par` at the
+top level, a `phys` block for the BODY, and a `phys || shootable` block for being DAMAGEABLE — and this had
+one gate covering all three. It mirrors the serializer now, tier for tier, and the test asserts the
+*symmetry* rather than the fields, because the defect was an asymmetry.
+
+**And build 1390's own test asserted BOTH ENDS of that wire — `e.sht=1` in the serializer and `p.sht` in the
+applier — and passed while nothing in between worked.** That is build 1277's defect *in the test I wrote to
+prevent it*, and it is the third arrival in this stretch after 1392 and 1395. The lesson is sharper than
+"pin both ends is not enough": my 1390 probe called `propEntry(o)` and read the output, which is the write
+side twice. **A round trip has to go through the loader.**
+
+### A second live bug nobody reported
+
+`p.par` is read at that same single site, so build 1309's own stated commonest case — *"a STATIC crate on a
+lift is the commonest case of all"* — has never restored its parent. That build deliberately put `e.par` at
+the TOP LEVEL of the serializer so a static prop could carry it, and its only reader sat behind the dynamic
+gate the whole time. Same for the 1305/1314 impact sounds on a target.
+
+### Measured through the real save and load, then by shooting it
+
+```
+written           { sht:1, hp:40, bst:'puff', hsn:set }     (the serializer was always right)
+after restore     shootable true, breakable true, maxHp 40, hp 40, puff, hitSnd restored, IN damageableProps()
+shoot it          40 -> 25 -> 10 -> shattered               <- the report's own test
+carried prop      parNid '770001' restored                  <- build 1309's unreported half
+dynamic control   dyn / mass 7 / noGrab / maxHp 55 / puff / onFire / fireDps 9 — every field as before
+plain static prop breakable undefined, maxHp undefined, NOT damageable
+```
+
+That last row is the one that makes the fix safe: moving the damage tier out of the body gate must not make
+every wall in every level breakable, and it does not — the tier is gated on `dyn || sht`, the serializer's
+own condition.
+
+The function's NAME is now a lie and is deliberately left alone: renaming moves a dozen pins for no
+behaviour, and the name is precisely what made 1390 drop a static field into it without noticing the gate.
+The comment says to read the tiers, not the name.
+
+**Backticks inside a template literal, for the seventh time this session** (1328, 1342, 1357 record it).
+Judged not worth tooling: it is a module-parse error, so node reports it instantly and unambiguously and the
+cost is one wasted probe run rather than a wrong result. Recorded so the count is honest.
+
+## The panel that was on screen was the one that did not get built (build 1399)
+
+Two halves of one report about the pickup authoring surface.
+
+### 1. Build 1293's gate had a hole in it
+
+*"There's something going on with the pickup tab in gameplay. It doesn't show correctly unless you click
+another dropdown tab and then go back to it. Even then it's a little finnicky."*
+
+Build 1293 stopped rendering the big global sections when none is on screen. **Its own comment says the block
+is skipped "only when NONE of the SIX is on screen" — and the list it checks has FIVE.** The Pickups panel is
+BUILT INSIDE that block and was never in the list that decides whether the block runs. So opening the
+Pickups fold while those five happened to be collapsed skipped the whole thing, and the panel that was
+actually on screen was the one that did not get built. Toggling any other fold made one of the five visible,
+the block ran, and Pickups filled in — the reported workaround, exactly.
+
+**Cutscenes is the same shape and had the same bug, unreported.** Both hosts are now resolved beside the
+others and both are in the gate, so it tests every host it builds.
+
+**Node counts alone could not have proven this.** With the block skipped the panel is not CLEARED either, so
+it keeps stale content rather than going empty — which is what "a little finnicky" describes. The decisive
+measurement is whether the panel FOLLOWS a change: with only Pickups open, adding spots and re-rendering made
+it read "1 placed" then "3 placed".
+
+### 2. A spawned pickup could not be one-shot
+
+Build 1396 gave AUTHORED pickup spots a `once` flag. A pad spawned by the graph or by a prop signal had none
+and came back forever. It rides through to the live pad now, where 1396's `_puOnce` / `_puConsume` already
+know what to do with it — **the rule is still written once**, so an authored spot and a spawned pad cannot
+come to different answers about the same kind. Both doors get the option: the Do node's params and the signal
+editor's own row, which gained a checkbox helper beside its `lab`/`sel`/`txt` siblings.
+
+```
+once OFF vs ON   predicate false/true · after taking, gone false/true
+                 20 s later, standing away: ordinary pad ready+visible (respawns 1),
+                 one-shot still not ready and not visible
+spawned key      one-shot by its kind, with no flag set
+```
+
+**The respawn row first read both pads as not-ready**, which looked like the flag failing on both. The probe
+had spawned them at the player start and the ordinary pad was respawning under the player's feet and being
+instantly re-collected. Standing 300 m away made the control produce its positive — build 1316's rule again:
+before believing a null, prove the instrument can produce a positive.
+
+Three pins moved (1293, 243, 846), all quoting the host resolution or the five-host list; every assertion
+unchanged in intent, and 1293's is now stronger — *any host the block BUILDS*, rather than a list of five.
+
+**Two test faults of my own, both about naming the wrong thing.** A sweep for stray `querySelector('#ed…')`
+caught fourteen legitimate ones belonging to panels outside the block, and would have failed on every
+unrelated future panel; it asks the precise question now (those two ids are each queried exactly once). And
+I extracted `_applySignalAction` to find the pickup handler, which lives in `_applyWorldAction` — `pickup` is
+a world verb and the signal router passes it onward. That is build 1390's mistake in miniature: naming the
+wrong function and asserting confidently against it.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

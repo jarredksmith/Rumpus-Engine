@@ -10,7 +10,9 @@ assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','logic','cutsc
 assert(/cutscenes:\s*'Author camera cutscenes — play them from signals or on level start\.'/.test(src), '...with a plain-language subtitle');
 assert(/const subSec = \(title, key, collapsedDefault, host\)=>/.test(src), 'subSec takes an optional host');
 assert(/\(host\|\|worldHost\)\.appendChild\(sec\);/.test(src), '...defaulting to the World panel for every other group');
-assert(/const _cutHost=editorEl\.querySelector\('#edCutscenes'\); if\(_cutHost\) _cutHost\.innerHTML='';/.test(src), 'the host clears on each render (no duplicate stacking)');
+/* build 1399: resolved above with the other section hosts (the gate that decides whether this block runs
+   has to test the same element it builds). The clear is unchanged. */
+assert(/const _cutHost=cutsHost; if\(_cutHost\) _cutHost\.innerHTML='';/.test(src), 'the host clears on each render (no duplicate stacking)');
 assert(/subSec\('Cinematic','cine',false, _cutHost\);/.test(src), 'the cinematic group renders there, open by default');
 
 done('build 846: cutscene authoring lives on the Gameplay tab, out of the World > Environment pile');

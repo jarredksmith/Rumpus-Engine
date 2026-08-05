@@ -46,8 +46,13 @@ const anyOn = new Function(extractFunction('_edOnScreen') + '\n' + extractFuncti
 // ---------------------------------------------------------------- the gate is ALL-OR-NOTHING per group
 {
   const fn = extractFunction('renderEditorFields');
-  assert(/if\(worldHost && _edAnyOnScreen\(\[worldHost, enemyHost, gameHost, lootHost, crosshairHost\]\)\)\{/.test(fn),
-    'the global block runs when ANY of its five hosts is visible');
+  /* build 1399: SEVEN hosts. This build's own comment said the block is skipped "only when NONE of the
+     SIX is on screen" and the list had five — the Pickups and Cutscenes panels are BUILT inside the block
+     and were never in the list that decides whether it runs, so opening the Pickups fold with these five
+     collapsed skipped the panel that was actually on screen. Reported from play. The assertion is
+     unchanged in intent and now covers every host the block builds. */
+  assert(/if\(worldHost && _edAnyOnScreen\(\[worldHost, enemyHost, gameHost, lootHost, crosshairHost, pickupsHost, cutsHost\]\)\)\{/.test(fn),
+    'the global block runs when ANY of the hosts it BUILDS is visible');
   // Deliberately not per-host: those five are built INTERLEAVED across 3,000 lines by helpers that take a
   // host argument, so gating each one would mean a null host reaching every build site. Any one visible
   // builds all five — less aggressive, and a section can never be half-built.
