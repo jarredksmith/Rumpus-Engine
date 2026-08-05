@@ -154,7 +154,7 @@ const MAXD  = N('MODEL_LIGHT_MAX_DIST');
     'a deleted prop gives its lights back');
   assert(/if\(typeof releaseModelLights==='function'\) releaseModelLights\(obj\);/.test(extractFunction('shatterProp')),
     '...and so does a destroyed one');
-  assert(/if\(o\.userData\.modelLights && typeof adoptModelLights==='function'\) adoptModelLights\(o\);/.test(extractFunction('restoreDestroyedProps')),
+  assert(/if\(o\.userData\.modelLights && typeof adoptModelLights==='function'\) adoptModelLights\(o\);/.test(extractFunction('_restoreDestroyedProp')   /* build 1391: the body moved into a per-prop function that the deploy path and the resetprop verb SHARE */),
     '...which is re-adopted when the prop comes back');
 }
 {

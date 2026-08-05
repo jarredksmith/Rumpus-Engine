@@ -1098,6 +1098,61 @@ vanishing on import and `ls tests | wc -l` reading 1128 against 1134. `git log` 
 `git fetch origin <branch> && git reset --hard FETCH_HEAD` restored everything, because every build is
 pushed the moment it lands. Fourteenth occurrence; the protocol cost about ninety seconds.
 
+## A range target comes back (build 1391)
+
+Build 1390 made a static prop shootable. A booth full of plates you can destroy exactly once is not a
+shooting range — and before this the ONLY restore was `restoreDestroyedProps()`, called from exactly two
+places: the deploy path and entering the editor. A shot target was gone for the rest of the session.
+
+`resetprop` is a tag verb beside the other five. It needed no new message type and no new mapping: the
+handler derives its action by slicing `prop` off the verb name, so `resetprop` yields `reset`, and clients
+mirror it through build 1170's existing `wact` `pv` payload.
+
+### The filter that would have made it a silent no-op
+
+`_lgPropVerb` skipped any `_shattered` prop, for every verb. `reset` is the ONE that must see them —
+they are exactly what it exists to bring back. Written the obvious way, the verb would have done nothing
+on the only props anybody would ever aim it at, **and every source pin would still have passed**.
+
+### One restore body, because two is how they drift
+
+The restore was inline in `restoreDestroyedProps`, and the verb would have been a second copy — the defect
+this file records under builds 1162, 1252, 1266 and 1280, every time as *two implementations of one
+behaviour and only one maintained*. `_restoreDestroyedProp(o)` is now the shared body; the deploy path is a
+loop over it. It returns **false when the prop was never destroyed**, which is what lets the verb fall
+through to topping up a merely damaged one.
+
+**And build 1390 made it need a new line.** That build releases the static Rapier body when a prop shatters,
+so a restored static prop has to be given one back — otherwise a reset target comes home visible and
+**intangible**, and shots pass straight through the plate you just restored. One build creating the
+requirement the next build must satisfy, four hours apart.
+
+### Both cases in one verb, deliberately
+
+A destroyed prop is restored; a merely damaged one is topped up; a hidden one comes back. A creator wiring
+"reset the targets" means *the booth returns to its starting state* — having to know whether each plate
+happened to be destroyed or just dented is exactly the distinction they should not have to make.
+
+### Measured, driven from a real event node through the real dispatch
+
+Build 1277's rule is that a test pinning the two ends of a wire proves nothing about the wire, so the probe
+fired an `event` node rather than calling the handler:
+
+```
+destroyed   shattered, invisible, out of colliders, Rapier body released
+reset       restored at home, visible, collider back, BODY BACK, hp 30/30, in the scene
+re-shot     takes damage again (30 -> 20)     <- a target you can kill only once is not a range
+dented      40 -> 25 -> reset -> 40
+```
+
+`test-1391` walks all seven links of the chain separately — dropdown, tag field, signal router, world
+handler, name-slice, per-prop applier, `_LG_TAG_VERBS` — because the missing link in 1277's case was the
+third one and nothing else would have found it.
+
+**Seven pins moved**, all from the verb lists and the restore refactor, each keeping its intent: 1033, 1170,
+1258 (×2), 1277 (27 verbs → 28), 1299 (its "a tag resolves to a LIST" assertion now reads the split loop),
+1157 and 120 (both follow the restore body to its new home).
+
 ## A target can be shot without having to be a physics body (build 1390)
 
 Asked for by the level being built toward this engine — a county-fair gauntlet whose first booth is a
