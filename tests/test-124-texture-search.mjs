@@ -29,7 +29,13 @@ const asm = extractFunction('applyStoredMaterial');
 assert(/obj\.userData\.texN = mat\.texN/.test(asm) && /obj\.userData\.texR = mat\.texR/.test(asm), 'applyStoredMaterial restores texN/texR');
 
 // world surface PBR
-assert(/floorTexN:'', floorTexR:''/.test(src) && /wallTexN:'', wallTexR:''/.test(src), 'DEFAULT_WORLD has floor/wall PBR fields');
+// build 1387 filled the two NORMAL slots with maps generated from the same height field as the albedo
+// beside them (test-1387 re-derives both). The roughness slots stay empty because neither library texture
+// carries an `mr` field. The intent here is unchanged: all four fields exist and are wired.
+assert(/floorTexN:'[^']*', floorTexR:''/.test(src) && /wallTexN:'[^']*', wallTexR:''/.test(src),
+  'DEFAULT_WORLD has floor/wall PBR fields');
+assert(/floorTexN:'img\/tex\/floor-concrete-n\.png'/.test(src) && /wallTexN:'img\/tex\/wall-panels-n\.png'/.test(src),
+  '...with the normal slots pointing at the shipped maps (build 1387)');
 const su = extractFunction('applySurfaceTexture');
 assert(/_loadSurfaceMap\(mat, 'normalMap',    normalUrl, repU, repV, false, rot\)/.test(su) && /_loadSurfaceMap\(mat, 'roughnessMap', roughUrl,  repU, repV, false, rot\)/.test(su), 'surface applies normal + roughness');
 assert(/applySurfaceTexture\(floorMat, worldCfg\.floorTex, '_floorTexUrl', fu, fv, worldCfg\.floorTexN, worldCfg\.floorTexR, /.test(src), 'floor passes its PBR urls');

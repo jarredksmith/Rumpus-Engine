@@ -967,6 +967,87 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Relief that describes the same surface as the colour (build 1387)
+
+The critic's second verified finding: `PROC_SLOTS` is `normalMap` + `roughnessMap` fed ONLY by build 1139's
+procedural value-noise, so no authored normal or roughness map was loaded anywhere in the level. Build 1378
+gave the ground and the boundary walls a real albedo and left `floorTexN`/`wallTexN` empty — structure in
+the colour, unrelated micro-noise in the relief, which is a printed photograph with bumps on it.
+
+**The machinery was already there and the CLI just never wrote it out.** Every entry in the generator's
+texture library carries a height field `t.h`, and `normalPx(t.h, S, strength)` is what the arena bake has
+used for hundreds of builds. `node tools/levelgen.mjs tex <id> <out.png>` emitted the albedo alone. It now
+writes `<stem>-n.png` and `<stem>-r.png` beside it, off the SAME `make()` call.
+
+**That sameness is the entire design, and it is proven by hash rather than asserted.** Regenerating the
+albedo at the shipped size produced a file **byte-identical** to the one already committed (`335e47af…`,
+`43198910…`) — so the normal map provably comes from the same seed and the same height field, and the crack
+in the albedo and the crease in the normal are the same crack. `test-1387` re-derives both maps from the
+real generator and compares decoded pixels: **worst channel delta 0.**
+
+Three conventions carried over rather than reinvented: the strength is the glTF bake's own
+`2.2 x S/256` (world-space relief constant across resolutions) times the library entry's `nrm`, so an engine
+surface and a generated arena agree about how deep a concrete crack is; it is **baked into the map** rather
+than left to `material.normalScale`, because `floorMat`/`wallMat` are SHARED and a creator's own map would
+inherit whatever scale was left behind (1139's rule, and the test asserts nothing writes `normalScale`); and
+the aux maps are half-res like the bake's, which is 30 KB against 112 KB for 3.7x less relief detail than
+the eye can use at a 4 m tile.
+
+**The roughness slot stays EMPTY, and that is the honest half.** Neither `concrete` nor `panels` carries an
+`mr` field — about half the 34 library entries do — so there is nothing to source a roughness map from.
+Deriving one from the height field would be making data up. An empty slot is not a hole: `_procFallback`
+restores 1139's procedural roughness.
+
+### Measured — 21,058 pixels, every one proven-DRAWN floor plane
+
+```
+control (same condition)        uniq  0.00%   grad  0.00%
+none -> procedural (was)        uniq +5.04%   grad +21.25%
+none -> authored (this build)   uniq +10.31%  grad +30.73%
+proc -> authored                uniq +5.01%   grad  +7.82%    lum -0.01%
+x4 / x40 overdrive              grad +133.6% / +397.5%        return 0.00%
+```
+
+`grad` is the mean absolute difference between horizontal neighbours — relief is LOCAL variation, not a
+level shift, and the mean luminance moving 0.01% is that stated as a measurement. The authored map does
+about twice the work the procedural field was doing, and the procedural field was doing real work.
+
+### The measurement was wrong three times, and the third failure is the useful one
+
+| # | it reported | why |
+|---|---|---|
+| 1 | authored vs procedural: −2.3%, and a 4x overdrive only +0.45% | a positive control that barely fires invalidates every null beside it. Something was wrong |
+| 2 | removing the normal map ENTIRELY changed 0.00%, and x40 changed 0.03% | not a subtle effect — the map was not reaching those pixels at all |
+| 3 | the compiled program had `USE_NORMALMAP`, the sampler, `perturbNormal2Arb` and `normalMap, vUv` | the shader was fine. **The WINDOW was not the floor** |
+
+Painting `floorMat` bright red moved the 7,621-pixel window by **0.01** while moving the whole frame by 2.2.
+The window filter accepted a pixel when the first *Standard/Physical* raycast hit was `floor` — and r149
+reports an `InstancedMesh` hit against the SHARED unit-box geometry (build 1139's documented signature), so
+a `distance < 2.0` cut threw the deck away and the floor behind it won every time.
+
+`tools/probe/drawn-at.mjs` is the durable fix: **what the RENDERER draws**, which is the first hit whose
+object and every ancestor is visible and which is not the sky dome — no material filter and no distance cut,
+because a nearer hit you filtered out still occludes. Re-verified with it, build 1386's window was **262 of
+266 pixels genuinely `floorMat`**, so that build's record stands as written.
+
+### And the finding nobody was looking for: the engine floor is 3% of the stock frame
+
+The census that `drawnAt` made possible, by pose:
+
+```
+spawn (0,30) pitch -0.28    FLOOR-PLANE  3.4%    instanced BoxGeometry 89.8%
+spawn (0,30) pitch -0.10    FLOOR-PLANE  3.0%    instanced BoxGeometry 74.2%   sky 16.1%
+spawn (0,30) pitch -0.55    FLOOR-PLANE  0.0%    instanced BoxGeometry  100%
+open ground (40,40)         FLOOR-PLANE 89.6%
+```
+
+**Where the game puts the player, essentially all the visible ground is the level's own primitive deck**, and
+a primitive has no texture slots wired to these maps at all — build 1384's modulation is the only structure
+it carries. So this build is correct, cheap and measurable, and it lands mostly on open ground and on empty
+levels (which are nothing BUT the engine floor). Getting authored relief onto primitives is the next build,
+and it is a bigger one: `applyObjDetail`'s triplanar path already samples a texture per fragment, so the
+normal would ride the same three fetches rather than adding any.
+
 ## The two engine surfaces were the only non-physical materials in the game (build 1386)
 
 The cold critic's #1 was that the frame is *"less flat-COLOURED than before and exactly as flat-LIT — no
