@@ -7526,6 +7526,30 @@ let _prStepI = 0;
 // geometry where a corner artifact is under a pixel, and dropping its `castShadow` WOULD change the
 // shadow-light count. Halving its map buys little and risks the thing this comment exists to avoid.
 const _SUN_PX_STEP = [1.0, 0.5, 0.5, 0.25];   // multiplier of SUN_SHADOW_PX per resolution rung
+// ---- build 1383: THE PROCEDURAL RELIEF FADES WITH THE ANTIALIASING THAT COVERS IT ----------------------
+// Builds 1145 and 1379 perturb the normal with a hashed field at ~34 cycles across a mesh — high frequency
+// by design, because that is what breaks a flat facet. High-frequency NORMAL noise is specular aliasing
+// waiting to happen: it needs the antialiasing to resolve it, and this engine's antialiasing is the first
+// thing the adaptive ladder throws away. Build 1342 moved motion blur ahead of it, but `_hiFxOn` still goes
+// false on the FX rung, and build 1126 MEASURED what replaces it: a 1.02-pixel MSAA coverage gradient on
+// 100 of 100 scanlines becomes a hard edge on 94 of 99 under FXAA. So exactly when the frame can least
+// resolve the noise, the noise is unchanged and the resolution is lower too — it outruns its own cover.
+//
+// The relief fades with the rung instead. It is ONE shared uniform object handed to every patched material
+// BY REFERENCE (build 1181's mechanism), so a rung change is a single CPU write and never a recompile.
+// Deliberately only the NORMAL: the albedo term runs at ~0.9 cycles per METRE (build 1379's pixel-subtense
+// derivation), which is far below the sampling limit at any rung and does not alias.
+const _OD_BUMP_STEP = [1.0, 0.6, 0.4, 0.25];
+const _odBumpU = { value: 0 };
+// `_applyPixelRatio()` is CALLED at boot, ~2,500 lines above `OBJ_DETAIL_BUMP` — and `typeof` does NOT
+// guard a temporal dead zone (builds 1127, 1331 and 1350 each lost something to exactly this; the boot
+// test caught this one). So the base is HANDED OVER at the constant's own declaration site rather than
+// read from here, which also means the literal is written once and cannot drift.
+let _odBumpBase = 0;
+function _syncOdBump(){
+  const i = Math.max(0, Math.min(_OD_BUMP_STEP.length - 1, (typeof _prStepI === 'undefined' ? 0 : _prStepI) | 0));
+  _odBumpU.value = _odBumpBase * _OD_BUMP_STEP[i];
+}
 function _sunShadowPxFor(step){
   const m = _SUN_PX_STEP[Math.max(0, Math.min(_SUN_PX_STEP.length-1, step|0))];
   return Math.max(512, Math.round(SUN_SHADOW_PX * m));
@@ -7546,7 +7570,7 @@ function _syncSunShadowRes(){
     if(typeof _dirtyShadows==='function') _dirtyShadows(2);
   }catch(e){}
 }
-function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); _syncSunShadowRes(); }
+function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); _syncSunShadowRes(); _syncOdBump(); }
 _applyPixelRatio();
 // Rolling frame-time monitor (always on, ~free). Targets ~50fps; if we miss it for a stretch, drop a
 // step; if we beat ~58fps comfortably for longer, climb back. Asymmetric: quick to relieve, slow to push.
@@ -9926,6 +9950,7 @@ function _propProcSpan(obj){ const s = obj && obj.scale; return s ? Math.max(Mat
 const OBJ_DETAIL_CYCLES = 34.0;  // noise cycles across a mesh's longest local axis
 const OBJ_DETAIL_ROUGH = 0.30;   // +/- fraction it swings the authored roughness
 const OBJ_DETAIL_BUMP = 0.35;    // normal perturbation, in gradient units
+_odBumpBase = OBJ_DETAIL_BUMP; _syncOdBump();   /* build 1383: the hand-off — see _syncOdBump for why it is not read from there */
 // build 1379: THE TERM 1139 COULD NOT HAVE. That build gave the detail set relief and roughness and
 // deliberately left ALBEDO out, for a reason that was correct about textures: "an albedo map cannot be
 // exposure-neutral. It multiplies the material colour, so it only darkens — neutrality would need values
@@ -10034,7 +10059,7 @@ function applyObjDetail(mat, freq, albOnly){
     if(_odPrev){ try{ _odPrev.call(mat, shader, renderer); }catch(e){} }   /* a throwing predecessor must not take this patch down with it */
     shader.uniforms.uOdFreq = { value: mat.userData._odFreq };
     shader.uniforms.uOdRough = { value: OBJ_DETAIL_ROUGH };
-    shader.uniforms.uOdBump = { value: OBJ_DETAIL_BUMP };
+    shader.uniforms.uOdBump = _odBumpU;   /* BY REFERENCE (build 1181): one CPU write on a rung change reaches every patched material, and nothing recompiles */
     /* build 1382: per-material, defaulting to the detail amplitude — the macro layer needs its own, and a
        uniform written before its shader exists is a write to nothing (1379), so it lives on the material */
     shader.uniforms.uOdAlb = { value: (mat.userData._odAmp > 0) ? mat.userData._odAmp : OBJ_DETAIL_ALB };
@@ -32633,7 +32658,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1382 · 2026-08-05';
+const BUILD_VERSION = 'build 1383 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

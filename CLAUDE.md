@@ -967,6 +967,59 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The relief fades with the antialiasing that covers it (build 1383)
+
+The third of the critic's verified findings. Builds 1145 and 1379 perturb the normal with a hashed field at
+~34 cycles across a mesh — high frequency by design, because that is what breaks a flat facet. But
+high-frequency NORMAL noise is specular aliasing waiting to happen: it needs antialiasing to resolve it,
+and antialiasing is the first thing the adaptive ladder throws away. Build 1126 already MEASURED the
+replacement — a 1.02-pixel MSAA coverage gradient on 100 of 100 scanlines becomes a hard edge on 94 of 99
+under FXAA — so on the rung where the frame can least resolve the noise, the noise was unchanged and the
+resolution was lower as well. It outran its own cover.
+
+`_OD_BUMP_STEP` is `[1.0, 0.6, 0.4, 0.25]`. **Rung 0 is exactly 1.0**, so no frame anybody has ever seen at
+full quality moves. It is ONE shared uniform object handed to every patched material BY REFERENCE (build
+1181's mechanism), so a rung change is a single CPU write and never a recompile, hooked into
+`_applyPixelRatio` — which already means "the rung moved" and is called on every downshift, every climb and
+the adaptive-off restore, so there is no second list of call sites (build 1350 established that hook).
+
+**The ALBEDO term is deliberately not faded.** It runs at ~0.9 cycles per metre (1379's pixel-subtense
+derivation), a ~1.1 m period — nowhere near the sampling limit at any rung, so it does not alias and fading
+it would only remove variation.
+
+**The TDZ, caught by the boot test on the first draft.** `_applyPixelRatio()` is CALLED at boot, ~2,500
+lines above `OBJ_DETAIL_BUMP`, and the first version read the constant from inside the sync behind a
+`typeof` guard — which does **not** guard a temporal dead zone. Builds 1127, 1331 and 1350 each lost
+something to exactly that, and this file's own comment acknowledging the trap was written directly above
+the line that fell into it. The base is HANDED OVER at the constant's declaration site instead, which also
+means the literal is written once and cannot drift from the fade.
+
+### What this build does NOT claim, and why
+
+**No measured visual improvement.** Two honest reasons, and the second is the more useful one:
+
+- Specular aliasing is a **motion artifact** — it reads as crawl and shimmer as the camera moves — and a
+  still capture cannot contain it. This is a case where the frame is the wrong instrument by nature.
+- Probed live: the stock level has **`full: 0`** relief-patched materials. All 67 patched materials carry
+  the ALBEDO-only mode; the relief term's consumers are UV-less IMPORTS (the weapon, low-poly packs), and
+  none was on screen. So there was nothing in frame for the measurement to move.
+
+What IS verified, executed and live: all 67 materials hold the same shared object, the ladder moves it
+0.35 / 0.21 / 0.14 / 0.0875 across the four desktop rungs and restores, and rung 0 returns the authored
+value exactly.
+
+### Three instrument failures, and the first two are the same one twice
+
+| # | it reported | why |
+|---|---|---|
+| 1 | fading changed 0.1% against a control drift of 0.004 pts — a clean null | nothing in the window carried the relief patch. Every stock surface takes the albedo-only path, which SKIPS the normal patch entirely |
+| 2 | a **9x** amplitude measured identical to the shipped one | same cause — and I only noticed because the probe was changed to report the READBACK rather than the value I had passed in. It had never confirmed the write took |
+| 3 | the viewmodel window read NaN | the probe renders at **640x360**, not the 900x506 `shot.mjs` uses, so the coordinates were off the end of the image — and there is no weapon in that frame anyway |
+
+**#2 is the rule worth carrying**: a probe that echoes its own input tells you nothing. Report what the
+engine HOLDS, not what you asked it to hold. And #1/#3 are build 1124's rule for the third time in this
+session — know what is in the frame before attributing anything to it.
+
 ## The macro layer, and the frames that were judged without a texture (build 1382)
 
 A cold rendering critic scored the engine **3/10 vs AAA** and its blind verdict named ONE tell: *"regular,
