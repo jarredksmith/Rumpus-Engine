@@ -65,7 +65,7 @@ const num = (n) => { const m = src.match(new RegExp('const ' + n + ' = ([\\d.]+)
 {
   const _s0 = src.indexOf('// build 1384: TRIPLANAR');
   assert(_s0 > 0, 'the triplanar block is present');
-  const _s1 = src.indexOf('uOdTexM, uOdTexA);', _s0);
+  const _s1 = src.indexOf('uOdTexM, uOdTexA * uOdOn);', _s0);
   assert(_s1 > _s0, '...and ends at the modulation it applies');
   const s = src.slice(_s0, _s1 + 30);
   assert(/vOdPos\.zy\*_tf/.test(s) && /vOdPos\.xz\*_tf/.test(s) && /vOdPos\.xy\*_tf/.test(s),

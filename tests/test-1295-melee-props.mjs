@@ -13,7 +13,14 @@ const src = gameSource();
 // build 1303: the swing and the contact are two functions now — the blow lands after the weapon's
 // windup, not on the input frame. These assertions are about the CONTACT, so read both halves.
 const melee = extractFunction('meleeAttack') + '\n' + extractFunction('_meleeStrike');
-const block = melee.slice(melee.indexOf('if(dynamicProps.length){'));
+// build 1392: this anchored on `if(dynamicProps.length){`, which is now `if(_mdp.length){` — the block
+// stopped asking the dynamic list and started asking the damageable one, so a static shooting-range target
+// is a melee target too. Every assertion below is unchanged in intent. The found-check is new and is the
+// point of the move: indexOf returning -1 makes slice(-1) hand back the LAST CHARACTER rather than failing,
+// so a drifted anchor would have quietly tested an empty block instead of saying so.
+const _mi = melee.indexOf('const _mdp = damageableProps();');
+assert(_mi >= 0, 'the prop half of the swing is findable (build 1392 renamed its opening line)');
+const block = melee.slice(_mi);
 
 // ---------------------------------------------------------------- 1. the reach is measured from the player
 {

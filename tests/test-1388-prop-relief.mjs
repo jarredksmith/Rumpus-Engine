@@ -53,7 +53,7 @@ const fn = extractFunction('applyObjDetail');
 // -------------------------------------------------- derivatives sit in UNIFORM control flow ----
 {
   const blk = fn.slice(fn.indexOf("'#if defined("), fn.indexOf("'#endif',"));
-  assert(/if\( uOdTexN > 0\.0 && uOdTexA > 0\.0 \)\{/.test(blk),
+  assert(/if\( uOdTexN > 0\.0 && uOdTexA \* uOdOn > 0\.0 \)\{/.test(blk),
     'the only branch around a derivative is on TWO UNIFORMS — a dFdx inside non-uniform control flow is ' +
     'undefined in GLSL ES, which is why the degenerate case is a select and not an early out');
   const derivs = (blk.match(/dFd[xy]\(/g) || []).length;
@@ -133,7 +133,7 @@ const fn = extractFunction('applyObjDetail');
     'the patch applies only to a material carrying the texture modulation');
   assert(fn.includes(": albOnly ? '#include <normal_fragment_maps>' : ["),
     '...an albedo-only material without it is byte-identical to build 1387');
-  assert(/normal = normalize\(normal \+ _odG \* uOdBump\);/.test(fn),
+  assert(/normal = normalize\(normal \+ _odG \* uOdBump \* uOdOn\);/.test(fn),
     '...and build 1145\'s full-mode noise relief is untouched');
   // probed live: 16 of 16 materials carrying _odTex also carry a tangent-space normal map, so the #if is
   // satisfied for every one of them, and glGetError was 0 with 0 program diagnostics.
