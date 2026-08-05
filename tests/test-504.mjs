@@ -1,4 +1,4 @@
-import { gameSource, assert, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
 // build 654: the ammo/buy station is optional per level (not every game wants a restock terminal). Default ON
 // so existing levels are unchanged; a checkbox in the Station tab builds it / tears it down, serialized as
@@ -20,7 +20,20 @@ assert(/if\(station\)\{\s*\n\s*const d = Math\.hypot\(player\.pos\.x-station\.po
 // --- serialize + restore ---
 assert(/stationEnabled: !!stationEnabled,/.test(src), 'serialized with the level');
 assert(/setStationEnabled\(!\(level\.stationEnabled===false\)\);/.test(src), 'restore builds/tears down to match the level');
-assert(/if\(level\.station && station\)\{/.test(src), 'station transform only applied when a station exists');
+// build 1401: `if(level.station && station)` WAS the defect. `setStationEnabled(false)` runs first and tears
+// the object down, so a level shipping a custom station DISABLED found `station` null and silently kept the
+// PREVIOUS level's model url — re-enabling it in the editor then built the previous level's station. The
+// config is level DATA and lands either way; only the LOAD waits for something to load into, which is what
+// this assertion always meant.
+{
+  const kit = extractFunction('_applyLevelKit');
+  assert(/if\(level\.station\)\{/.test(kit), 'the station config applies whenever the level carries one');
+  assert(/if\(_su && _su !== stationModelUrl\)\{ if\(station\) swapStationModel\(_su\); else stationModelUrl = _su; \}/.test(kit),
+    '...loading the model only when there is a station to load it into, and otherwise landing the url as data');
+  assert(/if\(station && editorTargets\.station\.apply\) editorTargets\.station\.apply\(\);/.test(kit),
+    '...and the transform is only APPLIED when a station exists');
+  assert(!/if\(level\.station && station\)\{/.test(src), 'and the old gate that swallowed the url is gone');
+}
 
 // --- editor toggle UI + hiding the inert editors when off ---
 assert(/if\(editorActive==='station'\)\{[\s\S]*?cb\.type='checkbox'; cb\.checked=!!stationEnabled;[\s\S]*?setStationEnabled\(cb\.checked\)/.test(src), 'a checkbox in the Station tab toggles it');

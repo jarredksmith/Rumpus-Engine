@@ -126,7 +126,15 @@ const FACTORY = {
   assert(!/melee:/.test(body) && !/reach:/.test(body),
     '...and are NOT named in it, which is the property that made this build small');
   // all three loaders route through the one applier, so none can be forgotten
-  eq((src.match(/_wepApplyStats\(k, wd\.st\)/g) || []).length, 3, 'all three loaders (boot + the two level paths) apply the sheet through the one function');
+  // build 1401: BOTH runtime loaders route through ONE `_applyLevelKit`, so counting copies of this line
+  // counts the DUPLICATION rather than the behaviour — build 1280's lesson, and the reason the old count of
+  // three could have gone green against three copies that had quietly diverged. It asserts the property now,
+  // which is stronger: boot carries it, the one shared applier carries it, and both loaders reach that
+  // applier.
+  eq((src.match(/_wepApplyStats\(k, wd\.st\)/g) || []).length, 2, 'boot and the one shared applier apply the sheet');
+  assert(/_wepApplyStats\(k, wd\.st\)/.test(extractFunction('_applyLevelKit')) &&
+         (src.match(/_applyLevelKit\(level\);/g) || []).length === 2,
+    '...and both level paths reach it through the one applier');
   assert(/_wepApplyStats\(k, wd\.st\)/.test(src) && /_wepApplyStats\(curWep, keep\)/.test(src),
     'and the editor writes through the same function');
 }

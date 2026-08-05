@@ -28,8 +28,14 @@ const drive = (nm) => new Function(
   assert(/const GUN_BASE_NAME = \{\}; for\(const _k in WEAPONS\) GUN_BASE_NAME\[_k\] = WEAPONS\[_k\]\.name;/.test(src),
     'the factory names are captured at boot, before anything can rewrite them');
   eq((src.match(/_wepApplyName\(k, wd\.nm\);/g) || []).length, 2,
-    'BOTH loaders (boot restore + restoreLevel/net) apply the authored name');
-  assert(/else \{ _wepApplyStats\(k, null\); _wepApplyName\(k, null\); \}/.test(src),
+    'boot and the one shared applier apply the authored name');
+  // build 1401: the two loaders' weapons blocks had drifted, and only the CLIENT applied the name — so a
+  // renamed weapon reverted to its factory name the moment a creator saved and reopened their own level.
+  // One block now, reached by both.
+  assert(/_wepApplyName\(k, wd\.nm\);/.test(extractFunction('_applyLevelKit')) &&
+         (src.match(/_applyLevelKit\(level\);/g) || []).length === 2,
+    'and it is the shared applier both level loaders call');
+  assert(/_wepApplyStats\(k, null\); _wepApplyName\(k, null\); \}/.test(extractFunction('_applyLevelKit')),
     'a weapon with no entry plays factory — name included (loading level B after renamed level A cannot leak the sword)');
   assert(/const nmChg = \(typeof GUN_BASE_NAME!=='undefined' && GUN_BASE_NAME\[k\] && w\.name!==GUN_BASE_NAME\[k\]\);/.test(src) &&
          /nm: nmChg \? w\.name : undefined/.test(src),

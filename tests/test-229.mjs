@@ -26,7 +26,10 @@ assert(/reloading = true; const tok = \+\+_reloadTok; SFX\.reload\(\); triggerGu
 
 // persistence: serialized + restored on all three weapons paths
 assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg \|\| w\.noMuzzle \|\| st \|\| nmChg\) acc\[k\]=\{ model:w\.model\|\|'', view:w\.view\|\|null, clips:w\.clips\|\|null, dmg: dmgChg \? w\.dmg : undefined, noMuzzle: w\.noMuzzle \? true : undefined, st, nm: nmChg \? w\.name : undefined \}/.test(src), 'clips (and changed damage + muzzle toggle + the 1190 stat sheet + the 1240 name) serialized');
-assert((src.match(/Object\.assign\(_wepClipBlank\(k\), wd\.clips\)/g)||[]).length>=3, 'clips restored at boot + net-load + restoreLevel (fists-aware defaults)');
+// build 1401: the two level loaders share ONE weapons block, so this counts boot + that block rather than
+// one copy per path — counting copies was counting the duplication (build 1280).
+assert((src.match(/Object\.assign\(_wepClipBlank\(k\), wd\.clips\)/g)||[]).length>=2, 'clips restored at boot and in the shared level applier (fists-aware defaults)');
+assert(/Object\.assign\(_wepClipBlank\(k\), wd\.clips\)/.test(extractFunction('_applyLevelKit')) && (src.match(/_applyLevelKit\(level\);/g)||[]).length===2, '...which both level loaders call');
 
 // editor picker
 assert(/if\(editorActive==='gun'\)\{   \/\/ animation mapping/.test(src), 'gun tab has the clip mapping UI');

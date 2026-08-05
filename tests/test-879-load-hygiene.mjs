@@ -18,7 +18,10 @@ assert(/pickupsOn = \(level\.pickupsOn !== false\);/.test(restore), 'pickupsOn r
 assert(/lootSpots = Array\.isArray\(level\.loot\)/.test(restore), 'loot spots restore');
 assert(/selPickup=-1; if\(typeof refreshPickupMarkers==='function'\) refreshPickupMarkers\(\);/.test(restore), 'markers rebuilt + stale selection dropped');
 /* build 1325: sanitised on the way in — an item name reached openInspect's innerHTML. */
-assert(/invCatalog = _sanInvItems\(level\.invItems\);/.test(restore), 'inventory catalog restores');
+/* build 1401: moved into the shared `_applyLevelKit`, which is what finally gave the MULTIPLAYER loader one
+   too — it had never read invItems at all. */
+assert(/invCatalog = _sanInvItems\(level\.invItems\);/.test(extractFunction('_applyLevelKit')) && /_applyLevelKit\(level\);/.test(restore),
+  'inventory catalog restores');
 // an ABSENT pickups array must CLEAR (the ": []" arm) — that is the anti-bleed half of the fix
 assert(/pickupSpots = Array\.isArray\(level\.pickups\) \? level\.pickups\.map[\s\S]{0,300}\)\) : \[\];/.test(restore), 'no pickups in the level = no pickups after load');
 

@@ -80,7 +80,14 @@ const { _sanInvItems, _sanKeyNames, _sanPickupModels, _sanStr } = rig;
 {
   eq((src.match(/_sanInvItems\(/g) || []).length, 3, 'invItems: boot + restoreLevel + the definition');
   assert(/try\{ invCatalog = _sanInvItems\(savedLevel && savedLevel\.invItems\); \}catch\(e\)\{\}/.test(src), 'boot sanitises');
-  assert(/invCatalog = _sanInvItems\(level\.invItems\)/.test(extractFunction('restoreLevel')), 'restoreLevel sanitises');
+  // build 1401: the catalog moved into the shared `_applyLevelKit`, which is what finally gave the
+  // MULTIPLAYER loader one too — it had never read invItems at all, so a host's `give` of a level-defined
+  // item landed on a client that had never heard of it.
+  assert(/invCatalog = _sanInvItems\(level\.invItems\)/.test(extractFunction('_applyLevelKit')),
+    'the level paths sanitise, in the one applier');
+  assert(/_applyLevelKit\(level\);/.test(extractFunction('restoreLevel')) &&
+         /_applyLevelKit\(level\);/.test(extractFunction('loadLevelFromNet')),
+    '...which BOTH of them call');
   assert(/keyNames = _sanKeyNames\(savedLevel && savedLevel\.keyNames\)/.test(src), 'and key names at boot');
   assert(/keyNames = _sanKeyNames\(level\.keyNames\)/.test(extractFunction('loadLevelFromNet')),
     'and over the WIRE, which is the path where the author is definitely a stranger');
