@@ -16,14 +16,36 @@
 //    seconds.
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(here, '..', '..');
 
+// build 1389: a probe staged from a ROLLED-BACK tree boots fine, measures fine, and answers a question
+// about code that is no longer in the repo. It happened at build 1388 — `mkprobe` ran inside a container
+// rollback window and every measurement through that staging was about build 1381, silently. The staged
+// build is stamped by mkprobe; this refuses to run when it disagrees with the repo, because a wrong answer
+// delivered confidently is the most expensive failure this rig has.
+export function assertFreshStaging(dir) {
+  if (process.env.PROBE_SKIP_STAMP) return;
+  const stampFile = path.join(dir, 'BUILD');
+  const repoHtml = path.join(REPO, 'breach.html');
+  if (!fs.existsSync(repoHtml)) return;
+  const want = (fs.readFileSync(repoHtml, 'utf8').match(/const BUILD_VERSION = '([^']*)'/) || [, null])[1];
+  if (!want) return;
+  const have = fs.existsSync(stampFile) ? fs.readFileSync(stampFile, 'utf8').trim() : null;
+  if (have === want) return;
+  throw new Error(
+    'STALE PROBE STAGING: ' + dir + ' holds "' + (have || 'no stamp — rebuild it') + '" but the repo is "' +
+    want + '".\n  Re-run:  node tools/probe/mkprobe.mjs ' + dir +
+    '\n  (set PROBE_SKIP_STAMP=1 only if you are deliberately measuring an OLD build.)');
+}
+
 export async function withGame(fn, opts = {}) {
   const dir = opts.dir || path.join(REPO, 'probe-out');
+  assertFreshStaging(dir);
   const port = opts.port || 8899;
   const server = spawn('python3', ['-m', 'http.server', String(port)], { cwd: dir, stdio: 'ignore' });
   const browser = await chromium.launch({ args: [

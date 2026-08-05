@@ -967,6 +967,65 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A probe cannot silently measure a build that is not in the tree (build 1389 — tooling)
+
+This container has now rolled back **fifteen** times, and `mkprobe` reads whatever `breach.html` happens to
+be on disk. So a rollback landing between a build and its probe produces a staging of an OLD build that
+boots fine, renders fine, and answers a question about code that is no longer in the tree.
+
+**It happened during 1388's session.** A probe staged inside a rollback window reported
+`_odBumpU is not defined` about a constant the tree had declared five builds earlier;
+`grep -c _odBumpU probe-out/probe.html` returned **0** against 3 in `breach.html`, and the staging was 18 KB
+smaller and a minute older. Everything measured through it was about build 1381.
+
+**The tell was luck.** The rollback happened to be deep enough to remove an identifier the probe named, so
+it threw. One build shallower and every number would have looked perfectly plausible and been wrong — which
+is the failure this rig can least afford, because a probe is how everything here gets decided.
+
+`docs/frames/README.md` has said *"know what BUILD you are measuring — stamp it or diff it"* since build
+1382. This is that, enforced rather than remembered: `mkprobe` writes the `BUILD_VERSION` **out of the very
+text it staged** (not out of the repo separately, which would let the two disagree) into `probe-out/BUILD`
+and prints it; `driver.mjs` refuses to launch when it disagrees with the repo.
+
+Four things about the guard, each deliberate:
+- **It runs on the first line of `withGame`**, ahead of the file server and the browser launch, so a stale
+  run costs a second instead of fifteen minutes and a wrong conclusion.
+- **It names the fix.** *"holds build 1381, the repo is build 1388 — re-run: node tools/probe/mkprobe.mjs
+  <dir>"*. A guard that reports a mystery is a guard people disable.
+- **`PROBE_SKIP_STAMP=1` is an explicit opt-out**, because measuring an OLD build on purpose is a real thing
+  to want (an A/B against a previous version), and the only alternative to an escape hatch is people
+  deleting the check.
+- **It degrades rather than blocking**: no `breach.html`, or one with no `BUILD_VERSION`, is allowed
+  through. A rig that fails closed on a missing file stops every probe in the repo.
+
+`test-1389` executes the real exported guard through all five branches in a temp directory — including that
+a MATCHING stamp does not throw, which is the case that would otherwise break every probe here.
+
+### And a functional smoke test, because the Node harness structurally cannot play the game
+
+`tools/probe/smoke.mjs`. Builds 1386/1387/1388 each patched shaders that every prop and both engine surfaces
+compile against, and **the failure mode of a bad shader patch in this engine is silent** — a plausible frame
+with a subsystem missing from it. 17 checks against the live game: `glGetError`, program diagnostics, draw
+calls and triangle count, that the frame is not black and carries real tonal content, that props/colliders/
+lights are seated, that firing spends a round and `damageProp` reduces health, that an enemy spawns with a
+mesh in the scene, that the editor opens/switches/closes, that the level serializes and re-parses carrying
+the authored normal map, and that the rung ladder moves both relief amplitudes and returns. **17/17.**
+
+Two findings fell out of writing it, neither of which was what it was looking for:
+- **`propModels` carries NULL HOLES** — build 1167's asset-failure path leaves one where a model url 404s.
+  Anything that walks that array unguarded throws, which is how this probe first died. The stock level has
+  none, and the smoke test now asserts that.
+- **The stock level has ZERO breakable props.** `damageProp`, `shatterProp`, the debris, the break sounds
+  (1314) and the per-prop impact audio (1305) are all shipped and the first level a player ever sees uses
+  none of them — you can shoot everything in the opening scene and nothing ever breaks. That is content, not
+  code, and it is a gameplay-feel gap worth its own pass.
+
+### A backtick inside a template literal, for the fourth time
+
+`// through \`damageProp\` directly` inside a `P(\`...\`)` string closed the template. CLAUDE.md records
+this under builds 1328, 1342 and 1357, and this probe became the fourth. **Write prose comments inside a
+template literal with no backticks at all** — the habit, not the vigilance, is what fixes it.
+
 ## The deck gets relief off its own colour, for no extra fetches (build 1388)
 
 Build 1387 gave the two ENGINE surfaces an authored normal map correlated with their albedo — and the census
