@@ -138,7 +138,9 @@ assert(ALB > 0 && ALB < 0.5, 'the albedo swing is a modest fraction (' + ALB + '
   assert(_f(0) > 0 && _f(-3) > 0 && isFinite(_f(1e9)), 'a degenerate or absurd span is clamped, never 0 or infinite');
   assert(/applyProcSurface\(mat, span, alb\)/.test(src) || /function applyProcSurface\(mat, span, alb\)/.test(src),
     'applyProcSurface takes the opt-in');
-  assert(/if\(alb && albedoDetailWanted\(mat\)\)\{ applyObjDetail\(mat, _albDetailFreq\(span\), true\);/.test(src),
+  // build 1384 put the texture-modulation opt-in on the same line, so this asserts the CALL rather than
+  // the whole statement. Same intent: the frequency comes from the span applyProcSurface was handed.
+  assert(/applyObjDetail\(mat, _albDetailFreq\(span\), true\);/.test(src),
     '...and uses the span it was already given');
   // primitives opt in; the two engine surfaces deliberately do not (they carry a real albedo since 1378)
   assert(/applyProcSurface\(new THREE\.MeshStandardMaterial\(\{ color:PRIM_DEFAULT_COLOR[\s\S]{0,200}\}\), 1, true\)/.test(src),
