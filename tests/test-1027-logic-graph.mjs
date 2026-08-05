@@ -27,8 +27,10 @@ function makeEnv(graph){
     /* build 1318: the trace hooks. Inert stubs here — this harness is about the graph's BEHAVIOUR, and
        test-1318 owns proving that the recorder records. */
     + 'function _lgTraceNode(){} function _lgTraceWire(){}\n'
-    /* build 1402: the fields that name something interpolate `{var}` through _lgName */
-    + 'const LG_NAME_MAX = 64;\n' + extractFunction('_lgName', src) + '\n';
+    /* build 1402: the fields that name something interpolate `{var}` through _lgName
+       build 1403: and the emit node routes through _lgEmit, which reports an event nobody hears */
+    + 'const LG_NAME_MAX = 64;\n' + extractFunction('_lgName', src) + '\n'
+    + extractFunction('_lgEventHeard', src) + '\n' + extractFunction('_lgEmit', src) + '\n';
   const env = new Function('GRAPH','NET','gameOn','editorOpen','_applySignalAction','flashToast','gameWon','applyEnemyDamageToSelf','toast','console',
     glue + fns + '\nreturn { start:logicStart, event:logicEvent, tick:updateLogic, vars:()=>logicVars, graph:()=>logicGraph, sanitize:_sanitizeLogic };')(
     graph, { mode:'off' }, true, false,
@@ -161,7 +163,11 @@ const W = (a,o,b,i)=>({ a, o, b, i:i||'in' });
 }
 
 // ---- wiring into the game ----
-assert(/if\(s\.do==='emit'\)\{ if\(typeof logicEvent==='function'/.test(src), "any prop signal can pulse the graph (do:'emit')");
+// build 1403: the two AUTHORED emit sites route through _lgEmit — a computed name, and a report when no
+// `On event` node listens. What this has always asserted, that a prop signal can pulse the graph, is
+// unchanged; _lgEmit's last line is logicEvent.
+assert(/if\(s\.do==='emit'\)\{ if\(typeof _lgEmit==='function'/.test(src), "any prop signal can pulse the graph (do:'emit')");
+assert(/logicEvent\(nm\);/.test(extractFunction('_lgEmit')), '...and _lgEmit still fires it');
 assert(/\['emit','\\u2192 Logic event'\]/.test(src), 'the signal editor offers the new verb');
 assert(/logic event name \(e\.g\. platePressed\)/.test(src), '...with a name field');
 assert(/if\(typeof logicStart==='function'\) logicStart\(\);/.test(src), 'every match start resets vars/timers and fires On-start chains');

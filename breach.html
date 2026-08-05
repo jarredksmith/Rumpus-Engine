@@ -12797,6 +12797,23 @@ function logicEvent(name){   // the bridge IN: prop signals (do:'emit') and 'emi
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   _lgFireEvents('event', String(name||'').trim());
 }
+// build 1403: the AUTHORED emit — the two places a creator types an event name to FIRE it. An event nobody
+// listens for did exactly nothing, silently, which is the same defect build 1214 fixed for tags: a graph
+// that looks correct and never runs is the hardest kind to debug, and a computed name makes it likelier
+// (a `lane{n}` with n unset fires `lane0`). Everything else that fires an event — a HUD button, a trigger
+// zone, an action bind — names a fixed event per control and keeps calling `logicEvent` directly.
+function _lgEventHeard(name){
+  if(typeof logicGraph==='undefined' || !logicGraph || !Array.isArray(logicGraph.nodes)) return true;
+  for(const n of logicGraph.nodes){ if(n && n.type==='event' && String((n.p&&n.p.name)||'').trim()===name) return true; }
+  return false;
+}
+function _lgEmit(name){
+  const nm = String(name==null?'':name).trim();
+  if(!nm){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('An "emit" has no event name, so nothing can hear it.'); return; }
+  if(!_lgEventHeard(nm) && typeof _noteLogicFailure==='function')
+    _noteLogicFailure('An "emit" sends the event "'+nm+'", but no "On event" node listens for it.');
+  logicEvent(nm);
+}
 function logicStart(){       // a match begins: fresh state, seed the repeating timers, fire 'start'
   logicVars={}; logicLists={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;   /* build 1269 */
   if(typeof _persistSeed==='function') _persistSeed();       // build 1075: carried values come back before anything runs
@@ -12948,7 +12965,11 @@ function _lgPulse(id, pin){
       for(let i=0;i<4;i++){ r-=w[i]; if(r<0){ _lgFollow(id,i); break; } }
       break; }
     case 'once': { if(pin==='reset'){ st.done=false; break; } if(st.done) break; st.done=true; _lgFollow(id,0); break; }
-    case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
+    // build 1403: an event name is a NAME, which build 1402's own rule covers and this site did not — a
+    // booth with several lanes wants `emit lane{n}_done`. The LISTENER is deliberately still a literal: an
+    // `On event` name is MATCHED, not computed, and a listener whose own name moved with a variable would
+    // answer a different question every time the graph happened to evaluate it.
+    case 'emit': { _lgEmit(_lgName(p.name)); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
     case 'do': { const _verb=p.verb||'toggle', _tgt=_lgName(p.target);   /* build 1402: `plate{n}` — resolved BEFORE the tag check, so a computed tag that resolves to nothing is reported by its REAL name */
       if(_LG_TAG_VERBS.has(_verb) && _tgt && _tgt!=='this' && typeof _lgTagExists==='function' && !_lgTagExists(_tgt)) _noteLogicFailure('A "'+_verb+'" action targets the tag "'+_tgt+'", but no placed prop has that tag.');
       try{ _applySignalAction({ do:_verb, target:_tgt, prefab:_lgName(p.prefab),   /* build 1277: spawnprop was dead twice — the forwarded object dropped its prefab name */
@@ -13916,7 +13937,7 @@ function _applySignalAction(s, src){
     if(s.do==='objective'){ if(typeof setGoal==='function') setGoal(s.text||''); return; }   // build 692: update the on-screen objective; no target needed
     if(s.do==='checkpoint'){ if(typeof setCheckpoint==='function') setCheckpoint(); return; }   // build 693: drop a respawn checkpoint at the player; no target needed
     if(s.do==='sound'){ if(s.sound && typeof playSample==='function'){ if(!playSample(s.sound) && typeof loadSound==='function') loadSound(s.sound); } return; }   // build 750: play a custom audio clip (light switch / button click / chime). No target needed.
-    if(s.do==='emit'){ if(typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(String(s.text||'').trim()); return; }   // build 1027: pulse the logic graph's matching 'event' nodes. No target needed.
+    if(s.do==='emit'){ if(typeof _lgEmit==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgEmit(_lgName(s.text)); return; }   // build 1027: pulse the logic graph's matching 'event' nodes. No target needed. Build 1403: computed, and reported when nothing listens.
     // build 1277: THE SIX PROP VERBS WERE NEVER IN THIS LIST. Builds 1170/1216/1258 implemented
     // showprop/hideprop/moveprop/delprop/pushprop/spawnprop in _applyWorldAction and offered all six in
     // the Do node's dropdown — but _applyWorldAction has exactly ONE call site, this one, and the list
@@ -33255,7 +33276,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1402 · 2026-08-05';
+const BUILD_VERSION = 'build 1403 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
