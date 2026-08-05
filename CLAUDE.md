@@ -1944,6 +1944,42 @@ through a door, and that needs a level-change message of its own. And a *seamles
 Half-Life sense — no cover at all, the next room streamed in behind you — is a different build; this one
 shows a beat, because the engine tears the scene down and rebuilds it.
 
+## The target kept wearing the hit (build 1395)
+
+Reported from play: *"when a prop is set as something you can blow up/break (target practice style), when it
+reloads the prop, the prop has a red tint to it."*
+
+`damageProp` paints a 140 ms orange impact flash — `0x661a00` at intensity 0.8 — and stamps
+`userData._flash`. `updateFragments` decays it, **by walking `dynamicProps`.** Build 1390's static shootable
+target is not in that list, so the flash was set on every hit and nothing ever cleared it: a 140 ms effect
+became permanent, and build 1391's reset brought the target back still wearing it.
+
+**This is build 1392's defect for the FOURTH time.** That build found three consumers of *"which props can be
+hurt"* still asking the dynamic list — the bullet walk, the turret walk, the melee block — and put them
+behind one predicate. This is the fourth, and it is exactly why `damageableProps()` is a function rather
+than three inline conditions: the fix is to call the thing that already answers the question.
+
+The restore also clears the flash outright, which is not redundant — the decay only runs while the prop is
+alive, and a target that shattered *mid-flash* is invisible with the tint still on it.
+
+Measured with a DYNAMIC prop beside the target as the control, because a static target that cleared while
+the control did not would mean the probe rather than the fix:
+
+```
+STATIC    before #000000 @0  ->  hit #661a00 @0.8  ->  6 frames on #000000 @0
+DYNAMIC   before #000000 @0  ->  hit #661a00 @0.8  ->  6 frames on #000000 @0     (identical)
+REPORT    destroyed mid-flash (#661a00, invisible) -> reset -> #000000 @0, flash cleared, hp 500/500
+GLOW      an authored #38f5b5 @3 survives hit -> destroy -> reset and comes back as itself
+```
+
+The setup row is the other half of the argument: `staticInDyn: false, inDamageable: true` — the target was
+outside the list the decay used to walk and is inside the one it walks now.
+
+**And the test's first draft was failed by my own comment.** It counted the bare name `dynamicProps` in the
+decay block, which the comment explaining what it *used to* walk satisfies. A pin must not be satisfiable by
+prose and must not be defeatable by prose either; it asserts the LOOP now. Third sighting — builds 164 and
+1393 record the same trap.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

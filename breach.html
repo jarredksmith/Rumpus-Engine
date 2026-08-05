@@ -33012,7 +33012,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1394 · 2026-08-05';
+const BUILD_VERSION = 'build 1395 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34915,8 +34915,20 @@ function spawnFragmentsVisual(center, size, colorHex, count, sizeFrac, shape){
 // Advance fragment lifetimes: sync mesh from body, fade out near end of life, then dispose.
 function updateFragments(){
   // decay the brief orange impact flash on damaged-but-surviving props
+  //
+  // build 1395 — REPORTED FROM PLAY: "when a prop is set as something you can blow up/break (target
+  // practice style), when it reloads the prop, the prop has a red tint to it."
+  //
+  // This walked `dynamicProps`, and build 1390's static shootable target is not in that list. So
+  // `damageProp` set `_flash` and its 0x661a00 emissive on every hit and NOTHING EVER CLEARED IT: the
+  // 140 ms impact flash became permanent, and a reset target came back still wearing it.
+  //
+  // That is build 1392's defect for the FOURTH time — the bullet walk, the turret walk and the melee block
+  // were the first three, and every one of them was a consumer of "which props can be hurt" that still
+  // asked the dynamic list. `damageableProps()` is the answer to that question and this is now its fifth
+  // caller, which is the whole reason it exists as a function rather than as three inline conditions.
   const now0 = performance.now();
-  for(const o of dynamicProps){
+  for(const o of damageableProps()){
     if(o.userData._flash){ const a = now0 - o.userData._flash;
       if(a > 140){ o.userData._flash = 0; const _em=o.userData.emit; o.traverse(m=>{ if(m.isMesh && m.material && m.material.emissive){ if(_em){ m.material.emissive.setHex(_em.c); m.material.emissiveIntensity = _em.i; } else { m.material.emissive.setHex(0x000000); m.material.emissiveIntensity = 0; } } }); }
     }
@@ -35145,6 +35157,14 @@ function _restoreDestroyedProp(o){
   if(!o || !o.userData._destroyed) return false;
   const home = o.userData._destroyHome;
   o.userData._destroyed=false; o.userData._shattered=false;
+  /* build 1395: clear the impact flash outright rather than relying on the decay having run. A reset means
+     "as it was authored", and a target that shattered mid-flash would otherwise come back tinted for the
+     one frame before updateFragments catches it — or forever, if the decay ever stops covering it again. */
+  o.userData._flash = 0;
+  { const _em = o.userData.emit;
+    o.traverse(m=>{ if(m.isMesh && m.material && m.material.emissive){
+      if(_em){ m.material.emissive.setHex(_em.c); m.material.emissiveIntensity = _em.i; }
+      else { m.material.emissive.setHex(0x000000); m.material.emissiveIntensity = 0; } } }); }
   if(home){ o.position.copy(home.p); o.quaternion.copy(home.q); }
   o.visible=true; if(!o.parent) scene.add(o);
   if(o.userData.modelLights && typeof adoptModelLights==='function') adoptModelLights(o);   // build 1157: re-register, never re-scale
