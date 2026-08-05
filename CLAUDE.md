@@ -967,6 +967,72 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The macro layer, and the frames that were judged without a texture (build 1382)
+
+A cold rendering critic scored the engine **3/10 vs AAA** and its blind verdict named ONE tell: *"regular,
+unbroken texture tiling on the two largest surfaces in frame."* Verified, and it is an interaction between
+the two builds before it — **1378 and 1379 excluded each other from the surfaces that most needed both.**
+1378 gave the ground and boundary walls a real albedo at a 4 m tile; `albedoDetailWanted` refuses a
+material that has a `map`, so 1379's break-up layer then skipped them. The result was the worst of the
+three states: a small tile pasted flat, edge to edge, ~35 times across 140 m, with nothing on top of it.
+
+1379's gate was right about what it was written for — two detail systems at the SAME scale is double grain
+— and that reason does not cover a MACRO layer, which runs at several times the tile period and breaks the
+repeat rather than competing with the texture's own frequency.
+
+**The period is derived from the thing it hides, and must not be an integer multiple of it.** `MACRO_TILE_MUL
+= 2.75` against `SURF_TILE_M`: an integer multiple lands on the tile boundary every period and *strengthens*
+the repeat, which is the opposite of the point.
+
+**The frequency semantics are NOT the primitive path's, and this is the trap the build was specified around.**
+`_albDetailFreq(span) = ALB_DETAIL_PER_M x span` assumes a UNIT local box scaled by the object. `floorMat`'s
+plane is a real `PlaneGeometry(ARENA*2, ARENA*2)` and a boundary wall is `BoxGeometry(ARENA*2, H, 2)` —
+neither is scaled — so `vOdPos` spans 140 m and the frequency there is `1 / period`. The primitive form
+would have been ~1000x off, and would have looked like nothing happening rather than like an error.
+
+### The amplitude, measured — and the first guess was sub-threshold
+
+World-only window, world paused, control returning to exactly zero at every threshold:
+
+```
+              >1      >2      >3      >4      >6      >9     (code values moved)
+control      0.0%    0.0%    0.0%    0.0%    0.0%    0.0%
+0.13        10.3%    5.6%    1.8%    0.6%    0.0%    0.0%
+0.30        14.8%   11.5%    9.1%    7.1%    3.4%    0.8%
+```
+
+0.13 was the first guess and it is **sub-threshold**: almost all of it is one to three code values, which
+cannot break a tile a viewer can see. Coverage barely grows above it (15.7% -> 19.2% of pixels touched), so
+what is bought above 0.13 is AMPLITUDE — which is the thing that actually hides a repeat. 0.30 is also,
+independently, where build 1379's sweep put the knee for the same kind of term.
+
+### Chain, never clobber — and the probe is what found it
+
+`applyObjDetail` ASSIGNED over `mat.onBeforeCompile`. Harmless for the UV-less imports 1145 wrote it for
+(they carry no other patch) and not harmless the moment it met `floorMat`, which has had its own handler for
+the paint splat since build 1139. Probed: **the floor came back UNPATCHED while the wall patched**, because
+the splat is assigned 500 lines further down and simply won. Build 1286 recorded this exact rule for the
+bake's patch and it never reached here.
+
+So the handler chains its predecessor (guarded by `hasOwnProperty`, not truthiness — three declares a no-op
+on the PROTOTYPE, so a truthiness test chains three's own empty function forever), inside a `try`, and the
+program cache key COMPOSES: a material carrying both patches compiles a different program from one carrying
+only this, and a single key would serve one of them the other's shader. The floor's call also moved below
+the splat's assignment, because chaining only helps the patch that runs second.
+
+### Every frame between 1378 and 1382 was judged on a ground with no albedo on it
+
+`tools/probe/mkprobe.mjs` staged `breach.html` and the vendored scripts and **not `img/`**. The stock floor
+and wall textures are served at a path relative to the game, so they 404'd, `_loadSurfaceMap`'s error branch
+left `floorMat.map` NULL, and nothing errored. The probe reported `floorHasMap: false` — on a build whose
+whole subject was that texture.
+
+That silently invalidates the visual half of builds 1378-1381's verification. What survives untouched is
+everything measured in Node against the real files (1378's compensation is re-derived from the shipped PNGs,
+1379's neutrality from the shipped GLSL, 1380's scale from the real shadow camera) and 1380's shadow
+measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
+does not fail — it quietly photographs a different game.**
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

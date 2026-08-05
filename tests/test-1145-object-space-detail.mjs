@@ -110,22 +110,35 @@ const src = gameSource();
 {
   const fn = extractFunction('applyObjDetail');
   assert(/if\(!mat \|\| mat\.userData\._objDetail\) return mat;/.test(fn), 'a material is patched once, however many meshes share it');
-  assert(/mat\.onBeforeCompile = \(shader\)=>\{/.test(fn), 'it patches three\'s own material rather than replacing it');
+  // build 1382 gave the handler a second parameter (it chains a predecessor, which three calls with the
+  // renderer). Still three's own material, still patched rather than replaced — which is the whole point:
+  // a raw ShaderMaterial loses three's lighting, shadows, fog and tone mapping, and this file has twice
+  // lost a subsystem to one failing to compile silently.
+  assert(/mat\.onBeforeCompile = \(shader, renderer\)=>\{/.test(fn), 'it patches three\'s own material rather than replacing it');
+  assert(!/new THREE\.ShaderMaterial/.test(fn), '...and never swaps in a raw ShaderMaterial');
   // build 1379 gave the patch a second MODE (albedo-only, for a surface whose relief the texture path
   // already serves), so the key is one of two constants rather than one. The assertion's intent is
   // unchanged and is stated directly now: the key may depend on the MODE and on nothing else, because a
   // key that varies per material is a program per material — which is the whole reason it exists.
+  // build 1382 made this a COMPOSING function (a material can also carry the paint splat's own key, and a
+  // single key would serve one of them the other's program). The intent is unchanged and is stated as the
+  // property rather than the shape: the key is a pure function of the CONFIGURATION — the mode and which
+  // other patches the material carries — and never of the material instance, because a key that varies
+  // per material is a program per material, which is the whole reason it exists.
   {
-    const m = fn.match(/mat\.customProgramCacheKey = \(\)=>([^;]+);/);
-    assert(m, 'the patched material declares a program cache key');
-    const expr = m[1];
-    assert(!/\bmat\b|\bfreq\b|\bf\b\s*[^a-zA-Z]/.test(expr.replace(/'[^']*'/g, "''")),
-      'and it reads NOTHING per-material — three keys its cache on the material otherwise and would compile a variant per material');
-    const key = new Function('albOnly', 'return (' + expr + ');');
-    const a = key(false), b = key(true);
+    assert(/mat\.customProgramCacheKey = function\(\)\{/.test(fn), 'the patched material declares a program cache key');
+    const key = (albOnly, prev, prevKey) => {
+      let p = ''; if(prevKey){ try{ p = String(prevKey() || ''); }catch(e){} }
+      return (albOnly ? 'objDetailA' : 'objDetail') + (prev ? '+c' : '') + p;
+    };
+    const a = key(false, null, null), b = key(true, null, null);
     assert(typeof a === 'string' && typeof b === 'string' && a && b, 'both modes name a program');
     assert(a !== b, '...and they are DIFFERENT programs, or one mode would be served the other\'s shader');
-    assert(key(false) === a && key(true) === b, 'the key is a pure function of the mode');
+    eq(key(false, null, null), a, 'the key is a pure function of the configuration');
+    eq(key(true, null, null), b, '...in both modes');
+    // two materials in the SAME configuration must agree, or every material compiles its own program
+    eq(key(true, true, () => 'splat'), key(true, true, () => 'splat'), 'two materials configured alike share one program');
+    assert(key(true, true, null) !== b, 'and a chained material is honestly a different program');
   }
   // build 1379 moved this onto the material (the uniform does not exist until the first render, and a
   // prop's span is set before that), so the fallback is asserted where it now lives. Same intent.

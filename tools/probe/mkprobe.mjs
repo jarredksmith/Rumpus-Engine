@@ -53,4 +53,15 @@ for (const f of ['peerjs.min.js', 'fflate.min.js', 'rapier3d-compat.js']) {
   if (fs.existsSync(src)) fs.copyFileSync(src, path.join(out, f));
 }
 
+// build 1382: the game's own ASSET DIRECTORIES have to come too. `img/tex/` holds the stock level's floor
+// and wall albedo (build 1378), served at a path relative to the game — so a probe staging without it
+// 404s both textures and `_loadSurfaceMap` leaves `floorMat.map` NULL. That is silent: the frame renders,
+// nothing errors, and the surfaces just look like they did before the build that added them. Every
+// capture between 1378 and this one was judged on a ground with no albedo on it.
+for (const d of ['img']) {
+  const from = path.resolve(repo, d);
+  if (!fs.existsSync(from)) continue;
+  fs.cpSync(from, path.join(out, d), { recursive: true });
+}
+
 console.log('probe.html written to ' + out);

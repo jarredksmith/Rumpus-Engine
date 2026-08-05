@@ -9940,6 +9940,17 @@ const OBJ_DETAIL_BUMP = 0.35;    // normal perturbation, in gradient units
 // on its own — i.e. the exposure movement this term causes is smaller than the scene's own settling at
 // every amplitude, which is the neutrality claim measured on real pixels rather than argued.
 const OBJ_DETAIL_ALB = 0.30;     // +/- fraction it swings the authored albedo, centred on 1.0
+// MEASURED on the real textured ground, world-only window, world paused, control returning to exactly
+// zero at every threshold:
+//                  >1      >2      >3      >4      >6      >9      (code values moved)
+//     control      0.0%    0.0%    0.0%    0.0%    0.0%    0.0%
+//     0.13        10.3%    5.6%    1.8%    0.6%    0.0%    0.0%
+//     0.30        14.8%   11.5%    9.1%    7.1%    3.4%    0.8%
+// 0.13 was the first guess and it is SUB-THRESHOLD: almost all of it is one to three code values, which
+// cannot break a tile a viewer can see. The coverage barely grows above it (15.7% -> 19.2% of pixels
+// touched) — what is bought above 0.13 is amplitude, which is the thing that actually hides a repeat.
+// 0.30 is also, independently, where build 1379's sweep put the knee for the same kind of term.
+const MACRO_DETAIL_ALB = 0.30;
 // Cycles per WORLD METRE for a primitive. The object-space field is locked to the mesh (1145's reason:
 // world-space noise SWIMS as a prop is carried), but its DENSITY has to be a physical size or a 22 m deck
 // and a 1 m crate read as two differently-zoomed photographs of one material — which is exactly the fault
@@ -9952,6 +9963,32 @@ const OBJ_DETAIL_ALB = 0.30;     // +/- fraction it swings the authored albedo, 
 // evaluation per fragment. At 0.9 the broad octave is ~1.1 m — the scale of an architectural panel, which
 // is what reads across a room — and the field's second octave (3.1x, ~36 cm) is what carries it up close.
 const ALB_DETAIL_PER_M = 0.9;
+// ---- build 1382: MACRO VARIATION, over a surface that already has a texture ----
+// A cold rendering critic scored the engine 3/10 against AAA and named ONE tell in its blind verdict:
+// "regular, unbroken texture tiling on the two largest surfaces in frame." Verified — build 1378 gave the
+// ground and the boundary walls a real albedo at a 4 m tile, and 1379's break-up layer then EXCLUDED them,
+// because `albedoDetailWanted` refuses a material that has a map. So the two surfaces that are most of
+// every frame ended up with neither: a small tile pasted flat, edge to edge, ~35 times across 140 m.
+//
+// 1379's gate was written for a real reason — two detail systems on one surface is double grain — and that
+// reason does not cover this. A MACRO layer is a different technique from a detail layer: it runs at
+// several times the TILE period, so it breaks the repeat rather than competing with the texture's own
+// frequency. It is the same exposure-neutral multiplier, at a different scale.
+//
+// The period must NOT be an integer multiple of SURF_TILE_M, or it lands on the repeat it exists to hide
+// and reinforces it. 2.75x is deliberately awkward.
+const MACRO_TILE_MUL = 2.75;
+const MACRO_PERIOD_M = SURF_TILE_M * MACRO_TILE_MUL;   /* ~11 m against a 4 m tile */
+// Applied to a material whose geometry is in METRES and unscaled — `floorMat`'s plane is a real
+// PlaneGeometry(ARENA*2, ARENA*2) and a boundary wall is BoxGeometry(ARENA*2, H, 2), neither scaled — so
+// `vOdPos` spans 140 and the frequency is 1/period. The PRIMITIVE path's `_albDetailFreq` assumes a UNIT
+// local box scaled by the object and would be three orders of magnitude off here, which would look like
+// nothing happening rather than like an error.
+function applyMacroDetail(mat, periodM, amp){
+  if(!mat || !mat.isMeshStandardMaterial || mat.userData._objDetail) return mat;
+  mat.userData._odAmp = (amp > 0) ? amp : MACRO_DETAIL_ALB;
+  return applyObjDetail(mat, 1 / Math.max(0.5, +periodM || MACRO_PERIOD_M), true);
+}
 // One value-noise field, hashed rather than sampled: no texture, no UVs, no upload.
 const _OBJ_NOISE_GLSL = [
   'float _odHash(vec3 p){ p = fract(p*0.3183099 + vec3(0.71,0.113,0.419)); p *= 17.0;',
@@ -9985,11 +10022,22 @@ function applyObjDetail(mat, freq, albOnly){
   // exactly the surfaces it was meant to be visible on. A uniform written before its shader exists is a
   // write to nothing, and it fails silently, which is the only reason this needed a probe to find.
   mat.userData._odFreq = (freq > 0) ? freq : OBJ_DETAIL_CYCLES;
-  mat.onBeforeCompile = (shader)=>{
+  // build 1382: CHAIN any handler the material already owns. This assigned over the top until now, which
+  // was harmless for the UV-less imports 1145 wrote it for (they have no other patch) and NOT harmless
+  // the moment it met `floorMat`, which has carried its own onBeforeCompile for the paint splat since
+  // build 1139. Probed: the floor came back UNPATCHED while the wall patched, because the splat is
+  // assigned further down the file and won. Build 1286 recorded this exact rule for the bake's patch and
+  // it never reached here. `hasOwnProperty` and not truthiness — three declares a no-op on the PROTOTYPE
+  // (build 1379), so a truthiness test chains three's own empty function forever.
+  const _odPrev = Object.prototype.hasOwnProperty.call(mat, 'onBeforeCompile') ? mat.onBeforeCompile : null;
+  mat.onBeforeCompile = (shader, renderer)=>{
+    if(_odPrev){ try{ _odPrev.call(mat, shader, renderer); }catch(e){} }   /* a throwing predecessor must not take this patch down with it */
     shader.uniforms.uOdFreq = { value: mat.userData._odFreq };
     shader.uniforms.uOdRough = { value: OBJ_DETAIL_ROUGH };
     shader.uniforms.uOdBump = { value: OBJ_DETAIL_BUMP };
-    shader.uniforms.uOdAlb = { value: OBJ_DETAIL_ALB };
+    /* build 1382: per-material, defaulting to the detail amplitude — the macro layer needs its own, and a
+       uniform written before its shader exists is a write to nothing (1379), so it lives on the material */
+    shader.uniforms.uOdAlb = { value: (mat.userData._odAmp > 0) ? mat.userData._odAmp : OBJ_DETAIL_ALB };
     // kept so a later resize can move the density without recompiling anything (retileProcSurface)
     mat.userData._odU = shader.uniforms;
     shader.vertexShader = 'varying vec3 vOdPos;\n' + shader.vertexShader
@@ -10037,7 +10085,13 @@ function applyObjDetail(mat, freq, albOnly){
   };
   // Every patched material produces the SAME program, so they can all share one — but three keys its
   // program cache on the material's own signature and would otherwise compile a variant per material.
-  mat.customProgramCacheKey = ()=> (albOnly ? 'objDetailA' : 'objDetail');
+  // build 1382: composed, not overwritten — a material that ALSO carries the paint splat compiles a
+  // different program from one that does not, and a single key would serve one of them the other's shader.
+  const _odPrevKey = Object.prototype.hasOwnProperty.call(mat, 'customProgramCacheKey') ? mat.customProgramCacheKey : null;
+  mat.customProgramCacheKey = function(){
+    let p = ''; if(_odPrevKey){ try{ p = String(_odPrevKey.call(mat) || ''); }catch(e){} }
+    return (albOnly ? 'objDetailA' : 'objDetail') + (_odPrev ? '+c' : '') + p;
+  };
   mat.needsUpdate = true;
   return mat;
 }
@@ -10580,6 +10634,12 @@ floorMat.onBeforeCompile = (shader)=>{
       '}',
     ].join('\n'));
 };
+// build 1382: the floor's macro layer is applied HERE, not beside applyProcSurface 500 lines above, because
+// the paint splat is assigned directly above and a plain assignment wins over whatever came before it.
+// applyObjDetail chains a predecessor now, so second is the safe position — and the probe is what settled
+// it: patched at the earlier site, floorMat came back with NO detail uniforms at all while wallMat, which
+// has no splat, patched fine.
+applyMacroDetail(floorMat, MACRO_PERIOD_M);   /* breaks the 4 m tile's repeat across a 140 m plane */
 function _paintLayerTexFor(url){ const t=loadTextureCached(url); if(t){ t.wrapS=t.wrapT=THREE.RepeatWrapping; t.needsUpdate=true; return t; } return _paintWhite; }
 // Sync uniforms + splat pixels from worldCfg.paint. Called from applyWorldCfg, so every path that loads
 // a level (boot autosave, editor load, share link, multiplayer host-adopt, undo) repaints correctly.
@@ -10653,6 +10713,7 @@ function _gridWanted(){
 // walls
 const wallMat = new THREE.MeshPhysicalMaterial({ color:0x1a242b, roughness:.8, metalness:.2 });
 applyProcSurface(wallMat, 140);   // build 1139: same, re-derived from the arena span in rebuildArena
+applyMacroDetail(wallMat, MACRO_PERIOD_M);   /* build 1382 */
 const colliders = [];
 // build 1188: THE COLLIDER GRID. Build 1148's tight collider tripled the box count (795 -> 2,291 on a
 // 3-storey block) and every hot query — the per-enemy obstacle resolve, per-bolt hit tests, segmentBlocked,
@@ -32572,7 +32633,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1381 · 2026-08-04';
+const BUILD_VERSION = 'build 1382 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
