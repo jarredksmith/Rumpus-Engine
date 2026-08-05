@@ -33,9 +33,36 @@ sub("'https://unpkg.com/three@0.149.0/build/three.min.js',", "'/three.min.js',",
 //    before clicking will hang forever, which cost two runs the first time.
 sub('function startGame(){', 'function startGame(){ window.__probe = function(__f){ return eval(__f); };', 'probe hook');
 
+// build 1389: PROBE_PROF=1 wraps named engine functions with a cumulative timer, so "the load takes ten
+// seconds" becomes "which function spent them". Installed at the TOP of GAME_START, which works because
+// FUNCTION DECLARATIONS ARE HOISTED — every name below is already bound there, while a `const` would be in
+// its temporal dead zone. Reassignment goes through `eval` so it rebinds the closure's own name, not a copy.
+if (process.env.PROBE_PROF) {
+  const NAMES = (process.env.PROBE_PROF_FNS ||
+    'buildPhysWorld,destroyPhysWorld,addStaticColliderFor,buildModelGridBoxes,refreshPropCollider,' +
+    '_bakeTick,_bakeCollect,buildInstancing,preloadVfx,warmFlipbookShaders,restoreLevel,loadHostedProps,' +
+    'spawnProp,finalizeProp,applyWorldCfg,applySky,buildSceneProbe,_fitSunShadow,renderScene,' +
+    'toggleEditor,renderEditorFields,setEditorMode,navBuild,startGame,deployLevel,serializeLevel'
+  ).split(',');
+  sub('window.GAME_START = function(){',
+    'window.GAME_START = function(){ window.__PROF = {}; (function(){ for(const __n of ' +
+    JSON.stringify(NAMES) + '){ try{ var __f = eval(__n); if(typeof __f !== "function") continue;' +
+    ' var __p = window.__PROF[__n] = { n:0, ms:0, max:0 };' +
+    ' var __w = (function(f, p){ return function(){ var t = performance.now();' +
+    ' try { return f.apply(this, arguments); } finally { var d = performance.now() - t;' +
+    ' p.n++; p.ms += d; if(d > p.max) p.max = d; } }; })(__f, __p);' +
+    ' eval(__n + " = __w"); }catch(e){ window.__PROF[__n] = { err: String(e).slice(0,60) }; } } })();',
+    'profiler');
+}
+
 // 3) Rapier is fetched from a CDN and is not needed for anything a probe asks about; a pending promise
 //    here stalls the boot behind a network timeout.
-sub('window.__PHYSICS_READY = (async function(){',
+// build 1389: the stub is now OPT-IN. It exists because the Rapier CDNs HANG in this sandbox (no
+// connection reset, so the boot never settles and GAME_START never runs) — but build 1354 vendored
+// `rapier3d-compat.js` and this staging copies it, and the loader tries the self-hosted copy FIRST. So
+// physics can boot here for real, and every probe until now has measured a world with no physics in it.
+// PROBE_NOPHYS=1 restores the stub for a run that does not want to pay for it.
+if (process.env.PROBE_NOPHYS) sub('window.__PHYSICS_READY = (async function(){',
     'window.__PHYSICS_READY = Promise.resolve(null); window.__PHYSICS_DEAD = (async function(){ return null;',
     'physics loader');
 
