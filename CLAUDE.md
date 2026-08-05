@@ -967,6 +967,78 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The deck gets relief off its own colour, for no extra fetches (build 1388)
+
+Build 1387 gave the two ENGINE surfaces an authored normal map correlated with their albedo — and the census
+its own tooling made possible said the engine floor plane is **3% of the stock frame** while the instanced
+primitive deck is **~90%**. Primitives cannot use those maps: build 1384's texture modulation is triplanar
+and object-space, and their `normalMap` slot holds 1139's procedural value-noise, which is a *different
+field* from the one modulating their colour. 1387's defect exactly, one layer down, on the surface that
+actually fills the frame.
+
+**The height is `_odTexL` — the luminance build 1384's albedo modulation already sampled.** One sample, two
+uses: still exactly three `texture2D(uOdTex` fetches, and the relief is correlated with the colour BY
+CONSTRUCTION rather than by a matching pair of files that could drift. It is Mikkelsen's surface gradient
+(what three's own `perturbNormalArb` computes), which needs no UVs and no tangent basis, so it works on a
+primitive of any shape at any scale.
+
+`PROP_TEX_RELIEF = 0.018` is a **depth in metres**, not a gain: the surface gradient divides a height
+derivative by a POSITION derivative and both are per-pixel view units, so the ratio is dimensionless and the
+constant has to be a real distance. 1.8 cm is a shallow cast-concrete relief at the shipped ~4 m tile.
+
+### Three things in the GLSL, each of which is a defect without it
+
+- **The `#if` is what makes `dFdx` legal.** On WebGL 1 it needs `GL_OES_standard_derivatives`, and three
+  emits that directive only for `extensionDerivatives || envMapCubeUVHeight || bumpMap ||
+  tangentSpaceNormalMap || clearcoatNormalMap || flatShading || shaderID === 'physical'`. Every define in
+  the guard — `TANGENTSPACE_NORMALMAP`, `USE_BUMPMAP`, `FLAT_SHADED`, `PHYSICAL` — is one of those terms, so
+  the code cannot compile without the extension that makes it legal. `test-1388` asserts that
+  correspondence **against the real three build**, because if an upgrade changes either side the guard stops
+  guarding and nothing errors. Probed live: **16 of 16** materials carrying `_odTex` also carry a
+  tangent-space normal map, so the gate is satisfied for every one of them.
+- **The branch is on TWO UNIFORMS, deliberately.** A derivative taken inside non-uniform control flow is
+  undefined in GLSL ES. That is also why the degenerate case is a SELECT at the end rather than an early
+  out — all four `dFdx`/`dFdy` calls have to sit where the whole quad agrees they run.
+- **`normalize()` of a degenerate surface gradient is NaN, and three's own version carries it.**
+  `perturbNormalArb` ends `normalize( abs(fDet)*surf_norm - vGrad )`; when the surface derivative
+  degenerates, `sign(0)` is 0, the whole vector is 0, and `normalize(0)` is NaN. One dot product buys the
+  unperturbed normal instead of a black pixel.
+
+### Measured — and the shader's health first, because that is what this build could get catastrophically wrong
+
+```
+glGetError 0 · 66 programs · 338 draw calls · 24,528 tris · 0 program diagnostics
+22 patched materials · 16 carrying uOdTexN · 16 of 16 tangent-space normal mapped
+window 19,728 pixels, drawn: instanced BoxGeometry 19,400 · floorMat 736 · wedge 319
+
+control (same condition)   uniq  +0.02%   grad  -0.01%
+EFFECT (relief 0 -> 0.018) uniq +12.86%   grad +24.46%   lum -0.09%
+x4                         uniq +51.15%   grad +105.19%
+return                     uniq  -0.31%   grad  -0.04%
+```
+
+`grad` is the mean absolute difference between horizontal neighbours — relief is LOCAL variation. **Three
+times 1387's effect (+24.5% against +7.8%), because it lands on the surface that is 90% of the frame rather
+than the one that is 3%**, and the mean luminance moves 0.09%, so it is structure and not exposure.
+
+It rides build 1383's rung ladder through the same `_syncOdBump` — **one ladder, two amplitudes.** This is
+derivative-based bump, quantised to the 2x2 fragment quad, so it is precisely the high-frequency normal
+detail that must not outrun a shedding antialiaser; that argument is 1383's and it applies here unchanged.
+
+**A `sed`-proof note on the ordering, inherited from 1379:** `_odTexL` is written at `map_fragment` and read
+at `normal_fragment_maps`. `test-1388` asserts three still emits them in that order — get it backwards and
+the height is read before it is written, which is silent garbage rather than an error.
+
+One pin moved (1383's `let _odBumpBase = 0;` gained a second declarator on the same line; its intent — the
+base is declared above the boot call that reads it — is unchanged and still asserted).
+
+### Container rollback #14, mid-build
+
+The tree reverted to build 1381 between two commands, with the tell being `tools/probe/drawn-at.mjs`
+vanishing on import and `ls tests | wc -l` reading 1128 against 1134. `git log` first, then
+`git fetch origin <branch> && git reset --hard FETCH_HEAD` restored everything, because every build is
+pushed the moment it lands. Fourteenth occurrence; the protocol cost about ninety seconds.
+
 ## Relief that describes the same surface as the colour (build 1387)
 
 The critic's second verified finding: `PROC_SLOTS` is `normalMap` + `roughnessMap` fed ONLY by build 1139's

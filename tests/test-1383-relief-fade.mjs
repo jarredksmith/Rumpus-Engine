@@ -72,7 +72,8 @@ const src = gameSource();
 // temporal dead zone — builds 1127, 1331 and 1350 each lost something to exactly that, and the boot test
 // caught this one on the first draft, which read the constant from inside the sync.
 {
-  const decl = src.indexOf('let _odBumpBase = 0;');
+  // build 1388 declared its own base on the same line — one ladder, two amplitudes (see test-1388).
+  const decl = src.indexOf('let _odBumpBase = 0');
   const konst = src.indexOf('const OBJ_DETAIL_BUMP =');
   const hand = src.indexOf('_odBumpBase = OBJ_DETAIL_BUMP;');
   const boot = src.indexOf('_applyPixelRatio();');

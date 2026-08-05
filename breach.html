@@ -7541,14 +7541,19 @@ const _SUN_PX_STEP = [1.0, 0.5, 0.5, 0.25];   // multiplier of SUN_SHADOW_PX per
 // derivation), which is far below the sampling limit at any rung and does not alias.
 const _OD_BUMP_STEP = [1.0, 0.6, 0.4, 0.25];
 const _odBumpU = { value: 0 };
+// build 1388: the prop texture's own relief, in METRES, faded on the SAME rung ladder. It is a
+// derivative-based bump — quantised to the 2x2 fragment quad — so it is exactly the high-frequency normal
+// detail build 1383 exists to fade out from under a shedding antialiaser. One ladder, not two.
+const _odTexNU = { value: 0 };
 // `_applyPixelRatio()` is CALLED at boot, ~2,500 lines above `OBJ_DETAIL_BUMP` — and `typeof` does NOT
 // guard a temporal dead zone (builds 1127, 1331 and 1350 each lost something to exactly this; the boot
 // test caught this one). So the base is HANDED OVER at the constant's own declaration site rather than
 // read from here, which also means the literal is written once and cannot drift.
-let _odBumpBase = 0;
+let _odBumpBase = 0, _odTexNBase = 0;
 function _syncOdBump(){
   const i = Math.max(0, Math.min(_OD_BUMP_STEP.length - 1, (typeof _prStepI === 'undefined' ? 0 : _prStepI) | 0));
   _odBumpU.value = _odBumpBase * _OD_BUMP_STEP[i];
+  _odTexNU.value = _odTexNBase * _OD_BUMP_STEP[i];
 }
 function _sunShadowPxFor(step){
   const m = _SUN_PX_STEP[Math.max(0, Math.min(_SUN_PX_STEP.length-1, step|0))];
@@ -10069,6 +10074,11 @@ const PROP_TEX_AMT = 0.55;
 // floor keeps a small prop readable — a 1 m crate would otherwise get a quarter of one tile.
 const PROP_TEX_PER_M = 0.25;
 const PROP_TEX_MIN_CYC = 1.5;    /* minimum tiles across the object, whatever its size */
+// build 1388: how deep the texture's structure is, in METRES — a physical quantity, not a gain, because
+// the surface gradient below divides a height derivative by a POSITION derivative and both are in view
+// units. At the shipped ~4 m tile, 1.8 cm is a shallow cast-concrete relief.
+const PROP_TEX_RELIEF = 0.018;
+_odTexNBase = PROP_TEX_RELIEF; _syncOdBump();   /* hand-off at the declaration site: _applyPixelRatio() runs at boot, thousands of lines above this, and `typeof` does not guard a temporal dead zone (1127/1331/1383) */
 let _propTex = null;
 function _ensurePropTex(){
   if(_propTex !== null) return _propTex;
@@ -10189,6 +10199,7 @@ function applyObjDetail(mat, freq, albOnly){
       shader.uniforms.uOdTexM = { value: PROP_TEX_LUM };
       shader.uniforms.uOdTexA = { value: PROP_TEX_AMT };
       shader.uniforms.uOdTexF = { value: mat.userData._odTexF > 0 ? mat.userData._odTexF : PROP_TEX_PER_M };
+      shader.uniforms.uOdTexN = _odTexNU;                        /* BY REFERENCE, like uOdBump — the rung fade is one CPU write */
     }
     // kept so a later resize can move the density without recompiling anything (retileProcSurface)
     mat.userData._odU = shader.uniforms;
@@ -10198,8 +10209,8 @@ function applyObjDetail(mat, freq, albOnly){
     // roughnessmap_fragment BEFORE normal_fragment_maps, so the field is evaluated once in the first
     // patch and reused by the second — four noise evaluations per pixel instead of five.
     shader.fragmentShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump; uniform float uOdAlb;\n'
-      + (texOn ? 'uniform sampler2D uOdTex; uniform float uOdTexM; uniform float uOdTexA; uniform float uOdTexF;\n' : '')
-      + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase;\n' + shader.fragmentShader
+      + (texOn ? 'uniform sampler2D uOdTex; uniform float uOdTexM; uniform float uOdTexA; uniform float uOdTexF; uniform float uOdTexN;\n' : '')
+      + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase; float _odTexL;\n' + shader.fragmentShader
       // build 1379: the field is evaluated HERE now, at map_fragment, because that is the earliest chunk
       // where diffuseColor is final and it runs BEFORE roughnessmap_fragment — so the albedo, roughness
       // and normal patches all share ONE evaluation instead of the roughness patch owning it. three's
@@ -10229,6 +10240,7 @@ function applyObjDetail(mat, freq, albOnly){
           '  float _ty = dot(_ts, vec3(0.2126, 0.7152, 0.0722));',
           // decode with the exact sRGB EOTF, because uOdTexM is the mean of this same quantity
           '  float _tl = (_ty <= 0.04045) ? (_ty/12.92) : pow((_ty+0.055)/1.055, 2.4);',
+          '  _odTexL = _tl;',   /* the SAME sample the albedo used — that is what makes the relief describe the same surface (build 1387's rule, one layer down) */
           '  diffuseColor.rgb *= mix(1.0, _tl/uOdTexM, uOdTexA);',
           '}',
         ].join('\n') : ''),
@@ -10243,7 +10255,45 @@ function applyObjDetail(mat, freq, albOnly){
       // single loudest "this is an untextured model" tell; a few degrees of micro-relief is what breaks
       // it. The gradient is projected onto the tangent plane so the perturbation cannot tilt the normal
       // away from the surface it belongs to.
-      .replace('#include <normal_fragment_maps>', albOnly ? '#include <normal_fragment_maps>' : [
+      // build 1388: a primitive's relief, derived from the SAME triplanar sample its albedo already used.
+      // Zero extra texture fetches — `_odTexL` is the luminance computed at map_fragment above — and
+      // therefore correlated with the colour BY CONSTRUCTION, which is the whole of build 1387's argument
+      // applied to the surface that actually dominates the stock frame (the engine floor plane is 3% of it;
+      // the instanced primitive deck is ~90%).
+      //
+      // Mikkelsen's surface gradient, which is what three's own `perturbNormalArb` computes: it needs no
+      // UVs and no tangent basis, so it works on a primitive of any shape at any scale. dHdxy and
+      // dFdx(surf_pos) are both per-pixel, so the ratio is dimensionless and PROP_TEX_RELIEF is a real
+      // depth in metres rather than a gain to guess at.
+      //
+      // THE #if IS LOAD-BEARING. `dFdx` needs GL_OES_standard_derivatives on WebGL 1, and three emits that
+      // directive only for `extensionDerivatives || envMapCubeUVHeight || bumpMap || tangentSpaceNormalMap
+      // || clearcoatNormalMap || flatShading || shaderID === 'physical'`. Every define named here is one of
+      // those terms, so the code cannot compile without the extension that makes it legal — and a shader
+      // that fails to compile takes every prop in the level with it, silently, which this file has lost a
+      // subsystem to twice. test-1388 asserts the correspondence against the real three build.
+      .replace('#include <normal_fragment_maps>', (albOnly && texOn) ? [
+        '#include <normal_fragment_maps>',
+        '#if defined( TANGENTSPACE_NORMALMAP ) || defined( USE_BUMPMAP ) || defined( FLAT_SHADED ) || defined( PHYSICAL )',
+        // The branch condition is TWO UNIFORMS, deliberately: a derivative taken inside non-uniform control
+        // flow is undefined in GLSL ES, so every dFdx/dFdy here has to sit where the whole quad agrees it
+        // runs. That is also why the degenerate case is a SELECT at the end rather than an early out.
+        'if( uOdTexN > 0.0 && uOdTexA > 0.0 ){',
+        '  vec3 _bSx = dFdx( -vViewPosition ), _bSy = dFdy( -vViewPosition );',
+        '  float _bH = _odTexL * uOdTexN;',
+        '  float _bHx = dFdx( _bH ), _bHy = dFdy( _bH );',
+        '  vec3 _bR1 = cross( _bSy, normal ), _bR2 = cross( normal, _bSx );',
+        '  float _bDet = dot( _bSx, _bR1 );',
+        '  vec3 _bG = sign( _bDet ) * ( _bHx * _bR1 + _bHy * _bR2 );',
+        // three\'s own perturbNormalArb ends `normalize( abs(fDet)*surf_norm - vGrad )`, which is NaN when
+        // the surface derivative degenerates (an edge-on quad, a frame with no motion in the derivative):
+        // sign(0) is 0, so the whole vector is 0 and normalize(0) is NaN. One dot product buys the
+        // unperturbed normal instead of a black pixel.
+        '  vec3 _bN = abs( _bDet ) * normal - _bG;',
+        '  normal = ( dot( _bN, _bN ) > 1e-20 ) ? normalize( _bN ) : normal;',
+        '}',
+        '#endif',
+      ].join('\n') : albOnly ? '#include <normal_fragment_maps>' : [
         '#include <normal_fragment_maps>',
         '{ float _odE = 0.6;',
         '  vec3 _odG = vec3(_odField(_odP + vec3(_odE,0.0,0.0)) - _odBase,',
@@ -32808,7 +32858,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1387 · 2026-08-05';
+const BUILD_VERSION = 'build 1388 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
