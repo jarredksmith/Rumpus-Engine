@@ -23160,12 +23160,38 @@ function renderKeyChips(){
     host.appendChild(ch); }
 }
 const POWERUP_COOLDOWN = 15;   // seconds before a used pad returns
+// build 1396 — REPORTED FROM PLAY: "there needs to be an option for spawned pickups that it doesn't keep
+// respawning after the item has been picked up. Right now it just infinitely keeps popping back up."
+//
+// Correct: every pad but a key or an inventory item returned on POWERUP_COOLDOWN forever, and there was no
+// per-spot control. A health pad in a corridor is right to come back; the shotgun you hid at the end of a
+// puzzle room is not, and there was no way to say which.
+//
+// The one-shot rule ALREADY EXISTED for keys and items — as `p.cd = 1e9`, a cooldown of thirty-one years,
+// written out at BOTH grant sites. That is a sentinel standing in for a fact, duplicated, in exactly the
+// shape this file records as drifting (builds 1266, 1272, 1280). It is one predicate now, and the two call
+// sites share one consume, so an authored one-shot and a key are the same mechanism rather than two.
+function _puOnce(p){
+  if(!p) return false;
+  if(p.once) return true;                                         // authored, per spot
+  const k = POWERUP_KINDS[p.kind];
+  return !!(k && k.key) || p.kind === 'item';                      // keys and inventory items always were
+}
+// The ONE writer of a pad's taken state. `gone` is a real flag rather than a 1e9 countdown: the old form
+// still ticked `cd -= dt` every frame of every match for a pad that could never return.
+function _puConsume(p){
+  if(!p) return;
+  p.ready = false;
+  p.gone = _puOnce(p);
+  p.cd = POWERUP_COOLDOWN;
+  if(p.mesh) p.mesh.visible = false;
+}
 let powerups = [];
 let _puId = 1;
 // Editor-placed pickups (weapons/ammo/health/buffs). The live pads are built from these at deploy; if a
 // level has none, spawnPowerups() falls back to the auto buff layout. Markers are an editor-only preview.
 let selPickup = -1;   // editor: index of the pickup spot grabbed by the gizmo (-1 = none)
-let pickupSpots = (savedLevel && Array.isArray(savedLevel.pickups)) ? savedLevel.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact })) : [];
+let pickupSpots = (savedLevel && Array.isArray(savedLevel.pickups)) ? savedLevel.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact, once:!!s.once })) : [];
 let audioZones = (savedLevel && Array.isArray(savedLevel.audioZones)) ? savedLevel.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
 // DEATH zones: stepping inside kills the player (lava, pits, out-of-bounds). { x,z,r, y, h }. The zone is a
 // horizontal LETHAL PLANE at height y (the surface where placed) with a band h tall above it — so you can jump
@@ -25539,7 +25565,7 @@ function spawnPowerups(){
   const spots = (pickupSpots && pickupSpots.length) ? pickupSpots : powerupLayout();
   for(const spot of spots){
     const mesh = buildPowerupMesh(spot.kind, spot.item); _applyPickupXform(mesh, spot); scene.add(mesh);
-    powerups.push({ id:_puId++, x:spot.x, z:spot.z, kind:spot.kind, item:spot.item, interact:!!spot.interact, ready:true, cd:0, mesh, spot });   /* build 1327: the authored transform travels to clients */
+    powerups.push({ id:_puId++, x:spot.x, z:spot.z, kind:spot.kind, item:spot.item, interact:!!spot.interact, once:!!spot.once, ready:true, gone:false, cd:0, mesh, spot });   /* build 1327: the authored transform travels to clients · build 1396: `once` is per-spot; `gone` resets here, so one-shot means once per RUN — a fresh deploy restores it, exactly as the key ring does */
   }
 }
 function applyPowerupLocal(kind, item){
@@ -25571,11 +25597,12 @@ function updatePowerups(dt){
   if(!powerups.length) return;
   const players = allPlayers();
   for(const p of powerups){
-    if(!p.ready){ p.cd -= dt; if(p.cd<=0){ p.ready=true; if(p.mesh) p.mesh.visible=true; } continue; }
+    if(!p.ready){ if(p.gone) continue;   /* build 1396: taken for good — no countdown to run at all */
+      p.cd -= dt; if(p.cd<=0){ p.ready=true; if(p.mesh) p.mesh.visible=true; } continue; }
     if(p.mesh){ p.mesh.visible=true; _animatePickup(p.mesh, dt); }
     let near=null, nd=1e9;
     for(const pl of players){ const d=Math.hypot(pl.pos.x-p.x, pl.pos.z-p.z); if(d<nd){ nd=d; near=pl; } }
-    if(near && nd < 2.0 && !(p.interact && near.id===NET.myId)){ grantPowerup(near, p.kind, p.item); p.ready=false; p.cd=((POWERUP_KINDS[p.kind]&&POWERUP_KINDS[p.kind].key)||p.kind==='item')?1e9:POWERUP_COOLDOWN; if(p.mesh) p.mesh.visible=false; }   // keys are one-shot; interact pickups wait for the local player's E (remotes still auto-collect)
+    if(near && nd < 2.0 && !(p.interact && near.id===NET.myId)){ grantPowerup(near, p.kind, p.item); _puConsume(p); }   // build 1396: keys, inventory items and authored one-shots all go through _puConsume; interact pickups wait for the local player's E (remotes still auto-collect)
   }
 }
 
@@ -27071,7 +27098,7 @@ function loadLevelFromNet(level){
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
   pickupsOn = (level.pickupsOn !== false);
-  pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact })) : [];   // build 879: joiners used to lose pickup transforms/items
+  pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact, once:!!s.once })) : [];   // build 879: joiners used to lose pickup transforms/items
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
   if(typeof refreshLootMarkers==='function') refreshLootMarkers(); pickupModels = _sanPickupModels(level.pickupModels); keyNames = _sanKeyNames(level.keyNames);   /* build 1325 */
   animCuts = _sanAnimCuts(level.animCuts); if(typeof refreshAnimCuts==='function') refreshAnimCuts();   /* build 1336: re-slice BEFORE the avatars rebuild from the cache */ if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
@@ -32255,7 +32282,7 @@ function interact(){
   if(!nearTarget){ tryGrabProp(); return; }   // nothing to use -> try to pick up a prop
   if(nearTarget.type==='pickup'){
     const p=nearTarget.pu;
-    if(p && p.ready){ grantPowerup({ id:NET.myId }, p.kind, p.item); p.ready=false; p.cd=((POWERUP_KINDS[p.kind]&&POWERUP_KINDS[p.kind].key)||p.kind==='item')?1e9:POWERUP_COOLDOWN; if(p.mesh) p.mesh.visible=false; nearTarget=null; const pr=$('prompt'); if(pr) pr.style.display='none'; }
+    if(p && p.ready){ grantPowerup({ id:NET.myId }, p.kind, p.item); _puConsume(p); nearTarget=null; const pr=$('prompt'); if(pr) pr.style.display='none'; }   /* build 1396: the same consume the proximity path uses — two copies of "does this come back" is how they stop agreeing */
     return;
   }
   if(nearTarget.type==='station'){
@@ -33012,7 +33039,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1395 · 2026-08-05';
+const BUILD_VERSION = 'build 1396 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42283,7 +42310,7 @@ function serializeLevel(){
     turrets: turretModels.map(_turretOpts),
     spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave, ...(m.friendly?{fr:1}:{}), ...(_facOf(m.fac)!==FACTION_DEFAULT?{fac:_facOf(m.fac)}:{}) }; }),   /* build 1226: absent when false, so old levels serialize byte-identically; build 1355: and the default faction is likewise absent */   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
     pickupsOn: pickupsOn,
-    pickups: pickupSpots.map(s=>({ x:+s.x, z:+s.z, kind:s.kind, ...(s.item!=null?{item:s.item}:{}), ...(s.y?{y:s.y}:{}), ...(s.rx?{rx:s.rx}:{}), ...(s.ry?{ry:s.ry}:{}), ...(s.rz?{rz:s.rz}:{}), ...(s.scale!=null&&s.scale!==1?{scale:s.scale}:{}), ...(s.interact?{interact:1}:{}) })),
+    pickups: pickupSpots.map(s=>({ x:+s.x, z:+s.z, kind:s.kind, ...(s.item!=null?{item:s.item}:{}), ...(s.y?{y:s.y}:{}), ...(s.rx?{rx:s.rx}:{}), ...(s.ry?{ry:s.ry}:{}), ...(s.rz?{rz:s.rz}:{}), ...(s.scale!=null&&s.scale!==1?{scale:s.scale}:{}), ...(s.interact?{interact:1}:{}), ...(s.once?{once:1}:{}) })),   /* build 1396: only when set, so an ordinary pad's entry does not grow a key */
     loot: lootSpots.map(s=>({ x:+s.x, y:+(s.y||0), z:+s.z, items:(s.items||[]).slice(), glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })),
     extractFx: { color: extractFxCfg.color, opacity: extractFxCfg.opacity, height: extractFxCfg.height, pillar: extractFxCfg.pillar },
     audioZones: audioZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, url:z.url||'', vol:+z.vol, loop:!!z.loop })),
@@ -43301,7 +43328,7 @@ function restoreLevel(level){
   // links, .json import, undo) — the previous level's pads persisted and the loaded level's own never
   // arrived. Same field map as the boot loader, so transforms/interact round-trip identically.
   pickupsOn = (level.pickupsOn !== false);
-  pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact })) : [];
+  pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact, once:!!s.once })) : [];
   selPickup=-1; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
   selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
@@ -45027,6 +45054,23 @@ function _pickupXformPanel(host, sp, i){
     const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!sp.interact; cb.style.cssText='width:14px;height:14px;accent-color:var(--accent);cursor:pointer;';
     cb.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); sp.interact=cb.checked; };
     r.appendChild(cb); r.appendChild(document.createTextNode('Require interact (press E to pick up)')); panel.appendChild(r); }
+  /* build 1396: "there needs to be an option for spawned pickups that it doesn't keep respawning after the
+     item has been picked up." A key and an inventory item have always been one-shot; every other kind came
+     back on a 15 s timer with no way to say otherwise. The label says WHEN it comes back, because "once"
+     alone reads as "never again, ever" and it is once per RUN — a fresh deploy restores it, the same as the
+     key ring does. */
+  { const r=document.createElement('label'); r.style.cssText='grid-column:1/4;display:flex;align-items:center;gap:7px;font-size:11px;color:#9fe6cf;margin-top:3px;cursor:pointer;';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.style.cssText='width:14px;height:14px;accent-color:var(--accent);cursor:pointer;';
+    const _always = !!(POWERUP_KINDS[sp.kind] && POWERUP_KINDS[sp.kind].key) || sp.kind==='item';
+    cb.checked = !!sp.once || _always;
+    /* a key or an inventory item is one-shot by its nature, so the box is shown TICKED and disabled rather
+       than hidden — a control that vanishes for some kinds reads as a bug, and one that is unticked while
+       the pad demonstrably never returns is a lie (build 1348's rule, and 1338's) */
+    cb.disabled = _always;
+    cb.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); if(cb.checked) sp.once=true; else delete sp.once; };
+    r.appendChild(cb); r.appendChild(document.createTextNode(_always ? 'Pick up once (always, for keys and items)' : 'Pick up once (does not respawn this run)'));
+    if(_always) r.style.opacity='0.65';
+    panel.appendChild(r); }
   host.appendChild(panel);
 }
 // build 688: a reusable Signals editor (tag + needs + signal rows). `store` is any object that holds .tag/.sigNeed/
