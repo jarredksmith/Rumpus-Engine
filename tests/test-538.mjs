@@ -1,4 +1,6 @@
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 // build 692: authorable objective/goal text. A per-level goalText is shown as a centre banner at the start and is
 // recallable with J; a signal action do:'objective' updates it mid-run (the storytelling hook for puzzle/adventure).
@@ -6,7 +8,7 @@ const src = gameSource();
 // --- per-level config + persistence ---
 assert(/goalText: \(savedLevel && savedLevel\.game && typeof savedLevel\.game\.goalText==='string'\) \? savedLevel\.game\.goalText\.slice\(0,160\) : ''/.test(src), 'gameCfg.goalText seeded from the save');
 assert(/goalText: \(gameCfg\.goalText\|\|''\)\.slice\(0,160\)/.test(src), 'goalText serialized with the level');
-assert((src.match(/gameCfg\.goalText = \(typeof level\.game\.goalText==="string"\) \? level\.game\.goalText\.slice\(0,160\) : ""/g)||[]).length===2, 'goalText restored in both load paths');
+assert((src.match(/gameCfg\.goalText = \(typeof g\.goalText==="string"\) \? g\.goalText\.slice\(0,160\) : ""/g)||[]).length === 1, 'goalText restored in both load paths');
 
 // --- the banner + recall ---
 assert(/function showGoalBanner\(text\)\{/.test(src) && /function tickGoalBanner\(dt\)\{/.test(src), 'banner show + fade helpers');

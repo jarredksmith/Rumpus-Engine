@@ -8,6 +8,8 @@
 // inherit it with zero extra plumbing. Speed is a MULTIPLIER of the type's min AND max, so gait
 // variance survives tuning.
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 
 const KEYS = ['grunt', 'runner', 'brute', 'gunner', 'sapper', 'shielded', 'charger', 'boss'];
@@ -52,7 +54,7 @@ const KEYS = ['grunt', 'runner', 'brute', 'gunner', 'sapper', 'shielded', 'charg
     'the factory spawns from effective stats — formula waves, manifests and placed spawns all inherit with zero plumbing (hp passes through the build-1213 random-mode wave ramp, which is 1x in every authored mode)');
   assert(/enemyMods: _sanitizeEnemyMods\(savedLevel && savedLevel\.game && savedLevel\.game\.enemyMods\)/.test(src),
     'the boot path sanitizes');
-  eq((src.match(/gameCfg\.enemyMods = _sanitizeEnemyMods\(level\.game\.enemyMods\);/g) || []).length, 2,
+  eq((src.match(/gameCfg\.enemyMods = _sanitizeEnemyMods\(g\.enemyMods\);/g) || []).length, 1,
     '...and both loaders (net + restore) do — a joiner plays the host\'s tuning, and a level with none resets to factory (the sanitizer returns null)');
   assert(/enemyMods: _sanitizeEnemyMods\(gameCfg\.enemyMods\) \|\| undefined,/.test(src),
     'the serializer re-sanitizes on the way OUT too — nothing out-of-range ever enters a share code');

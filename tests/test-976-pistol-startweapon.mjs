@@ -3,6 +3,8 @@
 // every weapon touchpoint (pickups, duel loadout, per-weapon editor). A new gameCfg.startWeapon lets
 // a level choose which primary the player spawns with (default rifle), serialized + restored.
 import { gameSource, extractConst, assert, eq, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 
 // ---- the pistol weapon def ----
@@ -31,7 +33,7 @@ assert(/startWeapon: \(savedLevel && savedLevel\.game && typeof savedLevel\.game
 // (the crowbar could not be chosen at all before). The FISTS slot is still excluded; "Start unarmed" owns it.
 assert(/startWeapon: _canStartWith\(gameCfg\.startWeapon\) \? gameCfg\.startWeapon : 'rifle'/.test(src),
   'serialized, guarded to a weapon you may actually start with');
-assert((src.match(/gameCfg\.startWeapon = \(typeof level\.game\.startWeapon==='string' && _canStartWith\(level\.game\.startWeapon\)\) \? level\.game\.startWeapon : 'rifle';/g) || []).length === 2,
+assert((src.match(/gameCfg\.startWeapon = \(typeof g\.startWeapon==='string' && _canStartWith\(g\.startWeapon\)\) \? g\.startWeapon : 'rifle';/g) || []).length === 1,
   'restored in BOTH load paths (net + local)');
 assert(/const _sw=_canStartWith\(gameCfg\.startWeapon\) \? gameCfg\.startWeapon : 'rifle'; owned = \[_sw\]; curWep=_sw;/.test(src),
   'startGame spawns the player holding the chosen weapon');

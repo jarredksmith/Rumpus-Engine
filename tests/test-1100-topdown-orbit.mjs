@@ -5,6 +5,8 @@
 // 1085, so WASD keeps matching the screen at any spin. Editor previews never orbit (gameOn
 // gate) and each session starts back at the authored angle.
 import { gameSource, assert, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 
 const src = gameSource();
 
@@ -30,8 +32,8 @@ assert(/if\(typeof _vcamUserYaw!=='undefined'\) _vcamUserYaw=0;/.test(src),
 
 // persistence: saved with the level, read back by both loaders
 assert(/viewOrbit: !!gameCfg\.viewOrbit, chaseCursorAim/.test(src), 'serialized into the level');
-const loads = src.match(/gameCfg\.viewOrbit = !!level\.game\.viewOrbit;/g) || [];
-assert(loads.length >= 2, 'both level loaders restore it (' + loads.length + ')');
+const loads = src.match(/gameCfg\.viewOrbit = !!g\.viewOrbit;/g) || [];
+assert(loads.length >= 1, 'both level loaders restore it (' + loads.length + ')');
 
 // the gameplay-settings checkbox, top-down only
 assert(/Players can orbit the camera/.test(src), 'the toggle is in the camera-view section');

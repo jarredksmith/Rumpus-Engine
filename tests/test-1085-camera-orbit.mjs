@@ -1,4 +1,6 @@
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 // build 1085: top-down and side-scroller cameras became an ORBIT (distance, rotate, tilt, height, roll)
 // instead of one hard-coded offset each. The whole build hinges on one claim: a level built before this
@@ -245,9 +247,9 @@ assert(/viewYaw: \+gameCfg\.viewYaw\|\|0, viewTilt: \(gameCfg\.viewTilt!=null\?\
 // tilt is the one field with a per-mode default, so "unset" has to survive as unset rather than becoming 0
 assert(/viewTilt: \(gameCfg\.viewTilt!=null\?\+gameCfg\.viewTilt:undefined\)/.test(src),
   'an untouched tilt is left out of the file, so the mode default still applies on load');
-eq((src.match(/gameCfg\.viewYaw = \+level\.game\.viewYaw\|\|0;/g) || []).length, 2,
+eq((src.match(/gameCfg\.viewYaw = \+g\.viewYaw\|\|0;/g) || []).length, 1,
   'both load paths restore it (level import and campaign/undo restore)');
-assert(/gameCfg\.viewTilt = \(level\.game\.viewTilt!=null\) \? \+level\.game\.viewTilt : null;/.test(src),
+assert(/gameCfg\.viewTilt = \(g\.viewTilt!=null\) \? \+g\.viewTilt : null;/.test(src),
   '...and a missing tilt loads as null, not 0 — 0 would flatten every old top-down level');
 assert(/viewTilt:   \(savedLevel && savedLevel\.game && savedLevel\.game\.viewTilt!=null\)   \? \+savedLevel\.game\.viewTilt   : null,/.test(src),
   'the browser autosave boots the same way');

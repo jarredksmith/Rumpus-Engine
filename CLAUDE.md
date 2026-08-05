@@ -2199,6 +2199,63 @@ I extracted `_applySignalAction` to find the pickup handler, which lives in `_ap
 a world verb and the signal router passes it onward. That is build 1390's mistake in miniature: naming the
 wrong function and asserting confidently against it.
 
+## Five settings that were saved and never loaded (build 1400)
+
+Not reported — **swept for**, after build 1398 turned out to be a serializer/loader mismatch. Comparing what
+`serializeLevel` writes against what the loaders read found five top-level game settings written with every
+level and never read back by either runtime loader:
+
+| | |
+|---|---|
+| `pvp` / `pvpTarget` | build 1265 — **mine**. The entire feature is *"a level says which mode it is for"*, so it worked until you saved |
+| `fallDamage` | authored, serialized, never restored |
+| `crushDamage` | likewise |
+| `crosshair` | likewise |
+
+The boot path reads all five, so a refresh looked fine — it is the two RUNTIME loaders (`restoreLevel`,
+`loadLevelFromNet`) that never did. So the symptom is: open a second level, or undo, or join a co-op host,
+and you keep the previous level's fall damage and crosshair. **They do not merely vanish, they LEAK** — which
+is build 1325's finding for `keyNames`/`pickupModels`, arriving one tier up.
+
+### The first measurement could not have failed
+
+I set the values, serialized, restored **the same level**, read them back, and they were all there. That
+proves nothing when the loader never clears them: I was reading state nothing had touched. The measurement
+that works is to strip a field and watch it **survive** — with a field the loader demonstrably does read
+(`objective`) in the same row as the positive control.
+
+```
+CARRIED    all five round-trip exactly
+STRIPPED   fallOn false · fallMin 24 · crushOn false · xhStyle classic · xhSize 24 · pvp '' · target 0
+           and objective (the positive control) resets too
+HOSTILE    pvp 'nuke' -> ''  ·  target 1e9 -> 999  ·  style '<script>' -> classic  ·  size 1e9 -> 80
+           thickness -4 -> 1  ·  gap 1e9 -> 40  ·  fallMin -50 -> 0  ·  perUnit 1e9 -> 999
+```
+
+**Always assigned, never "if present"** — that is the half that closes the leak, and it is the half a
+careless fix would miss while still making a round trip pass.
+
+### One loader instead of two
+
+The block was **two byte-identical 2,862-character copies**. That is build 1280's defect, and precisely the
+mechanism that lets a fix land on one path only. `_applyGameCfg(g)` is the one applier; the two damage rules
+share `_dmgRuleFrom` because two copies of a five-field clamp is how they stop agreeing; and
+`CROSSHAIR_STYLES` is now NAMED — before this it was a comment beside the boot default and nowhere else, so
+nothing could validate a style arriving from a level file.
+
+### Twenty-three harnesses moved, and every one of them was measuring the duplication
+
+Each counted **2** over a `level.game.X` pattern — *"both loaders restore it"*. That is build 1280's lesson
+verbatim: **a test that counts copies of a thing is a test of the copying.** They count 1 now, and what they
+always meant is stronger, because both loaders provably route through the one function.
+
+**Two process faults of mine, both worth the line.** A blanket regex across every test file rewrote unrelated
+"both paths" assertions that legitimately count 2 (audio zones, the roster, kill-feed clips); caught by the
+suite, reverted with `git checkout -- tests/`, redone scoped to the 19 files that actually reference the
+block. And my replacement pin `/g\.view==='chase'/` silently matched the tail of `gameCfg.view==='chase'`
+as well — six hits where one was meant. **A short variable name in a source pin is a substring of everything
+that ends with it**; that one asks `extractFunction('_applyGameCfg')` instead.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

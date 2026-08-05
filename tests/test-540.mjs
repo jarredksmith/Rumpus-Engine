@@ -1,4 +1,6 @@
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
+/* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
+
 const src = gameSource();
 // build 694: authorable win/lose screen messages. gameCfg.winText / loseText render on the victory / defeat
 // screens (escaped), so an adventure can end on a line of story. Puzzle mode also gets sensible default headlines.
@@ -7,7 +9,7 @@ const src = gameSource();
 assert(/winText:  \(savedLevel && savedLevel\.game && typeof savedLevel\.game\.winText==='string'\)  \? savedLevel\.game\.winText\.slice\(0,240\)  : ''/.test(src), 'gameCfg.winText seeded from the save');
 assert(/loseText: \(savedLevel && savedLevel\.game && typeof savedLevel\.game\.loseText==='string'\) \? savedLevel\.game\.loseText\.slice\(0,240\) : ''/.test(src), 'gameCfg.loseText seeded from the save');
 assert(/winText: \(gameCfg\.winText\|\|''\)\.slice\(0,240\), loseText: \(gameCfg\.loseText\|\|''\)\.slice\(0,240\)/.test(src), 'serialized with the level');
-assert((src.match(/gameCfg\.winText = \(typeof level\.game\.winText==="string"\)/g)||[]).length===2, 'restored in both load paths');
+assert((src.match(/gameCfg\.winText = \(typeof g\.winText==="string"\)/g)||[]).length === 1, 'restored in both load paths');
 
 // --- the screens render the messages, escaped ---
 const gw = extractFunction('gameWon');
