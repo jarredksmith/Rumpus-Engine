@@ -33062,7 +33062,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1397 · 2026-08-05';
+const BUILD_VERSION = 'build 1398 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34216,18 +34216,46 @@ function setPropDynamic(obj, on){
   }
 }
 // Apply saved/synced dynamic state (mass, breakable, hp) to a freshly-spawned prop.
+// build 1398 — REPORTED FROM PLAY: "marking a prop as a target that is breakable doesn't save with the
+// level. When I re-open or refresh, I can't break the prop and have to go back and tick the box again."
+//
+// The flag SAVED correctly. It was never READ BACK. This function opened with `if(!p || !p.dyn) return;` and
+// build 1390 put the static-target restore INSIDE it — below a gate a static target can never pass, because
+// a static target has `sht:1` and no `dyn`. So `propEntry` wrote `sht`, `hp` and `bst`, the file carried
+// them, and the loader returned at its first line.
+//
+// THE WRITE SIDE WAS ALREADY SPLIT AND THE READ SIDE NEVER WAS. `propEntry` has three tiers — `par` at the
+// top level, a `phys` block for the BODY, and a `phys || shootable` block for being DAMAGEABLE — and this
+// had one gate covering all three. It mirrors the serializer now, tier for tier.
+//
+// It also fixes a second live bug nobody reported: `p.par` is read HERE and nowhere else, so build 1309's
+// own stated commonest case — "a STATIC crate on a lift" — has never restored its parent either. That build
+// deliberately put `e.par` at the TOP LEVEL of the serializer so a static prop could carry it, and its
+// counterpart sat behind the dynamic gate the whole time.
+//
+// The name is now a lie and is deliberately left alone: renaming moves a dozen pins for no behaviour, and
+// the name is precisely what made 1390 drop a static field in here without noticing the gate. Read the
+// tiers, not the name.
 function applyPropDynState(obj, p){
-  if(!p || !p.dyn) return;
-  setPropDynamic(obj, true);
-  if(p.ng) obj.userData.noGrab=true;
-  if(p.glbl) obj.userData.grabLabel = String(p.glbl).slice(0,80);   // build 679: custom grab prompt label
-  if(p.grng>0) obj.userData.grabRange = +p.grng;   // build 683: per-prop grab distance
-  if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse; }
-  if(p.mass!=null) obj.userData.mass = p.mass;
+  if(!p) return;
+  // ---- tier 1: any prop at all --------------------------------------------------------------------
+  if(p.par){ obj.userData.parNid = String(p.par).slice(0,64); if(typeof _pntMark==='function') _pntMark(); }   // build 1309: resolved lazily — props load async, so the parent may not exist yet
+  // ---- tier 2: a BODY. Mass, grabbing and fire are about having one. ------------------------------
+  if(p.dyn){
+    setPropDynamic(obj, true);
+    if(p.ng) obj.userData.noGrab=true;
+    if(p.glbl) obj.userData.grabLabel = String(p.glbl).slice(0,80);   // build 679: custom grab prompt label
+    if(p.grng>0) obj.userData.grabRange = +p.grng;   // build 683: per-prop grab distance
+    if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse; }
+    if(p.mass!=null) obj.userData.mass = p.mass;
+  }
+  // ---- tier 3: being DAMAGEABLE, which a bolted-down target is too --------------------------------
+  // The condition mirrors propEntry's `o.userData.phys || o.userData.shootable` exactly. `sht` is read
+  // FIRST so the flag is on the prop before anything below it could want to ask.
+  if(p.sht) obj.userData.shootable = true;   /* build 1390 */
+  if(!p.dyn && !p.sht) return;
   if(p.hsn) obj.userData.hitSnd = String(p.hsn).slice(0,300);   // build 1305
   if(p.bsn) obj.userData.breakSnd = String(p.bsn).slice(0,300);   // build 1314
-  if(p.par){ obj.userData.parNid = String(p.par).slice(0,64); if(typeof _pntMark==='function') _pntMark(); }   // build 1309: resolved lazily — props load async, so the parent may not exist yet
-  if(p.sht) obj.userData.shootable = true;   /* build 1390 */
   if(p.brk===false){ obj.userData.breakable = false; }
   else { obj.userData.breakable = true; if(p.obj) obj.userData.objective=true; if(p.hp!=null){ obj.userData.maxHp = p.hp; obj.userData.hp = p.hp; } obj.userData.breakStyle = (p.bst==='puff') ? 'puff' : 'shatter';
     if(p.fc!=null) obj.userData.fragCount = p.fc;
