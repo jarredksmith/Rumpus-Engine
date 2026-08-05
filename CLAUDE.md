@@ -1098,6 +1098,60 @@ vanishing on import and `ls tests | wc -l` reading 1128 against 1134. `git log` 
 `git fetch origin <branch> && git reset --hard FETCH_HEAD` restored everything, because every build is
 pushed the moment it lands. Fourteenth occurrence; the protocol cost about ninety seconds.
 
+## A target can be shot without having to be a physics body (build 1390)
+
+Asked for by the level being built toward this engine — a county-fair gauntlet whose first booth is a
+shooting range. `damageProp`'s first line was `if(!obj.userData.phys || obj.userData.breakable===false)
+return false;` and the editor's **Breakable** checkbox lived inside `if(sel.userData.phys){`. So the only
+way to make anything shootable was to make it a **dynamic rigid body** — it wobbles, gets shoved, falls
+over, and streams in the multiplayer snapshot. Exactly wrong for a steel plate or a paper target.
+
+**The opt-in could NOT have been `breakable`, and checking that is what saved this build from breaking every
+level ever saved.** `applyPropDynState` sets `userData.breakable = true` on EVERY prop it loads unless the
+file says `brk:false`. Relaxing the gate to accept `breakable === true` would have made **every wall in
+every level shootable**. `shootable` is a new flag defaulting to undefined, so nothing that exists today
+changes by one byte — asserted by executing the predicate on `{breakable:true}` and getting `false`.
+
+Three places had to follow it, and each was a defect on its own:
+- **`explodeAt` sweeps `dynamicProps`**, which a static target is not in — so a grenade at the range would
+  have left every plate standing while the crates beside them broke. A second opt-in-only sweep covers them.
+- **The serializer's destruction fields were inside `if(o.userData.phys){`**, so a target saved neither its
+  flag nor its HP and came back an ordinary indestructible box on the next load. The round-trip probe found
+  that; the block moved out to `if(phys || shootable)`, while mass, grabbing and fire stayed inside, because
+  those are about a BODY.
+- **The editor's destruction controls had the same gate**, so the feature would have had no door (1348).
+
+### And a LIVE defect found on the way, which predates this build
+
+`shatterProp`'s static branch spliced the collider out of the list and **left the Rapier rigid body in the
+physics world** — an invisible wall that dynamic props bounce off. Build 1194 fixed exactly this for
+`hideprop`; this branch never got it. It was reachable *before* this build through the logic graph's
+`delprop` on a static prop, and every static target would have hit it on the shot that killed it.
+
+### Measured live
+
+```
+a plain static wall          999 damage -> refused, all 50 HP intact   (every existing level unchanged)
+a target that opted in       30 -> 20 -> shattered, never in dynamicProps
+the Rapier body              created (positive control) -> released, _physStatic null
+an explosion                 reaches static targets
+round trip                   { sht:1, hp:30 }
+```
+
+**The Rapier check was VACUOUS on its first run** — the probe's prop had no body at all, so "no leak" was
+true for the wrong reason and I nearly recorded the fix on no evidence. The control (`addStaticColliderFor`
+first, then assert the body existed) is what makes the second run mean anything. Same lesson as build 1316's:
+*before believing a null result, prove the instrument can produce a positive one.*
+
+**A naming note that cost one test run:** the destruction fields live in `applyPropDynState`, not in
+`_applyPropEntry` — the latter delegates to it on its first line. Build 1280's one-apply-site property holds
+one level down, and the test asserts both halves so the delegation cannot quietly disappear.
+
+### Still open for the range booth
+
+A destroyed target cannot come back during play: `restoreDestroyedProps()` has exactly two call sites, the
+deploy path and entering the editor. A `resetprop` verb is the next build.
+
 ## Relief that describes the same surface as the colour (build 1387)
 
 The critic's second verified finding: `PROC_SLOTS` is `normalMap` + `roughnessMap` fed ONLY by build 1139's

@@ -30026,6 +30026,11 @@ function explodeAt(pos, R, dmg, byId){
   { const d=player.pos.distanceTo(pos); if(d<R){ const f=1-d/R, pd=dmg*f, kx=player.pos.x-pos.x, kz=player.pos.z-pos.z, kh=Math.hypot(kx,kz)||1, LP=(worldCfg&&+worldCfg.launchPower)||1, kb=(8+R*1.2)*f*LP; player.extVel.x+=kx/kh*kb; player.extVel.z+=kz/kh*kb; player.vel.y=Math.max(player.vel.y,(5+R*0.6)*f*LP); player.onGround=false; if(!pvpMode()) applyEnemyDamageToSelf(pd, pos.x, pos.z); else if(!duelDead) applyPvpDamage(pd, byId); } }   // explosions launch you too (rocket / prop blasts), on top of the damage
   // chain reaction: damage nearby breakable props (explosive ones detonate; the _shattered guard stops loops)
   for(const o of dynamicProps.slice()){ if(!o.userData || o.userData._shattered || o.userData.breakable===false || !o.userData.phys) continue; const d=o.position.distanceTo(pos); if(d>0.01 && d<R) damageProp(o, dmg*(1-d/R), null, null, 6, byId); }
+  /* build 1390: static TARGETS are not in `dynamicProps`, so a grenade at the range would have left every
+     plate standing while the crates beside them broke. Opt-in, so a level with none pays one flag test. */
+  for(const o of propModels){ if(!o || !o.userData || !o.userData.shootable || o.userData.phys) continue;
+    if(o.userData._shattered || o.userData._destroyed || o.userData.breakable===false) continue;
+    const d=o.position.distanceTo(pos); if(d>0.01 && d<R) damageProp(o, dmg*(1-d/R), null, null, 6, byId); }
 }
 // ---------- Camera shake ----------
 let shake = 0;                 // current trauma 0..1, decays each frame
@@ -32858,7 +32863,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1388 · 2026-08-05';
+const BUILD_VERSION = 'build 1390 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34023,6 +34028,7 @@ function applyPropDynState(obj, p){
   if(p.hsn) obj.userData.hitSnd = String(p.hsn).slice(0,300);   // build 1305
   if(p.bsn) obj.userData.breakSnd = String(p.bsn).slice(0,300);   // build 1314
   if(p.par){ obj.userData.parNid = String(p.par).slice(0,64); if(typeof _pntMark==='function') _pntMark(); }   // build 1309: resolved lazily — props load async, so the parent may not exist yet
+  if(p.sht) obj.userData.shootable = true;   /* build 1390 */
   if(p.brk===false){ obj.userData.breakable = false; }
   else { obj.userData.breakable = true; if(p.obj) obj.userData.objective=true; if(p.hp!=null){ obj.userData.maxHp = p.hp; obj.userData.hp = p.hp; } obj.userData.breakStyle = (p.bst==='puff') ? 'puff' : 'shatter';
     if(p.fc!=null) obj.userData.fragCount = p.fc;
@@ -34829,7 +34835,14 @@ function shatterProp(obj, point, dir, power, byId){
     obj.userData._destroyHome = { p:(obj.userData.physHome||obj.position).clone(), q:(obj.userData.physHomeQ||obj.quaternion).clone() };
     obj.userData._wasDyn = !!obj.userData.phys;
     if(obj.userData.phys && typeof removeDynamicProp==='function') removeDynamicProp(obj);
-    else { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false; }
+    else { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false;
+      /* build 1390: and its RAPIER BODY, or a destroyed static prop leaves an invisible physics wall that
+         dynamic props bounce off. Build 1194 fixed exactly this for `hideprop` and this branch never got
+         it — a live defect BEFORE this build, reachable through the logic graph's `delprop` on a static
+         prop, and one that every static target would have hit the moment it shattered. */
+      if(obj.userData._physStatic && typeof physWorld!=='undefined' && physWorld){
+        try{ physWorld.removeRigidBody(obj.userData._physStatic); }catch(e){}
+        obj.userData._physStatic = null; } }
     obj.userData._destroyed = true; obj.visible=false; if(obj.parent) scene.remove(obj);
     return;
   }
@@ -34839,8 +34852,18 @@ function shatterProp(obj, point, dir, power, byId){
   scene.remove(obj);
 }
 // Damage a breakable prop; returns true if it shattered.
+// build 1390: a target at a shooting range is BOLTED DOWN. Until now `damageProp` refused any prop that
+// was not `phys`, and the editor's Breakable checkbox lived inside `if(sel.userData.phys)` — so the only
+// way to make something shootable was to make it a dynamic rigid body, which wobbles, gets shoved, falls
+// over and streams in the multiplayer snapshot. Exactly wrong for a steel plate or a paper target.
+//
+// The opt-in is its OWN flag and could NOT have been `breakable`: `_applyPropEntry` sets
+// `userData.breakable = true` on EVERY prop it loads unless the file says `brk:false`, so reusing it would
+// have made every wall in every level ever saved shootable. `shootable` defaults to undefined, so nothing
+// that exists today changes by one byte.
 function damageProp(obj, dmg, point, dir, power, byId){
-  if(!obj.userData.phys || obj.userData.breakable===false) return false;
+  if(obj.userData.breakable===false) return false;
+  if(!obj.userData.phys && !obj.userData.shootable) return false;
   if(obj.userData.hp==null) obj.userData.hp = defaultHpFor(obj);
   // build 629: a fused explosive that isn't lit yet — the FIRST shot LIGHTS it (then it blows on its own fuse)
   // instead of taking the killing damage, so "shoot the barrel, watch it catch, and run" works even when the shot
@@ -41982,12 +42005,20 @@ function propEntry(o){
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
     if(o.userData.grabRange>0 && o.userData.noGrab!==true) e.grng = +o.userData.grabRange;   // build 683: per-prop grab distance
     if(o.userData.onFire){ e.fire=1; if(o.userData.fireDps!=null) e.fdps=o.userData.fireDps; if(o.userData.fireFuse!=null) e.ffuse=o.userData.fireFuse; }
+  }
+  /* build 1390: everything below describes being DESTROYED, which a static target does too — so it sits
+     outside the physics gate. Written first, this block was INSIDE it, and a target serialized neither its
+     `sht` flag nor its HP: it came back an ordinary indestructible box on the next load. Found by the
+     round-trip probe, exactly as build 1309's warning below says to. Mass, grabbing and fire above stay
+     dynamic-only, because those are about a BODY. */
+  if(o.userData.phys || o.userData.shootable){
     /* build 1309: DO NOT put a statement between this `if` and its `else`. Build 1305 inserted the impact
        sound here and the `else` below silently re-bound to IT — so any prop carrying a hit sound stopped
        serializing its health, break style, objective flag and explosive settings. Caught by this build's
        round-trip probe, not by 1305's, which only checked the field it had just added. */
     if(o.userData.hitSnd) e.hsn = String(o.userData.hitSnd).slice(0,300);   // build 1305: this prop's own impact sound
     if(o.userData.breakSnd) e.bsn = String(o.userData.breakSnd).slice(0,300);   // build 1314: ...and the one it makes breaking
+    if(o.userData.shootable) e.sht=1;   /* build 1390: a static target. Written ONLY when set, so a level with none is byte-identical to before this build. */
     if(o.userData.breakable===false) e.brk=false;   // breakable defaults true; only store when off
     else { if(o.userData.maxHp!=null) e.hp=o.userData.maxHp; if(o.userData.breakStyle==='puff') e.bst='puff'; if(o.userData.objective) e.obj=1;
       if(o.userData.fragCount!=null) e.fc=o.userData.fragCount;
@@ -47038,6 +47069,20 @@ function renderEditorFields(){
         pcb.onchange=()=>{ pushUndoSnapshot(); setPropDynamic(sel, pcb.checked); renderEditorFields(); };
         const pspan=document.createElement('span'); pspan.textContent='Dynamic (reacts to physics)';
         plab.appendChild(pcb); plab.appendChild(pspan); pdBody.appendChild(plab);
+        // build 1390: a STATIC target. Offered only when the prop is NOT dynamic, because for a dynamic
+        // prop `breakable` already means this and two checkboxes saying the same thing is worse than one.
+        if(!sel.userData.phys){
+          const shl=document.createElement('label'); shl.style.cssText='display:flex;align-items:center;gap:7px;color:#ffd166;font-size:12px;margin-top:6px;cursor:pointer;';
+          const shcb=document.createElement('input'); shcb.type='checkbox'; shcb.checked=!!sel.userData.shootable; shcb.style.accentColor='#ffd166';
+          shcb.onchange=()=>{ pushUndoSnapshot(); sel.userData.shootable=shcb.checked;
+            if(shcb.checked && sel.userData.maxHp==null){ sel.userData.maxHp = defaultHpFor(sel); sel.userData.hp = sel.userData.maxHp; }
+            renderEditorFields(); };
+          const shsp=document.createElement('span'); shsp.innerHTML='<b>\ud83c\udfaf Shootable target</b> \u2014 takes damage while staying bolted down';
+          shl.appendChild(shcb); shl.appendChild(shsp); pdBody.appendChild(shl);
+          const shh=document.createElement('div'); shh.className='hint'; shh.style.marginTop='3px';
+          shh.textContent = 'For a range target, a breakable crate or a destructible wall panel: it takes shots and shatters without ever being pushed around.';
+          pdBody.appendChild(shh);
+        }
         if(sel.userData.phys){
           // Weight (mass): higher = harder to knock around
           if(sel.userData.mass==null) sel.userData.mass = defaultMassFor(sel);
@@ -47097,6 +47142,10 @@ function renderEditorFields(){
             mkF('Burn dmg',0,60,1,(sel.userData.fireDps!=null?sel.userData.fireDps:12),(m)=>m+'/s',(m)=>sel.userData.fireDps=m);
             const fn=document.createElement('div'); fn.className='hint'; fn.style.marginTop='3px'; fn.textContent = sel.userData.explosive ? 'Lit from the moment the level loads, dealing contact damage. For a barrel you SHOOT to light, leave this OFF and set a Fuse under \u{1F4A5} Explosive below.' : 'Lit from the start, dealing contact damage to anyone near it. Turn on Explosive too for a barrel that burns and then blows.'; pdBody.appendChild(fn);
           }
+        }
+        /* build 1390: the destruction controls belong to anything that can be DESTROYED — a dynamic prop
+           or a static target. Mass and grabbing above stay dynamic-only, because they are about a body. */
+        if(sel.userData.phys || sel.userData.shootable){
 
           // Destructible: take damage from shots and shatter into debris at 0 HP
           if(sel.userData.breakable==null) sel.userData.breakable = true;
