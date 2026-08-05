@@ -155,12 +155,12 @@ const src = gameSource();
   assert(/_odField\(_odP \+ vec3\(_odE,0\.0,0\.0\)\) - _odBase/.test(fn), '...and the normal patch differences against it');
 
   // roughness must stay in range whatever the noise does
-  assert(/roughnessFactor = clamp\(roughnessFactor \* mix\(1\.0 - uOdRough, 1\.0 \+ uOdRough, _odBase\), 0\.03, 1\.0\)/.test(fn),
+  assert(/roughnessFactor = clamp\(roughnessFactor \* mix\(1\.0 - uOdRough\*uOdOn, 1\.0 \+ uOdRough\*uOdOn, _odBase\), 0\.03, 1\.0\)/.test(fn),
     'roughness is a bounded MULTIPLIER of the authored value, so an author\'s choice is modulated and never replaced');
   // the perturbation must not tilt the normal off its own surface
   assert(/_odG -= normal \* dot\(_odG, normal\);/.test(fn),
     'the gradient is projected onto the tangent plane, so the perturbation cannot rotate the normal away from the surface');
-  assert(/normal = normalize\(normal \+ _odG \* uOdBump\);/.test(fn), '...and the result is renormalised');
+  assert(/normal = normalize\(normal \+ _odG \* uOdBump \* uOdOn\);/.test(fn), '...and the result is renormalised');
 }
 {
   // the noise is a hash, so it needs no texture and therefore no UVs — which is the entire point

@@ -10194,6 +10194,13 @@ function applyObjDetail(mat, freq, albOnly){
     /* build 1382: per-material, defaulting to the detail amplitude — the macro layer needs its own, and a
        uniform written before its shader exists is a write to nothing (1379), so it lives on the material */
     shader.uniforms.uOdAlb = { value: (mat.userData._odAmp > 0) ? mat.userData._odAmp : OBJ_DETAIL_ALB };
+    /* build 1393: ONE per-material switch multiplying every amplitude below, so a creator can ask for a
+       plain flat colour. It has to be a uniform rather than an un-patch: `uOdBump` and `uOdTexN` are shared
+       BY REFERENCE (they carry the adaptive ladder's fade), so there is no per-material value to zero, and
+       removing the onBeforeCompile would recompile every material in the batch. A uniform write is free and
+       reaches the live frame. Read from the material because a uniform written before its shader exists is
+       a write to nothing (1379) — a prop is marked plain at SPAWN, long before its first render. */
+    shader.uniforms.uOdOn = { value: (mat.userData._odOn === 0) ? 0 : 1 };
     if(texOn){
       shader.uniforms.uOdTex  = _propTexU;                       /* BY REFERENCE: one texture, every prop */
       shader.uniforms.uOdTexM = { value: PROP_TEX_LUM };
@@ -10208,7 +10215,7 @@ function applyObjDetail(mat, freq, albOnly){
     // _odP and _odBase are shader-globals on purpose: three's meshphysical fragment shader runs
     // roughnessmap_fragment BEFORE normal_fragment_maps, so the field is evaluated once in the first
     // patch and reused by the second — four noise evaluations per pixel instead of five.
-    shader.fragmentShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump; uniform float uOdAlb;\n'
+    shader.fragmentShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump; uniform float uOdAlb; uniform float uOdOn;\n'
       + (texOn ? 'uniform sampler2D uOdTex; uniform float uOdTexM; uniform float uOdTexA; uniform float uOdTexF; uniform float uOdTexN;\n' : '')
       + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase; float _odTexL;\n' + shader.fragmentShader
       // build 1379: the field is evaluated HERE now, at map_fragment, because that is the earliest chunk
@@ -10224,13 +10231,13 @@ function applyObjDetail(mat, freq, albOnly){
         // EXPOSURE-NEUTRAL BY CONSTRUCTION: the field's mean is 0.5, so the multiplier's mean is exactly
         // 1.0 and the surface's mean albedo — the thing every level's lighting was tuned against — does
         // not move. That is the whole reason this can be retrofitted onto colours creators already chose.
-        'diffuseColor.rgb *= mix(1.0 - uOdAlb, 1.0 + uOdAlb, _odBase);',
+        'diffuseColor.rgb *= mix(1.0 - uOdAlb*uOdOn, 1.0 + uOdAlb*uOdOn, _odBase);',
         // build 1384: TRIPLANAR, in the same object space the noise already uses. A primitive's UVs run
         // 0..1 per FACE whatever that face's real size is, so a stretched box would stretch the texture —
         // build 1378's 17:1 boundary wall, one layer down. Projecting from vOdPos cannot stretch, needs no
         // UVs at all, and stays locked to the object as it moves (1145's reason for object space).
         (texOn ? [
-          'if( uOdTexA > 0.0 ){',
+          'if( uOdTexA * uOdOn > 0.0 ){',
           '  vec3 _tb = abs(normalize(vOdNrm)); _tb = _tb*_tb; _tb = _tb*_tb; _tb /= max(1e-4, _tb.x+_tb.y+_tb.z);',
           '  vec2 _tf = vec2(uOdTexF);',
           '  vec3 _ts = texture2D(uOdTex, vOdPos.zy*_tf).rgb*_tb.x',
@@ -10241,7 +10248,7 @@ function applyObjDetail(mat, freq, albOnly){
           // decode with the exact sRGB EOTF, because uOdTexM is the mean of this same quantity
           '  float _tl = (_ty <= 0.04045) ? (_ty/12.92) : pow((_ty+0.055)/1.055, 2.4);',
           '  _odTexL = _tl;',   /* the SAME sample the albedo used — that is what makes the relief describe the same surface (build 1387's rule, one layer down) */
-          '  diffuseColor.rgb *= mix(1.0, _tl/uOdTexM, uOdTexA);',
+          '  diffuseColor.rgb *= mix(1.0, _tl/uOdTexM, uOdTexA * uOdOn);',
           '}',
         ].join('\n') : ''),
       ].join('\n'))
@@ -10249,7 +10256,7 @@ function applyObjDetail(mat, freq, albOnly){
       // is declared by the chunk, so the patch has to come AFTER it.
       .replace('#include <roughnessmap_fragment>', albOnly ? '#include <roughnessmap_fragment>' : [
         '#include <roughnessmap_fragment>',
-        'roughnessFactor = clamp(roughnessFactor * mix(1.0 - uOdRough, 1.0 + uOdRough, _odBase), 0.03, 1.0);',
+        'roughnessFactor = clamp(roughnessFactor * mix(1.0 - uOdRough*uOdOn, 1.0 + uOdRough*uOdOn, _odBase), 0.03, 1.0);',
       ].join('\n'))
       // Then the normal. A low-poly facet is ONE flat shading value across its whole area, which is the
       // single loudest "this is an untextured model" tell; a few degrees of micro-relief is what breaks
@@ -10278,7 +10285,7 @@ function applyObjDetail(mat, freq, albOnly){
         // The branch condition is TWO UNIFORMS, deliberately: a derivative taken inside non-uniform control
         // flow is undefined in GLSL ES, so every dFdx/dFdy here has to sit where the whole quad agrees it
         // runs. That is also why the degenerate case is a SELECT at the end rather than an early out.
-        'if( uOdTexN > 0.0 && uOdTexA > 0.0 ){',
+        'if( uOdTexN > 0.0 && uOdTexA * uOdOn > 0.0 ){',
         '  vec3 _bSx = dFdx( -vViewPosition ), _bSy = dFdy( -vViewPosition );',
         '  float _bH = _odTexL * uOdTexN;',
         '  float _bHx = dFdx( _bH ), _bHy = dFdy( _bH );',
@@ -10300,7 +10307,7 @@ function applyObjDetail(mat, freq, albOnly){
         '                   _odField(_odP + vec3(0.0,_odE,0.0)) - _odBase,',
         '                   _odField(_odP + vec3(0.0,0.0,_odE)) - _odBase);',
         '  _odG -= normal * dot(_odG, normal);',
-        '  normal = normalize(normal + _odG * uOdBump);',
+        '  normal = normalize(normal + _odG * uOdBump * uOdOn);',
         '}',
       ].join('\n'));
   };
@@ -10365,7 +10372,15 @@ function installObjDetail(root, cycles){
 // branch wrote null — all before the first frame was ever drawn. Every path that CLEARS an authored
 // texture now restores this instead, which also means clearing a floor texture in the editor returns
 // the surface to detailed rather than to flat albedo.
-function _procFallback(mat, slot){ const s = mat && mat.userData && mat.userData.procSurf; return (s && s[slot]) || null; }
+// build 1393: a PLAIN material has no fallback. This is the single point every "put the detail back" path
+// goes through — clearing a prop texture, clearing a floor texture, a future caller nobody has written yet
+// — and gating it here is what stops the opt-out losing to it. Build 1324 shipped that exact defect the
+// other way round: `noCol` was written as "emit no boxes" and build 1148's fail-solid fallback silently put
+// one box back, with the flag set, correctly serialized, and every source pin passing.
+function _procFallback(mat, slot){
+  if(mat && mat.userData && mat.userData._odOn === 0) return null;
+  const s = mat && mat.userData && mat.userData.procSurf; return (s && s[slot]) || null;
+}
 const floorMat = new THREE.MeshPhysicalMaterial({ color:0x141c22, roughness:.95, metalness:.1,
   polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1 });
 // build 1139: the floor plane's UVs span the whole 2*ARENA quad, so its tiling is derived from the arena
@@ -15484,6 +15499,55 @@ function applyPropOpacity(obj, op){
 }
 // The cutoff itself: a pixel with alpha below it is DISCARDED. 0 turns the whole thing off and restores
 // exactly the blending path above, so a prop authored before this build is byte-identical.
+// ---- build 1393: PLAIN ------------------------------------------------------------------------------
+// Reported from play, in the same message as 1392's defect: "There needs to be a way to remove the default
+// material and texture of primitives. The user may want just a solid color primitive without texture or
+// materials, and right now there is no way to do that."
+//
+// Verified, and it is four systems deep. A primitive's material is built by `primitiveMat()`, which calls
+// `applyProcSurface(mat, 1, true)`, and that hands it:
+//
+//   build 1139   a procedural normalMap + roughnessMap  (PROC_SLOTS — real texture slots)
+//   build 1379   an albedo noise term                   (uOdAlb)
+//   build 1384   a triplanar texture modulation         (uOdTex / uOdTexA)
+//   build 1388   relief derived from that same sample   (uOdTexN)
+//
+// Each was retrofitted onto colours creators had already chosen and each is exposure-neutral by
+// construction, which is exactly why none of them ever needed an off switch — and why, four builds deep,
+// there was no way to say "no, I want the flat colour I picked". Every one of those builds was right about
+// the default and none of them asked whether the default should be the only option.
+//
+// ONE WRITER, and one switch: the flag lives on the PROP, and the two mechanisms it drives (a uniform and
+// two texture slots) are set here and nowhere else. Two functions writing the same material state is the
+// defect this file has recorded seven times.
+function applyPropPlain(obj, on){
+  if(!obj || !isMatPrimitive(obj.userData.src)) return;
+  const p = !!on;
+  if(p) obj.userData.plain = true; else delete obj.userData.plain;
+  eachPrimMesh(obj, o=>{
+    const m = o.material; if(!m) return;
+    if(!m.userData) m.userData = {};
+    /* the shader half — one uniform, no recompile, reaching the live frame immediately */
+    m.userData._odOn = p ? 0 : 1;
+    const u = m.userData._odU; if(u && u.uOdOn) u.uOdOn.value = p ? 0 : 1;
+    /* the texture half. These are REAL map slots, so changing them flips three's USE_NORMALMAP /
+       USE_ROUGHNESSMAP defines and recompiles — acceptable, because this is an editor action and the
+       editor is not play (the rule builds 636/977/1153/1155 wrote for lights). Only OUR OWN textures are
+       touched: `_procFallback` is what the detail set was remembered as (1139), so a creator's authored
+       normal or roughness map is neither cleared nor restored over. */
+    /* the REMEMBERED set, read directly and not through _procFallback — that function now answers null for
+       a plain material, which is the point of it, and asking it here would mean never finding the textures
+       this is trying to clear. The one caller that needs the raw value is the one that owns the flag. */
+    const set = m.userData.procSurf;
+    let hit = false;
+    for(const k of PROC_SLOTS){
+      const ours = set && set[k]; if(!ours) continue;
+      if(p){ if(m[k] === ours){ m[k] = null; hit = true; } }
+      else if(!m[k]){ m[k] = ours; hit = true; }
+    }
+    if(hit) m.needsUpdate = true;
+  });
+}
 function applyPropCutout(obj, cut){
   if(!obj || !isMatPrimitive(obj.userData.src)) return;
   const c = Math.max(0, Math.min(CUT_MAX, +cut || 0));
@@ -15504,6 +15568,9 @@ function applyStoredMaterial(obj, mat){
   if(mat.op!=null) applyPropOpacity(obj, mat.op);   // build 871: glass carries through save/share/net
   /* build 1340: AFTER opacity, because a cutout overrides it and the last call decides — see _applyPropBlend */
   if(mat.cut!=null) applyPropCutout(obj, mat.cut);
+  /* build 1393: LAST, deliberately. applyPropTexture can rewrite the map slots this reads, and the flag
+     describes the finished surface — so it is applied after everything that could put detail back. */
+  if(mat.pln) applyPropPlain(obj, true);
 }
 // Each primitive is authored to fit a 1×1×1 footprint with its base at y=0, so scale + floor-snapping
 // behave exactly like the box (and the collider/heightfield raycast works the same way).
@@ -32878,7 +32945,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1392 · 2026-08-05';
+const BUILD_VERSION = 'build 1393 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35123,7 +35190,10 @@ function _instKey(o){
   const sh = o.userData.shine || { r:PRIM_DEFAULT_ROUGH, m:PRIM_DEFAULT_METAL };
   const rep = (typeof _procRepeatFor==='function') ? _procRepeatFor(_propProcSpan(o)) : 0;
   return o.userData.src + '|' + col + '|' + (+sh.r).toFixed(3) + '|' + (+sh.m).toFixed(3)
-       + '|' + (o.userData.op != null ? (+o.userData.op).toFixed(3) : '1') + '|' + rep;
+       + '|' + (o.userData.op != null ? (+o.userData.op).toFixed(3) : '1') + '|' + rep
+       /* build 1393: a batch clones ONE member's material, so a plain prop and a detailed one sharing a key
+          would give whichever sorted first its surface to both. */
+       + (o.userData.plain ? '|P' : '');
 }
 // build 1192: IMPORTED MODELS instance too. Fifty copies of a tree were fifty full draw hierarchies;
 // they are now one InstancedMesh per (geometry, material) part of a shared template. Eligibility is
@@ -42012,6 +42082,7 @@ function propMaterialDesc(o){
   if(o.userData.shine && (Math.abs(o.userData.shine.r-PRIM_DEFAULT_ROUGH)>1e-3 || Math.abs(o.userData.shine.m-PRIM_DEFAULT_METAL)>1e-3)) m.shine = { r:o.userData.shine.r, m:o.userData.shine.m };
   if(o.userData.op!=null && +o.userData.op < 1) m.op = +o.userData.op;   // build 871
   if(o.userData.cut) m.cut = +o.userData.cut;   // build 1340
+  if(o.userData.plain) m.pln = 1;   // build 1393 — only when set, so an ordinary prop's entry does not grow a key
   return Object.keys(m).length ? m : null;
 }
 // Authored position for save/export. build 713: ONLY fall back to physHome while a dynamic prop is actually being
@@ -48211,6 +48282,20 @@ function renderEditorFields(){
       const sHint=document.createElement('div'); sHint.className='hint'; sHint.style.margin='2px 0 0';
       sHint.textContent='Shininess: 0 = flat/matte, 1 = glossy highlights. Metalness pushes toward a polished-metal look (best with some shininess). Opacity under 1 makes it see-through — glass = low opacity + high shininess, frosted plastic = mid opacity + low shininess. It stays solid to walk on and shoot.';
       matHost.appendChild(sHint);
+      /* build 1393: "The user may want just a solid color primitive without texture or materials, and right
+         now there is no way to do that." Reported from play, and true — four builds of procedural detail
+         (1139 relief + roughness, 1379 albedo noise, 1384 texture modulation, 1388 its relief) each arrived
+         switched on with no way off. The checkbox sits under Surface finish because that is what it is
+         about, and it says what it does NOT touch: a texture the creator chose is theirs. */
+      const pOn = !!selObj.userData.plain;
+      const plab=document.createElement('label'); plab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;margin-top:6px;';
+      const pcb=document.createElement('input'); pcb.type='checkbox'; pcb.checked=pOn; pcb.style.accentColor='var(--accent)';
+      const pspan=document.createElement('span'); pspan.textContent='Plain surface (flat colour)';
+      plab.appendChild(pcb); plab.appendChild(pspan); matHost.appendChild(plab);
+      pcb.onchange=()=>{ pushUndoSnapshot(); for(const o of _matTargets()) applyPropPlain(o, pcb.checked); _levelDirty=true; };
+      const pHint=document.createElement('div'); pHint.className='hint'; pHint.style.margin='2px 0 0';
+      pHint.textContent='Plain surface: strips the engine\u2019s own procedural grain \u2014 the fine relief, the roughness variation and the subtle colour break-up every shape carries by default \u2014 and leaves the exact colour you picked, flat. Your own texture, normal or roughness map is not touched: this only removes what the engine added.';
+      matHost.appendChild(pHint);
       const cHint=document.createElement('div'); cHint.className='hint'; cHint.style.margin='4px 0 0';
       cHint.textContent='Cutout: with a texture that has transparency (a PNG leaf, a grate, chain-link), any pixel fainter than this is punched out completely — the shape gets real holes instead of being blended, so it sorts correctly against everything and casts a hole-shaped shadow. Try 0.5. Above 0 it also becomes double-sided, so a flat card is visible from behind. Cutout replaces Opacity: a shape is either punched out or see-through, never both.';
       matHost.appendChild(cHint);

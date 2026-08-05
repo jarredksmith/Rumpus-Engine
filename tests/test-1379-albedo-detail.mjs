@@ -82,7 +82,7 @@ assert(ALB > 0 && ALB < 0.5, 'the albedo swing is a modest fraction (' + ALB + '
 {
   const f = fn('applyObjDetail');
   assert(/\.replace\('#include <map_fragment>'/.test(f), 'the albedo patch anchors on map_fragment');
-  assert(/diffuseColor\.rgb \*= mix\(1\.0 - uOdAlb, 1\.0 \+ uOdAlb, _odBase\);/.test(f),
+  assert(/diffuseColor\.rgb \*= mix\(1\.0 - uOdAlb\*uOdOn, 1\.0 \+ uOdAlb\*uOdOn, _odBase\);/.test(f),
     '...and multiplies diffuseColor by the centred term, not by the raw field');
   assert(/_odP = vOdPos \* uOdFreq;[\s\S]{0,80}_odBase = _odField\(_odP\);[\s\S]{0,900}diffuseColor\.rgb \*=/.test(f),
     'the field is evaluated BEFORE it is used — reading _odBase before it is written is garbage, not an error');

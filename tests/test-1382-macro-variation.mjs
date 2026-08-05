@@ -110,7 +110,7 @@ const fn = (n) => { const m = src.match(new RegExp('function ' + n + '\\(([\\s\\
   const amp = num('MACRO_DETAIL_ALB');
   assert(amp > 0 && amp < 0.5, 'the macro swing is a bounded fraction (' + amp + ')');
   // Exposure-neutral by the same construction as 1379: mix(1-a, 1+a, field) with a mean-0.5 field.
-  assert(/diffuseColor\.rgb \*= mix\(1\.0 - uOdAlb, 1\.0 \+ uOdAlb, _odBase\);/.test(src),
+  assert(/diffuseColor\.rgb \*= mix\(1\.0 - uOdAlb\*uOdOn, 1\.0 \+ uOdAlb\*uOdOn, _odBase\);/.test(src),
     'it is the SAME centred multiplier as the detail term, so the mean albedo of the ground does not move ' +
     'and build 1360\'s staging and 1378\'s compensation both survive it');
   assert(/shader\.uniforms\.uOdAlb = \{ value: \(mat\.userData\._odAmp > 0\) \? mat\.userData\._odAmp : OBJ_DETAIL_ALB \};/.test(src),

@@ -1765,6 +1765,98 @@ Two pins moved (1295, 1311), both anchored on `if(dynamicProps.length){`. Their 
 — and **`indexOf` returning −1 makes `slice(-1)` hand back the LAST CHARACTER rather than failing**, so a
 drifted anchor tests an empty block and passes on nothing. Both now assert the anchor was found.
 
+## Four builds of detail with no way off (build 1393)
+
+Reported from play, in the same message as 1392's defect: *"There needs to be a way to remove the default
+material and texture of primitives. The user may want just a solid color primitive without texture or
+materials, and right now there is no way to do that."*
+
+Verified, and it is four builds deep. `primitiveMat()` calls `applyProcSurface(mat, 1, true)`, which hands
+every shape:
+
+| build | what it adds | how |
+|---|---|---|
+| 1139 | procedural relief + roughness variation | `PROC_SLOTS` — real texture slots |
+| 1379 | an albedo noise term | `uOdAlb` |
+| 1384 | a triplanar texture modulation | `uOdTex` / `uOdTexA` |
+| 1388 | relief derived from that same sample | `uOdTexN` |
+
+Every one of those was retrofitted onto colours creators had already chosen, every one is exposure-neutral
+by construction, and every one was **right about the default**. None of them asked whether the default should
+be the only option — so four builds later the answer to "I want the flat colour I picked" was: you cannot
+have it. **A default nobody can turn off is not a default, it is a constraint**, and this file's own argument
+for each of those builds (*"this can be retrofitted onto colours creators already chose"*) is exactly the
+argument for letting them decline it.
+
+### It could not be an un-patch, and that decided the shape
+
+`uOdBump` and `uOdTexN` are shared **by reference** — they carry the adaptive ladder's fade (1383), so there
+is no per-material value to zero. And removing `onBeforeCompile` recompiles every material in the batch. So
+the switch is ONE per-material uniform, `uOdOn`, multiplied into all six amplitude sites, plus the two real
+map slots cleared. A uniform write is free and reaches the live frame; the map slots flip a `#define` and
+recompile, which is fine because **this is an editor action and the editor is not play** (the rule builds
+636/977/1153/1155 wrote for lights).
+
+It is read **from the material**, not from `shader.uniforms`: a prop is marked plain at SPAWN, long before
+its first render, and a uniform written before its shader exists is a write to nothing (1379).
+
+**`test-1393` counts the ungated uses rather than listing the gated ones.** Missing one site leaves a term
+plain cannot turn off — which is precisely what build 1392 shipped three days earlier with three resolution
+sites and one changed.
+
+### Where this would have leaked, and it is build 1324's defect in a mirror
+
+`applyPropTexture`'s clear branch restores `_procFallback(m, slot)` — so clearing a texture on a plain prop
+would have put the detail straight back, **with the flag set, correctly serialized, and every source pin
+passing.** That is build 1324's `noCol` verbatim: an opt-out expressed as an absence loses to a fallback
+designed to fail closed.
+
+So `_procFallback` itself answers `null` for a plain material. It is the ONE point every restore path goes
+through — this one, the floor-texture path, and whatever a future build adds — so the opt-out cannot be
+lost to a caller nobody has written yet. The one function that must NOT ask it is `applyPropPlain`, which
+would then never find the maps it is trying to clear; it reads the remembered set directly, and the test
+asserts the absence of the *call*, not of the name.
+
+### Measured, with a control that returns
+
+Pinned top rung, paused, grain and auto-exposure off, on an 8x8 box face whose window was derived by
+projection and then confirmed by reading WHO the renderer drew there:
+
+```
+                 unique colours     mean
+DETAILED               3,785      37,59,44
+PLAIN                  2,134      37,59,45
+DETAILED (control)     3,795      37,59,44      returns to 1.003x
+```
+
+**The mean holding to one code value is the corroboration that matters.** 1379's term is exposure-neutral by
+construction, so switching it off must move the *variation* and not the *brightness* — and it does exactly
+that. 2,134 is still a lot of colours because the surface is LIT: a flat albedo is not a flat pixel, and the
+checkbox does not promise one.
+
+The instancing batch carries it: 2 distinct `_instKey`s, and the plain pair forms its **own** `InstancedMesh`
+with no normal map and `_odOn` 0. Without the key change a batch clones ONE member's material and whichever
+sorted first would give its surface to both.
+
+### Two instrument failures, both reading as "the feature does nothing"
+
+1. **Drawing the canvas into a 2D context returned mean `[0,0,0]` and ONE unique colour in every condition,
+   control included.** `preserveDrawingBuffer` is false — build 1344's lesson #3. The control is the only
+   reason that read as an instrument fault rather than as a null.
+2. With that fixed, the effect measured **0.6% against a control that drifted 1.6%**. The window was on
+   **sky**: the prop had been swept into an `InstancedMesh` at deploy and was not in the scene at all, so
+   editing its material reached nothing drawn — while every state readout (`nrm:false`, `odOn:0`,
+   `uniform:0`) stayed perfectly correct. **Build 1151's "read WHO before attributing anything to a
+   surface", for the fourth time**, and the first time it has been about a prop rather than a floor.
+
+And a third, in the test rather than the probe: the pin asserting `applyPropPlain` does not call
+`_procFallback` was written as a bare name and **matched the comment inside `applyPropPlain` explaining why
+it does not call it.** A pin must not be satisfiable by prose — this file records the same trap under build
+164 and it is now three sessions old.
+
+Seven pins moved (1145 x2, 1379, 1382, 1384, 1388 x2), every one a GLSL literal that gained the multiply,
+every assertion unchanged in intent.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its
