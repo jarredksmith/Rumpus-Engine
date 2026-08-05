@@ -99,12 +99,24 @@ const src = gameSource();
     'the batch fallback material matches its members');
 }
 
-// ---------------------------------------------------------------- the coupling that IS correct stays
+// ------------------------------------------------- what metalness IS allowed to decide (build 1386)
 {
-  // specularIntensity is the dielectric sun-sheen and it genuinely should track the metal slider. Only
-  // the ENVIRONMENT term was wrong; conflating the two is what caused this.
-  assert(/floorMat\.specularIntensity = floorMat\.metalness;/.test(src), 'the floor\'s specular still tracks metalness');
-  assert(/wallMat\.specularIntensity = wallMat\.metalness;/.test(src), 'and the wall\'s');
+  // This block used to read "the coupling that IS correct stays", and pinned specularIntensity tracking
+  // metalness on the grounds that it is "the dielectric sun-sheen and it genuinely should track the metal
+  // slider". Measured in build 1386: it should not. It scales the DIELECTRIC F0 and F90 — the terms that
+  // exist precisely when a surface is NOT metal — so this build fixed one instance of its own thesis and
+  // left the other standing beside it.
+  //
+  // The intent here is unchanged and is now asserted directly rather than by quoting one line: metalness
+  // decides how strongly a surface REFLECTS THE ENVIRONMENT, and it decides nothing else about whether a
+  // surface is lit.
+  assert(/floorMat\.envMapIntensity = _envInten\(floorMat\.metalness, worldCfg\.skyBright\);/.test(src),
+    'the floor\'s environment term is still the one thing metalness drives');
+  assert(/wallMat\.envMapIntensity = _envInten\(wallMat\.metalness, worldCfg\.skyBright\);/.test(src), 'and the wall\'s');
+  const spec = src.match(/^\s*\w+(\.\w+)*\.specularIntensity = [^;]+;/gm) || [];
+  eq(spec.length, 2, 'the two surfaces still set a specular intensity');
+  assert(!spec.some(s => /metalness/.test(s)),
+    '...but no longer from metalness — a dielectric F0 is 0.04 whatever the metal slider says');
 }
 {
   // and the probe itself is unchanged — build 1136's raw-radiance rule and its `sky` scaling still hold,

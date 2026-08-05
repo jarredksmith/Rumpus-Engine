@@ -967,6 +967,97 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The two engine surfaces were the only non-physical materials in the game (build 1386)
+
+The cold critic's #1 was that the frame is *"less flat-COLOURED than before and exactly as flat-LIT — no
+highlight, no fresnel edge, no reflection... nothing tells the eye this is lit, only that it is coloured."*
+Builds 1378-1385 all attacked albedo variation and none of them touched lighting response. The cause was
+one assignment, made twice, and it is **build 1144's mistake one property over**:
+
+    floorMat.specularIntensity = floorMat.metalness;   // "metal 0 => truly matte"
+    wallMat.specularIntensity  = wallMat.metalness;
+
+In r149's `lights_physical_fragment` that property scales **both** dielectric terms:
+
+```glsl
+material.specularF90  = mix( specularIntensityFactor, 1.0, metalnessFactor );
+material.specularColor = mix( min(pow2((ior-1)/(ior+1)) * specularColorFactor, 1.0)
+                              * specularIntensityFactor, diffuseColor.rgb, metalnessFactor );
+```
+
+So the floor at `metalness 0.1` had **F0 = 0.04 x 0.1 = 0.004** — a tenth of what every dielectric in nature
+reflects head-on — and **F90 = mix(0.1, 1.0, 0.1) = 0.19**, where F90 is 1.0 for *every material there is*:
+at grazing incidence everything is a mirror. The wall was 5x and 2.8x off the same two numbers.
+
+**And it was exactly two surfaces, provably.** The physical fragment shader opens
+`#ifdef PHYSICAL / #define IOR / #define SPECULAR`, so that branch is reached by a `MeshPhysicalMaterial`
+and by nothing else — and the engine constructs exactly two, `floorMat` and `wallMat`. Every other material
+in the file is a `MeshStandardMaterial`, which takes the chunk's `#else`: F0 0.04, F90 1.0, already
+physical. **The ground plane and the boundary walls were the only surfaces in the game that were not**, and
+they are the largest in any frame.
+
+*"Matte" is high ROUGHNESS, not absent specular.* `floorRough` is already 0.95, which spreads the lobe until
+it reads as concrete. Killing F0 as well does not make a surface matte; it makes it not a material.
+
+### Measured, with the control that makes it mean something
+
+266 pixels, each **raycast-proven to be the floor mesh** and proven unoccluded toward the sun — the window
+is derived by projecting two ground points at fixed forward distance, never picked by eye. World paused,
+grain and auto-exposure off:
+
+```
+control (0.1 vs 0.1)      0.00%      <- byte-identical, so the noise floor is zero
+shipped 0.1 -> 1.0      +38.00%      near band (15.6 m) +29.6%   far band (68.6 m) +54.2%
+10x overdrive          +152.52%      <- monotonic: the instrument can produce a positive
+return to 0.1             0.00%
+```
+
+**The gain grows with the grazing angle, and that is the finding rather than the +38%.** A flat lift cannot
+have that shape; F90 is the only term in the pipeline that does. It is a Fresnel gradient appearing on a
+surface that had none.
+
+In the SHIPPED configuration — auto-exposure left live at 0.7, so the frame is allowed to meter the extra
+energy back out — the change is a **redistribution**, which is the honest way to state it:
+
+```
+repeat spread, same condition   frame 0.02-0.18%   grazing 0.08-0.27%    <- the real noise floor
+EFFECT                          frame +0.68%       grazing band +5.90%   steep ground -0.18% (nil)
+clipped pixels                  0.001% -> 0.001%   unique colours 19,066/19,380 -> 19,485/19,800
+```
+
+So: nothing blows out, the frame barely moves, steep-angle ground is unchanged — and the grazing band gains
+**20x its own noise floor**. The ground stops being a flat albedo patch and acquires an angle-dependent
+response. That is what the critic asked for, and it is a smaller *number* than the isolated measurement
+precisely because the eye adapts, which is correct behaviour and not something to hide.
+
+**The first shipped-config run was thrown away and it is worth saying why.** It sampled before
+auto-exposure had settled — exposure climbed 1.7237 -> 1.7523 -> 1.7510 and never returned — so every
+figure carried a one-way drift and the "return" condition did not return. A single A/B cannot tell an
+effect from a settling curve. The probe now warms up for 30 s and then **alternates**, which is what
+produced the repeat spread above.
+
+### A comment that quotes code is a decoy for every grep
+
+Both stale pins in this build were asserting the DEFECT (`test-1144`'s *"the coupling that IS correct
+stays"*, `test-164`'s *"floor matte at metal 0"*), which is ordinary. What is worth recording is that
+**`test-164`'s floor assertion PASSED against the removed line — by matching this build's own comment
+quoting it** — while its wall assertion failed. Half a pin silently satisfied by prose. My new test hit the
+identical trap ten minutes earlier, from the other direction: an assertion that the coupling was *gone*
+failed because the comment was still there to find.
+
+Two things came out of it, both applied here: the source comment states the removed line **in prose rather
+than as the literal statement**, and every pin on it is scoped to real ASSIGNMENT STATEMENTS
+(`/^\s*\w+(\.\w+)*\.specularIntensity = [^;]+;/gm`) rather than being a bare grep. This is the
+character-budget trap's cousin: *a source pin is only as good as the uniqueness of what it matches, and a
+build's own documentation is the most likely thing to collide with it.*
+
+`test-1386` pins the whole premise against the **real vendored three** — both chunk lines, the
+`#ifdef PHYSICAL` define block, the `#else` branch's `vec3(0.04)`/`1.0`, and that a `MeshStandardMaterial`
+does not have the property at all — because if an upgrade moves any of that the rationale is void and the
+engine must fail loudly rather than quietly go back to matte. `SKY_ENV_FLOOR` and `_envInten` are
+deliberately untouched: build 1144 measured that value and 1150 re-derived it against a sweep, and it is a
+different property answering a different question.
+
 ## The pillar was tiled like a boundary wall (build 1385)
 
 Found by a cold rendering critic and verified at the line. **`wallMat` is shared**, and build 1378 derives

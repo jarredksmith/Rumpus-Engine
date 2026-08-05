@@ -7712,6 +7712,36 @@ const LEGACY_EXPOSURE = 0.78;   // build 1115: see applyWorldCfg — compat for 
 // the hemisphere plus 0.12 of the probe. At a full 1.0 the ratio is 1.58:1, which reads flat.
 const SKY_ENV_FLOOR = 0.12;
 const _envInten = (metal, bright) => Math.max(SKY_ENV_FLOOR, +metal || 0) * ((bright == null) ? 1 : bright);
+// ---------- build 1386: the SAME coupling, one property over, and this one had no floor ----------
+// The floor's and the wall's `specularIntensity` were each assigned that material's own `metalness`,
+// which is 1144's mistake exactly: a metalness slider driving a term that is not about metal. (Written
+// out in prose rather than as the literal statement ON PURPOSE — two source pins in this suite matched
+// the removed line inside a COMMENT quoting it, and reported the defect as still present / still fixed
+// depending on which way they were phrased. A comment that quotes code is a decoy for every grep.)
+// In r149's lights_physical_fragment it scales BOTH dielectric terms:
+//     material.specularF90  = mix( specularIntensityFactor, 1.0, metalnessFactor );
+//     material.specularColor = mix( min(pow2((ior-1)/(ior+1)) * specularColorFactor, 1.0)
+//                                   * specularIntensityFactor, diffuseColor.rgb, metalnessFactor );
+// So the floor at metalness 0.1 got F0 = 0.04 x 0.1 = 0.004 — a TENTH of what every dielectric in nature
+// reflects at normal incidence — and F90 = mix(0.1, 1.0, 0.1) = 0.19, where F90 is 1.0 for every material
+// there is: at grazing incidence everything is a mirror. That is not a stylistic knob, and the two
+// surfaces it was applied to are the largest in any frame. Every OTHER material in the engine is a
+// MeshStandardMaterial, which has no `.ior` and therefore takes the chunk's `#else`: F0 0.04, F90 1.0.
+// The two engine surfaces were the only ones in the game that were not physical.
+//
+// "matte" is high ROUGHNESS, not absent specular — floorRough is already 0.95, which spreads the lobe
+// until it reads as concrete. Killing F0 as well does not make it matte, it makes it not a material.
+//
+// Measured on a 266-pixel window, every pixel raycast-proven to be the floor mesh and proven unoccluded
+// toward the sun, world paused, grain and auto-exposure off (same-condition control: 0.00%, return: 0.00%):
+//   shipped 0.1 -> 1.0   +38.0% mean luminance
+//   near band (15.6 m)   +29.6%        far band (68.6 m)   +54.2%
+// The gain GROWS with the grazing angle, which is the Fresnel signature and is the thing a flat lift
+// cannot fake. 10x overdrive gave +152.5%, so the instrument produces positives.
+//
+// Named once because two sites must agree — 1143's lesson. There is no parameter here: metalness already
+// does the metal/dielectric blend inside `specularColor`, so the physical value is three's own default.
+const DIELECTRIC_SPEC = 1;
 THREE.ColorManagement.legacyMode = false;
 renderer.outputEncoding = THREE.sRGBEncoding;
 // build 1095: anisotropic filtering — ground textures at grazing angles stop dissolving into mush.
@@ -21001,7 +21031,7 @@ function applyWorldCfg(){
     if(worldCfg.floorRough!=null) floorMat.roughness = Math.max(0, Math.min(1, +worldCfg.floorRough));
     if(worldCfg.floorMetal!=null) floorMat.metalness = Math.max(0, Math.min(1, +worldCfg.floorMetal));
     floorMat.envMapIntensity = _envInten(floorMat.metalness, worldCfg.skyBright);   // build 1144: metal drives REFLECTION strength, but never below the floor every surface needs to see the sky at all
-    floorMat.specularIntensity = floorMat.metalness;   // metal 0 => no dielectric sun-sheen (truly matte)
+    floorMat.specularIntensity = DIELECTRIC_SPEC;   // build 1386: every dielectric has an F0; roughness is what makes it matte
     if(+worldCfg.floorTile>0 && !(+worldCfg.floorTileU>0) && !(+worldCfg.floorTileV>0)){ worldCfg.floorTileU=worldCfg.floorTileV=+worldCfg.floorTile; worldCfg.floorTile=0; }   // migrate legacy uniform tile
     const fAuto = _surfRepeat(ARENA*2);   // build 1378: the ground plane is ARENA*2 across, UV 0..1 — so this is metres, not a ratio
     const fu = +worldCfg.floorTileU>0 ? +worldCfg.floorTileU : fAuto, fv = +worldCfg.floorTileV>0 ? +worldCfg.floorTileV : fAuto;
@@ -21013,7 +21043,7 @@ function applyWorldCfg(){
     if(worldCfg.wallRough!=null) wallMat.roughness = Math.max(0, Math.min(1, +worldCfg.wallRough));
     if(worldCfg.wallMetal!=null) wallMat.metalness = Math.max(0, Math.min(1, +worldCfg.wallMetal));
     wallMat.envMapIntensity = _envInten(wallMat.metalness, worldCfg.skyBright);   // build 1144
-    wallMat.specularIntensity = wallMat.metalness;   // metal 0 => matte (no sun-sheen)
+    wallMat.specularIntensity = DIELECTRIC_SPEC;   // build 1386
     if(+worldCfg.wallTile>0 && !(+worldCfg.wallTileU>0) && !(+worldCfg.wallTileV>0)){ worldCfg.wallTileU=worldCfg.wallTileV=+worldCfg.wallTile; worldCfg.wallTile=0; }   // migrate legacy uniform tile
     // build 1378: a boundary wall's wide face is ARENA*2 by H, so ONE repeat for both axes stretched the
     // texture by the aspect ratio (17:1 at the default). Derived per axis from the real span instead.
@@ -32778,7 +32808,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1385 · 2026-08-05';
+const BUILD_VERSION = 'build 1386 · 2026-08-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
