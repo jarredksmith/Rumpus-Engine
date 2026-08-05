@@ -967,6 +967,76 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## An attempt that did not ship: texture modulation on primitives (after build 1383)
+
+A cold critic scored the stock level **3/10** and a GENERATED arena **6/10** off the same renderer, and named
+the difference precisely: the generator gives every piece it builds a real per-material albedo, while the
+hand-built level's crates, ramps and pillars are untextured primitives. Build 1379's noise gives them
+variation; it cannot give them STRUCTURE — panel lines, brushed grain, wear — which is what reads as a
+material. Recorded here because the design is sound, the implementation is NOT, and the next attempt should
+not re-derive the parts that are already settled.
+
+**A plain `map` cannot be the answer, and that is the real design constraint.** Build 1378 could compensate
+`floorMat`'s base colour because the ENGINE owns it. A primitive's colour is the CREATOR'S, chosen in a
+picker, and a map multiplies it — every prop in every level ever saved would have gone ~60% darker.
+
+So the texture has to be a **mean-1.0 MODULATION**: its LUMINANCE divided by that luminance's own mean.
+Three consequences, all wanted — the mean albedo does not move so nothing re-exposes, the texture's own
+colour cast divides out so the creator's colour still decides the hue, and what survives is the structure.
+Neutrality is true by CONSTRUCTION rather than by tuning, because the constant is the mean of the exact
+quantity the shader computes: `mean(srgb2lin(luma(texel)))`, measured on the PNG that ships. For
+`img/tex/prop-metal.png` (levelgen's `metal` at 256) that is **0.414947**, range 0.042..0.882.
+
+Projection must be **triplanar in object space**, not UV: a primitive's UVs run 0..1 per FACE whatever that
+face's real size is, so a stretched box stretches the texture — build 1378's 17:1 boundary wall one layer
+down. `vOdPos` is already there for the noise, cannot stretch, and stays locked to the object as it moves.
+
+### Why it was reverted: it measurably does nothing, and I cannot say why
+
+Verified present, all of it: the block IS in the shader the renderer compiled (read back through
+`gl.getShaderSource` — `uOdTexM` found in an 81,795-character program), the texture IS bound
+(`_propTexU.value` truthy), 52 of 57 prop materials carry the uniforms, `floorMat` correctly does NOT (it
+takes the macro mode and must not pay three extra fetches), 67 programs compiled, `glGetError` 0, zero
+shader console output.
+
+And with the camera aimed at a 3 x 4.5 x 14 prop from 2.4 m, the measurement window derived from that
+prop's OWN projected screen rect rather than guessed:
+
+```
+cond   unique colours   exposure drift   pixels moved >1
+amt 0        2042          0.000%             0.00%
+amt 0.55     2045         -0.019%             0.00%
+amt 3.0      2042         -0.039%             0.00%     <- 5.5x the shipped amplitude
+control 0    2044         -0.056%             0.01%     <- drifts MORE than any effect
+```
+
+Eliminated on the way: the density (swept 0.7 / 2.5 / 6.0 cycles per metre, all null), the camera distance,
+the window, and a **null sampler at program-build time** — the PNG loads asynchronously, so `_propTexU.value`
+is null when the first material compiles, which is build 1181's own trap; seeding it with a 1x1 white
+DataTexture changed nothing, and white would have made the props 78% brighter if the block were executing.
+
+**That last point is the strongest evidence and the reason for the revert**: a white seed texture makes
+`_tl/uOdTexM` a constant 2.41, so `mix(1.0, 2.41, 0.55)` is 1.78 — the props would have been visibly blown
+out. They were byte-identical. So the block is compiled into the program and is not affecting the fragment
+colour, which is a contradiction I could not resolve inside a reasonable budget.
+
+Shipping it would have cost three texture fetches per fragment on 52 materials for no measured effect. The
+design above is worth keeping; the next attempt should start by proving a *deliberately absurd* constant
+multiply on `diffuseColor` at that same patch site reaches the frame at all, before adding any sampling.
+
+### The instrument failures, because four of five runs were the rig and not the engine
+
+| # | it reported | why |
+|---|---|---|
+| 1 | 0.53% effect against a 0.65% control | the props in the window were 20-40 m away and `PROP_TEX_PER_M = 0.7` is a 1.43 m period — less than ONE cycle across a 1 m crate, so each crate got a near-flat multiplier. Build 1379's pixel-subtense lesson, inverted |
+| 2 | a 9x amplitude measured identical | the probe was a NEW page session and never aimed the camera, so the props were distant again |
+| 3 | NaN over the viewmodel window | the probe renders at **640x360**, not the 900x506 `shot.mjs` uses, so the coordinates ran off the end of the image |
+| 4 | — | the fix for all three: aim in the SAME session, and derive the window by PROJECTING the target's bounding box to screen rather than picking pixels by eye |
+
+#4 is the durable part. Every earlier failure in this file's log that reads "know where the camera is"
+(1124), "read WHO before attributing anything to a surface" (1151) or "the probe never posed the camera"
+(1379) is the same mistake, and projecting the target's own bbox removes the whole class.
+
 ## The relief fades with the antialiasing that covers it (build 1383)
 
 The third of the critic's verified findings. Builds 1145 and 1379 perturb the normal with a hashed field at
