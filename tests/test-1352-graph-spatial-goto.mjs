@@ -62,7 +62,12 @@ const pulse = extractFunction('_lgPulse', src);
 
 // ---- every guard, because each one is a silent bug otherwise ----
 {
-  const g = pulse.slice(pulse.indexOf("case 'goto':"), pulse.indexOf("case 'goto':") + 1600);
+  /* build 1394: this was `indexOf("case 'goto':") + 1600` — a CHARACTER BUDGET, and this build's additions
+     to the goto case pushed two assertions past the end of it with both still TRUE. That is the trap
+     CLAUDE.md records under build 1149. It ends on the NEXT CASE now, so it cannot drift again. */
+  const _g0 = pulse.indexOf("case 'goto':"), _g1 = pulse.indexOf("case 'lose':", _g0);
+  assert(_g0 >= 0 && _g1 > _g0, 'the goto case and the one after it are both findable');
+  const g = pulse.slice(_g0, _g1);
   assert(/NET\.mode==='client'\) break;/.test(g),
     'a client never loads a level on its own — two peers in different worlds is the desync this prevents');
   assert(/!campaignActive/.test(g) && /not part of a campaign/.test(g),
