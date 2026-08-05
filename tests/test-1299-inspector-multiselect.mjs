@@ -106,8 +106,12 @@ const mkBanner = () => {
   assert(/lsel\.onchange=\(\)=>\{ _selApply\(o=>\{ if\(lsel\.value\) o\.userData\.lockId=lsel\.value; else \{ delete o\.userData\.lockId; delete o\.userData\.lockConsume; \} delete o\.userData\.unlocked; \}\); renderEditorFields\(\); \};/.test(src),
     'and LOCK — thirty doors, one key');
   // the reason tag in particular must be group-wide: a signal resolves it to a LIST
-  assert(/for\(const o of propModels\)\{ if\(o && o\.userData && o\.userData\.tag===tag && !o\.userData\._shattered\) list\.push\(o\); \}/.test(src),
+  /* build 1391 split that one-liner so `resetprop` can SEE shattered props — they are exactly what it
+     restores. The intent pinned here is untouched: a tag resolves to a LIST, not to one prop. */
+  assert(/const list=\[\]; for\(const o of propModels\)\{ if\(!o \|\| !o\.userData \|\| o\.userData\.tag!==tag\) continue;/.test(src),
     'a tag resolves to a LIST of props at runtime, which is why one tag across a set is the normal move');
+  assert(/if\(o\.userData\._shattered && act!=='reset'\) continue; list\.push\(o\);/.test(src),
+    '...and a shattered prop is still skipped by every verb except the one that brings it back');
   assert(/A signal resolves a tag to a LIST/.test(src), '...and that reasoning is recorded beside the field');
   // each of the three announces itself
   eq((src.match(/_selBanner\(/g) || []).length, 6,
