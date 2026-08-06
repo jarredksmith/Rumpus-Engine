@@ -58,7 +58,7 @@ await withGame(async (probe, page) => {
     spawnProp('box',[24,0,20, 0,0,0, 1,3,0.3],(o)=>{door=o;});
     spawnProp('sign',[28,0,20, 0,0,0, 4,2,1],(o)=>{sign=o;});
     crate.userData.tag='crate'; crate.userData.nm='Blue crate'; crate.userData.interact=1;
-    crate.userData.hp=40; crate.userData.breakStyle='shatter'; crate.userData.explosive=1;
+    crate.userData.maxHp=40; crate.userData.hp=40; crate.userData.breakStyle='shatter'; crate.userData.explosive=1;
     crate.userData.phys=1; crate.userData.mass=8; crate.userData.bounce=0.4;
     crate.userData.hitSnd='https://example.org/wood.mp3';
     crate.userData.brkSnd='https://example.org/smash.mp3';
@@ -101,10 +101,13 @@ await withGame(async (probe, page) => {
     persistVars = ['score']; persistSave = true; persistInv = true; persistCp = true;
 
     /* HUD, weapons, enemies, waves, rules */
-    hudWidgets = [
+    /* through the sanitizer, exactly as the editor's own Add button does — a widget minted raw has no id,
+       and the serializer sanitizes into a COPY, so every save would invent a different one and read as
+       churn the engine does not actually have. */
+    hudWidgets = _sanitizeHudWidgets([
       { kind:'text', label:'Score {score}', ax:'tl', ox:12, oy:12, size:18, col:'#38f5b5' },
       { kind:'button', label:'BUY', ev:'buy', ax:'br', ox:20, oy:20, size:16, img:'https://example.org/card.png', iw:120, ih:80 }
-    ];
+    ]);
     WEAPONS.rifle.name = 'Marksman'; WEAPONS.rifle.dmg = 15; WEAPONS.rifle.adsMs = 200;
     WEAPONS.smg.melee = true; WEAPONS.smg.reach = 3.2; WEAPONS.smg.name = 'Sword';
     gameCfg.enemyMods = { grunt:{ hp:120, dmg:9, spd:1.2 } };
@@ -114,7 +117,7 @@ await withGame(async (probe, page) => {
     gameCfg.startWeapon='shotgun'; gameCfg.flashlight=true;
     keyNames = { redKey:'Red keycard' };
     pickupModels = { health:'https://example.org/medkit.glb' };
-    animCuts = { 'https://example.org/char.glb': [ { name:'Swing', a:10, b:40 }, { name:'Rest', a:5, hold:1 } ] };
+    animCuts = _sanAnimCuts({ 'https://example.org/char.glb': [ { n:'Swing', a:10, b:40, f:30 }, { n:'Rest', a:5, b:5, f:30, h:1 } ] });   /* fields are n/s/a/b/f — an unnamed slice is discarded */
     worldCfg.skyCloud = 0.6; worldCfg.skyCloudScale = 1.8; worldCfg.ssr = 0.5; worldCfg.lodPx = 2;
     worldCfg.baked = true; worldCfg.dofAuto = true;
 
@@ -127,16 +130,21 @@ await withGame(async (probe, page) => {
   })()`)));
 
   // ---- serialize -> restore -> serialize ---------------------------------------------------------------
-  const S1 = JSON.parse(await probe('JSON.stringify(serializeLevel())'));
-  await probe('(function(){ window.__S1 = JSON.parse(JSON.stringify(serializeLevel())); restoreLevel(window.__S1); return 1; })()');
+  /* A dynamic prop is SIMULATING between serializes, and its settling is indistinguishable from format
+     drift — the first run of this probe reported three control differences for exactly that reason. So
+     every serialize is taken with the sim returned to its home transform. The crate stays dynamic, because
+     the phys/mass/bounce fields are real coverage; it just is not moving while being measured. */
+  const SER = "(function(){ try{ resetDynamicProps(); }catch(e){} return JSON.stringify(serializeLevel()); })()";
+  const S1 = JSON.parse(await probe(SER));
+  await probe('(function(){ try{ resetDynamicProps(); }catch(e){} window.__S1 = JSON.parse(JSON.stringify(serializeLevel())); restoreLevel(window.__S1); return 1; })()');
   await settle();
-  const S2 = JSON.parse(await probe('JSON.stringify(serializeLevel())'));
+  const S2 = JSON.parse(await probe(SER));
 
   // THE CONTROL: restore the SAME bytes again. If S2 != S3 the level is not stable under repeat and any
   // S1/S2 difference below would be noise rather than loss.
   await probe('(function(){ restoreLevel(JSON.parse(JSON.stringify(window.__S1))); return 1; })()');
   await settle();
-  const S3 = JSON.parse(await probe('JSON.stringify(serializeLevel())'));
+  const S3 = JSON.parse(await probe(SER));
 
   const ctrl = diff(S2, S3);
   console.log('\n  CONTROL (restore the same bytes twice): ' + (ctrl.length ? ctrl.length + ' differences' : 'identical'));
@@ -171,7 +179,7 @@ await withGame(async (probe, page) => {
   // cannot answer it and this loop can.
   const track = [];
   for (let i = 0; i < 8; i++) {
-    await probe('(function(){ restoreLevel(JSON.parse(JSON.stringify(serializeLevel()))); return 1; })()');
+    await probe('(function(){ try{ resetDynamicProps(); }catch(e){} restoreLevel(JSON.parse(JSON.stringify(serializeLevel()))); return 1; })()');
     await settle();
     track.push(await probe(`(function(){
       const L = serializeLevel();

@@ -121,7 +121,11 @@ const FACTORY = {
 {
   const ser = src.slice(src.indexOf('weapons: Object.keys(WEAPONS).reduce'));
   const body = ser.slice(0, ser.indexOf('}, {}),'));
-  assert(/for\(const s of GUN_STAT_KEYS\)\{ if\(w\[s\]!=null && GUN_BASE\[k\] && w\[s\]!==GUN_BASE\[k\]\[s\]\)\{ \(st=st\|\|\{\}\)\[s\]=w\[s\]; \} \}/.test(body),
+  /* build 1420 NORMALISES a boolean before the compare (`melee` lives as `true` on the factory table and
+     as 0/1 everywhere else), so the diff no longer quotes a bare `!==`. The intent — only CHANGED stats
+     are written, factory levels carry no sheet at all — is unchanged and is now asserted by execution in
+     test-1420 as well. */
+  assert(/for\(const s of GUN_STAT_KEYS\)\{ if\(w\[s\]==null \|\| !GUN_BASE\[k\]\) continue;[\s\S]*?if\(_v !== GUN_BASE\[k\]\[s\]\)\{ \(st=st\|\|\{\}\)\[s\]=_v; \} \}/.test(body),
     'the serializer diffs every key in the array — so the two new stats needed no serializer change at all');
   assert(!/melee:/.test(body) && !/reach:/.test(body),
     '...and are NOT named in it, which is the property that made this build small');

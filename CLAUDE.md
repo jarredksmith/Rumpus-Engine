@@ -3472,6 +3472,38 @@ which is precisely when the assertion becomes worth having. This file already re
 prose and pins *defeated* by prose; this is the third kind, where the message and the regex simply describe
 different things.
 
+## Saving a level twice now produces the same level (build 1420)
+
+Build 1418's round-trip probe found the colour decay and left four smaller differences behind. This closes
+them — and **the four are not the point.** `tools/probe/level-roundtrip.mjs` is now BYTE CLEAN on a 58-key,
+59-prop level carrying props with signals and locks and physics, all eight zone types, a shadow-casting
+point light, spawn markers, pickups, five graph node kinds, lists, persistence, HUD widgets, weapon stats,
+enemy mods, a wave manifest, animation slices and a cutscene. So it becomes a **standing guard**: any
+future field that fails to survive a save fails there, instead of being discovered by a creator whose work
+came back wrong.
+
+**Two of the four were the engine and two were the probe's own fixture**, which is worth stating plainly
+because all four looked identical in the diff:
+
+| | |
+|---|---|
+| **engine** | `st.melee` wrote `true` on the first save and `1` on every one after it. `melee` lives as `true` on the factory table and as 0/1 everywhere else (1296 normalises where `GUN_BASE` is captured; `_wepApplyStats` clamps on load), so a straight `!==` against the baseline wrote two different files for one level |
+| **engine** | `aimWep` grew a full seven-field ADS pose per weapon **simply from playing the level** — `getWeaponAim` creates the entry lazily on first aim — so a level saved after play differed from the same level saved before it, with 56 redundant numbers in between. Now only the poses a creator CHANGED are written, which is the same "only changed values" rule builds 1190, 1240 and 1296 already follow |
+| fixture | a prop's health lives in `maxHp`; the fixture set `hp`, which the serializer does not read |
+| fixture | widgets minted raw have no id and the serializer sanitizes into a COPY — but the editor's own Add button pushes through the sanitizer, so a real widget has an id from birth. **Not a defect** |
+| fixture | `animCuts` fields are `n/s/a/b/f`; an unnamed slice is discarded by design |
+
+**And the last difference of all was the fixture being ALIVE.** A dynamic physics crate settles between two
+serializes, and its rotation reads exactly like format drift — the control showed it, which is the only
+reason it was not published as decay. Every serialize in the probe now takes `resetDynamicProps()` first.
+The crate stays dynamic, because `phys`/`mass`/`bounce` are real coverage; it just is not moving while
+being measured. **A fixture that is still simulating is not a fixture**, recorded twice now.
+
+The general lesson is about the SHAPE of the question. No feature owns "does the file survive a save", so
+no feature test asks it — and three of this repo's worst silent-data-loss bugs (1162, 1280, 1325) were
+found by accident rather than by asking. `serialize -> restore -> serialize` is idempotent or it is not,
+the check needs no knowledge of what any field means, and it now runs against everything at once.
+
 ## A light's colour decayed to red, one save at a time (build 1418)
 
 Found by asking a question no single-feature test asks, and that no feature owns: **is
@@ -3527,14 +3559,9 @@ which is the only reason the rotation numbers were not published as serializatio
 first time that tool has paid for itself before a run was wasted. The habit it enforces is build 1415's:
 run `tools/probe/lint.mjs` after the last edit, not before the first.
 
-### Still open from that probe, and deliberately not fixed here
+### Still open from that probe — CLOSED in build 1420
 
-The round trip is not yet byte-clean. What remains is benign, and is recorded so the next reader knows it
-was looked at rather than missed: `st.melee` normalises `true → 1`; `aimWep` and a breakable prop's `hp`
-are ADDED on load rather than lost; HUD widget ids are regenerated; and an empty `animCuts` serializes as
-`{}` once and is absent the next time. None of them is data loss and none accumulates — the eight-cycle
-sweep holds every value flat. A build that makes the format exactly idempotent is worth doing on its own
-terms, not folded into a colour fix.
+Four smaller differences remained and were deferred rather than folded into a colour fix. See below.
 
 ## A switched-off lamp was holding a shadow slot (build 1417)
 

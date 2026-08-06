@@ -34003,7 +34003,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1419 · 2026-08-06';
+const BUILD_VERSION = 'build 1420 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -43311,9 +43311,25 @@ function serializeLevel(){
   return {
     v: LEVEL_FORMAT_V,   // build 1165: the version is now READ on load (see _levelFormatCheck) — bump it when the schema changes shape, and set minV only when an old client's partial read would be load-bearing wrong
     gun:     { url: gunModelUrl,     state: Object.assign({}, editorTargets.gun.state) },
-    weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); let st; for(const s of GUN_STAT_KEYS){ if(w[s]!=null && GUN_BASE[k] && w[s]!==GUN_BASE[k][s]){ (st=st||{})[s]=w[s]; } } const nmChg = (typeof GUN_BASE_NAME!=='undefined' && GUN_BASE_NAME[k] && w.name!==GUN_BASE_NAME[k]); if(w.model || w.view || w.clips || dmgChg || w.noMuzzle || st || nmChg) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined, noMuzzle: w.noMuzzle ? true : undefined, st, nm: nmChg ? w.name : undefined }; return acc; }, {}),   /* build 1240: authored names ride the diff */   // build 623: per-weapon damage; build 684: muzzle-flash toggle; build 1190: the full stat sheet (only changed values)
+    weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); let st; for(const s of GUN_STAT_KEYS){ if(w[s]==null || !GUN_BASE[k]) continue;
+        /* build 1420: NORMALISE first. `melee` lives as `true` on the factory table and as 0/1 everywhere
+           else (build 1296 normalises where GUN_BASE is captured, and _wepApplyStats clamps on load), so a
+           straight !== wrote `true` on the first save and `1` on every one after it. Saving a level twice
+           produced two different files. */
+        const _v = (w[s] === true) ? 1 : (w[s] === false ? 0 : w[s]);
+        if(_v !== GUN_BASE[k][s]){ (st=st||{})[s]=_v; } } const nmChg = (typeof GUN_BASE_NAME!=='undefined' && GUN_BASE_NAME[k] && w.name!==GUN_BASE_NAME[k]); if(w.model || w.view || w.clips || dmgChg || w.noMuzzle || st || nmChg) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined, noMuzzle: w.noMuzzle ? true : undefined, st, nm: nmChg ? w.name : undefined }; return acc; }, {}),   /* build 1240: authored names ride the diff */   // build 623: per-weapon damage; build 684: muzzle-flash toggle; build 1190: the full stat sheet (only changed values)
     aim:     { state: Object.assign({}, editorTargets.aim.state) },
-    aimWep:  JSON.parse(JSON.stringify(aimByWep)),
+    /* build 1420: only the poses a creator CHANGED. `getWeaponAim` creates an entry lazily the first time
+       a weapon is aimed, so simply playing a level grew `aimWep` by a full seven-field pose per weapon —
+       and a level saved after play differed from the same level saved before it. Omitting the defaults is
+       the same "only changed values" rule builds 1190, 1240 and 1296 already follow, and it costs nothing
+       on load: a weapon with no entry gets AIM_DEFAULT from `getWeaponAim`. The legacy branch is safe too,
+       since it keys on `aimWep` being ABSENT, and an authored pose still writes the key. */
+    aimWep:  (function(){ const o={}; let any=false;
+      for(const k in aimByWep){ const a=aimByWep[k]; if(!a) continue;
+        let chg=false; for(const f in AIM_DEFAULT){ if(+a[f] !== +AIM_DEFAULT[f]){ chg=true; break; } }
+        if(chg){ o[k]=Object.assign({}, a); any=true; } }
+      return any ? o : undefined; })(),
     mountWep: (typeof mountByWep!=='undefined') ? JSON.parse(JSON.stringify(mountByWep)) : {},
     attModels: (typeof attModels!=='undefined') ? JSON.parse(JSON.stringify(attModels)) : {},
     invItems: (typeof invCatalog!=='undefined') ? JSON.parse(JSON.stringify(invCatalog)) : {},
