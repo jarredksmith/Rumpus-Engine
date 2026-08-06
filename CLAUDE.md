@@ -3316,12 +3316,92 @@ frame"* — and two supporting findings. Where each of them went:
 |---|---|
 | `floorMat`/`wallMat` get neither a break-up layer (1379 refuses a material with a map) nor macro variation | **build 1382.** `applyMacroDetail(floorMat, MACRO_PERIOD_M)` and the same for `wallMat`, at `MACRO_TILE_MUL = 2.75` — deliberately not an integer multiple of `SURF_TILE_M`, or the layer lands on the repeat it exists to hide. The frequency is `1 / periodMetres`, because these two geometries are real metres and unscaled; the primitive path's `_albDetailFreq` would have been three orders of magnitude off and would have looked like nothing happening |
 | the 1145/1379 procedural normal noise aliases with no AA to suppress it once MSAA sheds | **build 1383.** `_syncOdBump` indexes `_OD_BUMP_STEP` by `_prStepI`, so the relief fades down the adaptive ladder exactly as the critic suggested — by reference through one shared uniform (1181), so a rung change is one CPU write and recompiles nothing |
-| point lights still cannot cast shadows (29 of them around the stock spawn) | **build 1348, deliberately parked with its reasons.** Flipping `castShadow` at runtime recompiles (measured: 54 → 65 programs in one frame), so a point shadow could never be a live toggle; and the frame-cost sweep **failed its own control** (a 0-caster baseline read 396 ms and the return to 0 read 554 ms), so there was no honest number to ship a cube shadow against. The panel names the consequence and the fix (use a Spot) instead |
+| point lights still cannot cast shadows (29 of them around the stock spawn) | **build 1414**, after 1348 parked it on a broken instrument. See below |
 
-**The third is the only one still open, and it is open on an INSTRUMENT, not on a decision.** What it
-needs is a cost measurement that survives a control — which this session's rig can now plausibly give
-(paused scene, `__drive` on a virtual clock, a control pair that returns). Anyone picking it up should
-start by reproducing 1348's failed sweep and getting the control to close, not by writing a cube shadow.
+## The point-light shadow was blocked by an instrument, not by a decision (build 1414)
+
+Builds 1132 and 1348 both refused a point-light shadow and both were right on the evidence they had. 1348
+went furthest: it tried to price the thing and **its frame-cost sweep failed its own control** — a 0-caster
+baseline read 396 ms and the return to 0 read 554 ms — so it parked the feature and *said so*, rather than
+shipping an expensive one on a measurement it did not believe. That entry's closing line was the right
+instruction and this build followed it: **reproduce the failed sweep and get the control to close first.**
+
+**What changed is the MEASURAND, not the patience.** A wall-clock frame under SwiftShader has a noise floor
+larger than the effect. DRAW CALLS do not: they are integers, they are exactly what a shadow map costs, and
+a control either returns to the baseline or the instrument is broken. `tools/probe/point-shadow-cost.mjs`,
+scene paused, camera pinned, `renderer.info.reset()` per sample:
+
+```
+casters       0     1     2     4     0 (control)
+calls       104   193   289   474   104     <- returns EXACTLY, which is what 1348 could not get
+per caster        +89  +185  +370
+median ms   1.1   1.7    —   651.1  34.0    <- the TIMING control still does not close. It never will here
+```
+
+That last row is worth keeping: the timing figure is reported for scale and **no decision rests on it**,
+because its own control drifts 30×. The call counts decide, and they say **one point caster is +89 draw
+calls** — linear in caster count.
+
+**Two independent runs agreed on +89 to the call while their BASELINES differed** (104 and 173, by how much
+of the level had finished loading). That is the linearity row doing its job: +89 is a property of the
+caster, not of the frame it was measured in. Against a stock frame it is somewhere between half again and
+double — the largest single thing a creator can add with one checkbox.
+
+Worth knowing when reading that against *"a cube is six passes"*: +89 calls against **28** shadow-casting
+meshes is **~3.2 effective passes, not 6**. Three frustum-culls each cube face and most of a level is
+outside most faces. Six is the upper bound; 3.2 is what it costs here.
+
+So the feature ships **capped hard**: `_maxPointShadows()` is 2 on desktop, **0 on a phone** (the device the
+measurement says can least afford it), and 0 as soon as the resolution scaler engages — the same rung the
+spot budget sheds on. `updateShadowLightBudget` now ranks and caps the two kinds **separately**, because one
+shared cap of four would let two lamps quietly buy twelve depth passes out of a budget written for spots.
+
+**And 1348's other finding is confirmed, not overturned:** the first flip of `castShadow` recompiled by
+**11 programs** (69 → 80) — the *same delta* 1348 recorded as 54 → 65, so that build's recompile figure was
+right all along and only its timing sweep was broken. `NUM_POINT_LIGHT_SHADOWS` is a `#define`. That is why the cap is a *ranking*
+rather than a toggle — the budget only ever swaps WHICH lights cast while the COUNT stays at the cap, so a
+player walking between lamps changes the set and not the define, which keeps this off builds
+636/977/1153/1155's freeze path.
+
+### The flag being set proves nothing — so it was measured on pixels
+
+`tools/probe/point-shadow-blocks.mjs` builds a floor, a wall and one lamp at (200, 200) — outside `ARENA`,
+build 1323's rule — zeroes every other light, and reads scene-linear radiance out of a `FloatType` target
+with tone mapping off, sampling two points **projected** from world space rather than picked off a
+screenshot (build 1151's rule):
+
+```
+              floor beside the lamp    floor behind the wall
+shadow OFF          0.37057                  0.09524     <- the lamp shines straight through
+shadow ON           0.37057                  0.02312     <- 75.7% darker
+shadow OFF          0.37057                  0.09524     <- the control returns
+```
+
+**The lit side moving 0.0% is the whole assertion.** If both columns had moved, the frame merely got darker
+and the measurement would be worthless; only the shadowed side moving means the wall is an occluder.
+
+### The staleness guard was blind for the entire life of every build
+
+The first run of that probe reported `wantShadow false` and three's default 0.5/500 shadow camera — which
+reads exactly like the new code being broken. It was measuring **build 1413**.
+
+Build 1389 added a guard for precisely this (a probe staged during a rollback answered questions about code
+no longer in the tree) and keyed it on **`BUILD_VERSION`** — a value this project's workflow bumps **LAST**,
+after the edits, the probes and the suite. So from the first edit of a build until its final commit, the
+repo and the staging carry the *same version string* and *different code*, and the guard reports fresh.
+Every probe run during development measured the previous build, silently, since 1389.
+
+The stamp is a **content hash** now, with the version beside it as a label. Proven by the failure it was
+blind to: the guard refused a staging whose version string was identical to the repo's.
+
+**The general rule: a freshness check keyed on a value the workflow updates last is not a freshness check.**
+
+### Open, recorded rather than changed
+
+A light a signal switched **off** still occupies its rank in the budget (`on = i < n && lon !== false`), so a
+dark lamp holds a shadow slot a lit one further away could have used. That is build 1132's shipped shape,
+identical for spots, and correcting it is its own build with its own reasoning — not a side effect of adding
+a light type. `test-1414` asserts the shipped behaviour and says so.
 
 ## The shadow patches are verified to land (build 1381)
 

@@ -12,6 +12,7 @@
 // Then serve <outDir> and drive it — see tools/probe/README.md.
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -98,6 +99,15 @@ for (const d of ['img']) {
 // declared it five builds earlier, and everything measured through that staging was about build 1381.
 // `docs/frames/README.md` has said "know what BUILD you are measuring — stamp it or diff it" since 1382;
 // this is that, enforced rather than remembered. `driver.mjs` refuses to run against a stale stamp.
+//
+// build 1414: THE STAMP IS A HASH, and the version string beside it is only a label. 1389 keyed the guard
+// on BUILD_VERSION — a value this project's own workflow bumps LAST, after the edits, the probes and the
+// suite. So for the whole life of a build the repo and the staging carry the SAME version string while
+// holding DIFFERENT code, the guard reports fresh, and every probe run during development silently
+// measures the previous build. It cost this build a run: `point-shadow-blocks` read `wantShadow false`
+// and three's default 0.5/500 shadow camera off a `buildLight` that had already been rewritten, which
+// looks exactly like the new code being broken. A digest cannot be defeated by ordering.
 const _bv = (src.match(/const BUILD_VERSION = '([^']*)'/) || [, 'UNKNOWN'])[1];
-fs.writeFileSync(path.join(out, 'BUILD'), _bv + '\n');
-console.log('probe.html written to ' + out + '   [' + _bv + ']');
+const _sha = crypto.createHash('sha256').update(fs.readFileSync(path.join(repo, 'breach.html'))).digest('hex').slice(0, 16);
+fs.writeFileSync(path.join(out, 'BUILD'), _sha + '  ' + _bv + '\n');
+console.log('probe.html written to ' + out + '   [' + _bv + ' · ' + _sha + ']');

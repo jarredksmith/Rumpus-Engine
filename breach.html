@@ -9755,25 +9755,72 @@ function _maxShadowLights(){
   if(typeof _prStepI!=='undefined' && _prStepI > 0) return 0;
   return (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 2 : 4;
 }
+/* ---------- build 1414: and how many of them may be POINT lights ----------
+   A point light's shadow is a CUBE map — six depth passes for one lamp — which is why builds 1132 and
+   1348 refused it. 1348 tried to price it and could not: its frame-cost sweep FAILED ITS OWN CONTROL
+   (a 0-caster baseline read 396 ms and the return to 0 read 554 ms), and it parked the feature saying
+   so rather than shipping an expensive thing on a broken measurement.
+
+   The re-run changed the MEASURAND, not the patience. A wall-clock frame under SwiftShader has a noise
+   floor larger than the effect; DRAW CALLS are integers, they are exactly what a shadow map costs, and
+   a control either returns to the baseline exactly or the instrument is broken. Measured on the stock
+   level with the scene paused and the camera pinned (tools/probe/point-shadow-cost.mjs):
+
+       casters      0     1     2     4     0 (control)
+       calls      104   193   289   474   104   <- returns EXACTLY, which is what 1348 could not get
+       per caster       +89  +185  +370
+
+   ONE POINT CASTER IS +89 DRAW CALLS. Two independent runs agreed on that figure to the call while
+   their BASELINES differed (104 and 173, depending on how much of the level had finished loading), so
+   +89 is a property of the caster and not of the frame it was measured in — which is exactly what the
+   linearity row is there to establish. Against a stock frame that is somewhere between half again and
+   double, and it is the largest single thing a creator can add with one checkbox.
+
+   Two is the cap on desktop because a doorway between two lit rooms is the commonest place the leak is
+   visible, and because the ranking below keeps them nearest-first so they follow the player. A phone
+   gets none: IS_COARSE is the device that can least afford +89.
+
+   Worth knowing when reading that against "a cube is six passes": +89 calls against 28 shadow-casting
+   meshes is ~3.2 effective passes, not 6. Three frustum-culls each cube face, and most of a level is
+   outside most faces. Six is the upper bound; 3.2 is what it costs here.
+
+   The same probe confirmed 1348's other finding, which is why this is capped rather than free: the
+   FIRST flip of castShadow recompiled by 11 programs (69 -> 80) — the SAME delta 1348 measured as
+   54 -> 65, so that build's recompile figure was right all along and only its timing sweep was broken.
+   NUM_POINT_LIGHT_SHADOWS is a #define.
+   The ranking below only ever swaps WHICH lights cast while the COUNT stays at the cap, so a player
+   walking between lamps changes the set and not the define — which is what keeps this off builds
+   636/977/1153/1155's freeze path. */
+function _maxPointShadows(){
+  if(typeof _prStepI!=='undefined' && _prStepI > 0) return 0;   // sheds with the spot budget, same rung
+  return (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 0 : 2;
+}
 let _shadowLightT = 0;
 function updateShadowLightBudget(dt){
   // re-ranking every frame would thrash three's shadow-map allocation; a third of a second is far
   // faster than a player can move between lamps
   _shadowLightT += (dt||0); if(_shadowLightT < 0.33) return; _shadowLightT = 0;
   if(typeof lightModels==='undefined') return;
-  const want = [];
-  for(const g of lightModels){ if(g && g.userData && g.userData.wantShadow && g.userData.light) want.push(g); }
-  if(!want.length) return;
-  const cap = _maxShadowLights();
-  if(want.length > 1){
-    for(const g of want){ g.getWorldPosition(_lp); g._sd = _lp.distanceToSquared(camera.position); }
-    want.sort((a,b)=>a._sd - b._sd);
+  /* build 1414: point casters are ranked and capped SEPARATELY, because they do not cost the same
+     thing. A spot is one depth pass; a point is six, measured at +89 draw calls against a 104-call
+     frame. One shared cap would let two lamps quietly buy twelve passes out of a budget written for
+     four spots. */
+  const want = [], wantPt = [];
+  for(const g of lightModels){
+    if(!(g && g.userData && g.userData.wantShadow && g.userData.light)) continue;
+    (g.userData.ltype === 'point' ? wantPt : want).push(g);
   }
+  if(!want.length && !wantPt.length) return;
+  const cap = _maxShadowLights(), capPt = _maxPointShadows();
+  const rank = (list)=>{ if(list.length > 1){
+    for(const g of list){ g.getWorldPosition(_lp); g._sd = _lp.distanceToSquared(camera.position); }
+    list.sort((a,b)=>a._sd - b._sd); } };
+  rank(want); rank(wantPt);
   let changed = false;
-  for(let i=0;i<want.length;i++){
-    const L = want[i].userData.light, on = i < cap && want[i].userData.lon !== false;
-    if(L.castShadow !== on){ L.castShadow = on; changed = true; }
-  }
+  const apply = (list, n)=>{ for(let i=0;i<list.length;i++){
+    const L = list[i].userData.light, on = i < n && list[i].userData.lon !== false;
+    if(L.castShadow !== on){ L.castShadow = on; changed = true; } } };
+  apply(want, cap); apply(wantPt, capPt);
   if(changed && typeof _dirtyShadows==='function') _dirtyShadows(2);   // a light that just started casting has no map yet
 }
 
@@ -14514,7 +14561,7 @@ function _rankPlacedLights(){
   const max = _maxActiveLights();
   const lit = [];
   for(const g of lightModels){ const ud=g.userData, t=ud&&ud.ltype; if(t!=='point' && t!=='spot') continue;
-    /* a shadow-caster is exempt: it is already bounded by _shadowLightBudget (1132), it is the most
+    /* a shadow-caster is exempt: it is already bounded by updateShadowLightBudget (1132), it is the most
        deliberate light a creator can place, and fading one to nothing while it still renders a depth pass
        would be the worst of both */
     if(ud.wantShadow) continue;
@@ -20437,11 +20484,17 @@ function buildLight(opts){
   // Opt-in per light, and only on SPOT and DIRECTIONAL. A point light's shadow is a cube map — six
   // depth passes for one lamp — which is not a cost a browser engine should let a creator apply by
   // accident to a room with eight of them; a spot is one pass, and a spot is what you reach for when
-  // you want a visible shadow anyway. `_shadowLightBudget` then caps how many are live at once.
-  if(opts.shadow && (type==='spot' || type==='dir')){
+  // you want a visible shadow anyway. `updateShadowLightBudget` then caps how many are live at once.
+  /* build 1414: `point` joins them. The cube map is what made 1132 refuse it and what makes
+     `_maxPointShadows` tighter than the spot cap — see the measurement there. */
+  if(opts.shadow && (type==='spot' || type==='dir' || type==='point')){
     g.userData.wantShadow = true;
     try{
-      const px = (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 512 : 1024;
+      /* A cube map is SIX faces, so the same figure costs six times the memory and six times the fill.
+         512 keeps a point caster's map at 1.5x a spot's 1024 rather than 6x it, and a point shadow is
+         read at room scale where the texel is small anyway. */
+      const px = (type==='point') ? ((typeof IS_COARSE!=='undefined' && IS_COARSE) ? 256 : 512)
+                                  : ((typeof IS_COARSE!=='undefined' && IS_COARSE) ? 512 : 1024);
       light.shadow.mapSize.set(px, px);
       /* build 1345: a creator's placed spot is DELIBERATELY left at its own value. The sweep above was run
          on the sun's orthographic cascades; a spot's perspective shadow frustum has a different depth
@@ -20450,11 +20503,15 @@ function buildLight(opts){
       // the same rule as the sun (build 1125): normalBias is a TEXEL quantity. A spot's shadow camera
       // is perspective, so the texel size varies with distance — size it from the light's own range,
       // which is the far plane, at the map resolution actually in use.
-      const range = (type==='spot') ? Math.max(1, +light.distance || 30) : 60;
+      const range = (type==='spot' || type==='point') ? Math.max(1, +light.distance || 30) : 60;
       /* build 1341: the same world cap as the sun. A creator's spotlight in a corridor is exactly the case
          where a normal offset wider than the wall lights the room next door. */
       light.shadow.normalBias = _sunNormalBias(range, px);
       if(type==='spot'){ light.shadow.camera.near = 0.4; light.shadow.camera.far = range; }
+      /* A point light's shadow camera is a fixed-90-degree PERSPECTIVE cube — three owns the fov and the
+         aspect, so only the depth range is ours to set, and it is the light's own reach. A far plane left
+         at three's default 500 spreads the depth buffer over a range this lamp never lights. */
+      if(type==='point'){ light.shadow.camera.near = 0.25; light.shadow.camera.far = range; }
       light.castShadow = true;
     }catch(e){ g.userData.wantShadow = false; }
   }
@@ -33819,7 +33876,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1413 · 2026-08-06';
+const BUILD_VERSION = 'build 1414 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -49422,15 +49479,20 @@ function renderEditorFields(){
              to 0 read 554 ms), so there is no honest cost figure to ship a cube shadow against. Shipping
              an expensive feature with a broken measurement is how this file's worst builds happened.
          So: say it, name the fix, and leave the implementation to a build that can measure it. */
+      /* build 1414: 1348's notice said "the engine does not shadow it" and named the workaround. It
+         does now, so the notice becomes the COST — a creator ticking this is buying something real and
+         should be told what, in the unit that was actually measured. */
       if(g0.userData.ltype==='point'){
         const ns=document.createElement('div'); ns.className='hint';
         ns.style.cssText='font-size:10px;margin:0 0 6px;opacity:.85;';
-        ns.innerHTML='<b>This light shines through walls.</b> A point light casts in every direction at '
-          + 'once, which needs six depth passes, so the engine does not shadow it. For a lamp that must be '
-          + 'blocked by a wall, use a <b>Spot</b> light and tick Casts shadows.';
+        ns.innerHTML='A point light casts in every direction, so its shadow is a <b>cube</b> \u2014 six '
+          + 'depth passes. Measured, one of these adds about <b>90 draw calls</b>: half again to double '
+          + 'a typical frame. So the nearest <b>two</b> cast and the rest quietly stop (none on a phone, '
+          + 'none once the quality scaler engages). A <b>Spot</b> is one pass and is still the cheaper '
+          + 'way to block a lamp.';
         urlHost.appendChild(ns);
       }
-      if(g0.userData.ltype==='spot' || g0.userData.ltype==='dir'){
+      if(g0.userData.ltype==='spot' || g0.userData.ltype==='dir' || g0.userData.ltype==='point'){
         const shLab=document.createElement('label'); shLab.style.cssText='display:flex;gap:6px;align-items:center;margin:6px 0 2px;font-size:11px;color:#9fe6cf;cursor:pointer;';
         const shCb=document.createElement('input'); shCb.type='checkbox'; shCb.checked=!!g0.userData.wantShadow;
         shCb.onchange=()=>{ pushUndoSnapshot(); const on=shCb.checked;
