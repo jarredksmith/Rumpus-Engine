@@ -92,7 +92,12 @@ function mk(vars, pid) {
     '...BEFORE the tag check, so a computed tag that resolves to nothing is reported by the name it ' +
     'actually resolved to rather than by the template');
   for (const f of ['prefab', 'text', 'item', 'at'])
-    assert(new RegExp(f + ':_lgName\\(p\\.' + f + '\\)').test(doCase), f + ' interpolates');
+    /* build 1407: the four moved from hand-written call sites into _LG_NAME_FIELDS, which the derived
+       forwarder consults — one list instead of one call per field, and the reason a fifth name field
+       cannot be added without interpolating. */
+    assert(new RegExp("'" + f + "'").test(extractConst('_LG_NAME_FIELDS')) &&
+           /_LG_NAME_FIELDS\.has\(k\) \? _lgName\(v\)/.test(extractFunction('_lgDoArgs')),
+      f + ' interpolates');
   // and the enums / urls deliberately do NOT — interpolating an enum can only ever produce an invalid one
   for (const f of ['clip', 'sound', 'etype', 'pk', 'who', 'stat', 'ewho', 'cmd'])
     assert(!new RegExp(f + ':_lgName').test(doCase), f + ' is an enum or a url and stays literal');

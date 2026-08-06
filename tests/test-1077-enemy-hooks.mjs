@@ -177,13 +177,22 @@ assert(/v==='music'\|\|v==='command'/.test(extractFunction('_isWorldVerb', src))
 assert(/s\.do==='music'\|\|s\.do==='command'/.test(extractFunction('_applySignalAction', src)),
   '...so a prop signal can issue it too — an alarm lever really is a lever');   /* build 1277: the condition continues past 'command' now (six prop verbs joined it) */
 eq((src.match(/\['command','Command enemies'\]/g) || []).length, 2, 'it appears in the graph node AND the prop-signal editor');
-assert(/\{k:'ewho',l:'',w:100,ifv:\['verb','command'\],sel:\[\['enemies','All enemies'\],\['nearest','Nearest enemy'\]\]\}/.test(src),
-  'the node asks WHICH enemies — and does not offer "the player", which would mean nothing here');
+/* build 1408 added a third audience — the enemies near a named place — so a level with more than one room
+   can order one room's worth. The assertion's point is unchanged: this field names ENEMIES, and "the
+   player" is not among them because it would mean nothing to a command. */
+{ const ew = src.match(/\{k:'ewho',l:'',w:100,ifv:\['verb','command'\],sel:\[([^\]]*\]){3}\]\}/);
+  assert(ew, 'the node asks WHICH enemies');
+  assert(!/'player'/.test(ew[0]),
+    '...and does not offer "the player", which would mean nothing here'); }
 assert(/\{k:'cmd',l:'',w:120,ifv:\['verb','command'\],sel:\[\['hunt','Hunt the player'\],\['patrol','Patrol'\],\['hold','Hold position'\],\['alert','Alert them to'\],\['calm','Lose the player'\],\['post','Move their post to'\]\]\}/.test(src),
   '...and all six commands in plain English');
 assert(/ifv:\['verb',\['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill'\]\],listId:'lgPlaceList'/.test(src),   // build 1170; build 1216: + spawnprop; build 1288: + the area verbs
   'it shares the place field with the other verbs that point somewhere');
-assert(/ewho:p\.ewho\|\|'enemies', cmd:p\.cmd\|\|'hunt'/.test(src), 'the Do-action node passes them through');
+/* build 1407 replaced the hand-written forwarding literal with a derivation over the node's own
+   parameter table — which is what stopped `once` and `r` being silently dropped. The intent here is
+   unchanged and now stronger: these fields reach the handler because EVERY declared param does. */
+assert(/k:'ewho'/.test(src) && /k:'cmd'/.test(src) &&
+       /const _args=_lgDoArgs\(p\)/.test(extractFunction('_lgPulse')), 'the Do-action node passes them through');
 {
   const fn = extractFunction('_sigWorldRow', src);
   assert(/sel\(Object\.keys\(LG_CMDS\)\.map\(k=>\[k, LG_CMDS\[k\]\]\), s\.cmd\|\|'hunt'/.test(fn), 'the Signals fold offers the commands too');

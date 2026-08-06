@@ -4,7 +4,7 @@
 // player slow in the swamp and fast on the boost pad, and change the music when the boss door opens.
 // It also closes the hole 1073 left: prop signals could SELECT the world verbs but had no fields to
 // configure them, so a prop that said "Spawn enemies" silently spawned one grunt on the player.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- stats are multipliers of the AUTHORED value
@@ -166,7 +166,11 @@ assert(/\{k:'stat',l:'',w:104,ifv:\['verb','stat'\],sel:\[\['speed','Move speed'
   'the stat picker names all five in plain English');
 assert(/\{k:'mul',l:'\\u00d7',w:38,ifv:\['verb','stat'\]\}/.test(src), '...with a multiplier beside it');
 assert(/\{k:'sound',l:'url',w:96,ifv:\['verb',\['sound','music'\]\],listId:'lgSndList'\}/.test(src), 'music reuses the sound-URL field and its dropdown');
-assert(/stat:p\.stat\|\|'speed', mul:p\.mul/.test(src), 'the Do-action node passes them through');
+/* build 1407 replaced the hand-written forwarding literal with a derivation over the node's own
+   parameter table — which is what stopped `once` and `r` being silently dropped. The intent here is
+   unchanged and now stronger: these fields reach the handler because EVERY declared param does. */
+assert(/k:'stat'/.test(src) && /k:'mul'/.test(src) &&
+       /const _args=_lgDoArgs\(p\)/.test(extractFunction('_lgPulse')), 'the Do-action node passes them through');
 
 // clients apply their half
 {

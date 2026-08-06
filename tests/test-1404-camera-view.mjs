@@ -178,15 +178,22 @@ function rig(opts) {
   assert(/\{k:'vmode',l:'',w:130,ifv:\['verb','view'\]/.test(src), 'with a mode picker...');
   assert(/\{k:'vtag',l:'camera tag',w:86,ifv:\['verb','view'\],ifv2:\['vmode','fixed'\]/.test(src),
     '...a tag box that appears only for a fixed camera...');
-  assert(/\{k:'vtrack',l:'follows the player',chk:1,ifv:\['verb','view'\],ifv2:\['vmode','fixed'\]\}/.test(src),
-    '...and the tracking switch beside it');
+  /* build 1407 moved this default out of the forwarding literal and into the table (def:1), where the
+     editor reads it too — the box used to render UNCHECKED while the runtime treated it as on. */
+  assert(/\{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:\['verb','view'\],ifv2:\['vmode','fixed'\]\}/.test(src),
+    '...and the tracking switch beside it, on by default in the table the editor and the runtime share');
   assert(/ifv:\['verb',\['damage','heal','kill','teleport','give','take','view'\]\]/.test(src),
     '...plus build 1232\'s who field');
 
   // build 1402's rule: the camera tag is a NAME
   const doCase = extractFunction('_lgPulse');
-  assert(/vtag:_lgName\(p\.vtag\)/.test(doCase), 'the camera tag interpolates — `cam{n}` for a bank of them');
-  assert(/vmode:p\.vmode\|\|'normal'/.test(doCase), '...while the mode is an enum and stays literal');
+  /* build 1407: derived — a name field interpolates because it is in _LG_NAME_FIELDS, and an enum takes
+     its select's first option, which for vmode is 'normal' exactly as the literal said. */
+  assert(/'vtag'/.test(extractConst('_LG_NAME_FIELDS')),
+    'the camera tag interpolates — cam{n} for a bank of them');
+  assert(!/'vmode'/.test(extractConst('_LG_NAME_FIELDS')) &&
+         /\{k:'vmode',[^}]*sel:\[\['normal'/.test(src),
+    '...while the mode is an enum and stays literal, defaulting to its first option');
 }
 
 // Probed live (tools/probe/camera-view.mjs), driving the real dispatcher and reading the real camera:

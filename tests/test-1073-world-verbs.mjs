@@ -6,7 +6,7 @@
 // A "place" is a TAG — the naming system props already use — so authors point at something they can see
 // and select in the viewport, and a build-1072 trigger volume answers to its own event name, which means
 // the zone that fires a rule can also be the spot it acts on.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- places
@@ -220,8 +220,15 @@ const W = new Function(NAME_GLUE + WORLD_GLUE
     '...on the authoritative side only: the host owns spawns, damage and positions and streams the results');
 }
 // build 1402: `item` and `at` NAME something, so they interpolate `{var}`; the enums beside them do not.
-assert(/etype:p\.etype\|\|'grunt', n:p\.n, pk:p\.pk\|\|'health', item:_lgName\(p\.item\), who:p\.who\|\|'player', amt:p\.amt, at:_lgName\(p\.at\)/.test(src),
-  'the Do-action node passes the new params through');
+/* build 1407 replaced the hand-written forwarding literal with a derivation over the node's own
+   parameter table — which is what stopped `once` and `r` being silently dropped. The intent here is
+   unchanged and now stronger: these fields reach the handler because EVERY declared param does. */
+{ const P = extractConst('LG_DEFS').slice(extractConst('LG_DEFS').indexOf('do:'));
+  for(const k of ['etype','n','pk','item','who','amt','at'])
+    assert(new RegExp("k:'"+k+"'").test(P), 'the Do node declares '+k);
+  assert(/const _args=_lgDoArgs\(p\)/.test(extractFunction('_lgPulse')) &&
+         /for\(const pm of params\)/.test(extractFunction('_lgDoArgs')),
+    'the Do-action node passes the new params through'); }
 assert(/\['spawn','Spawn enemies'\],\['pickup','Spawn pickup'\],\['damage','Damage'\],\['heal','Heal'\],\['kill','Kill'\],\['teleport','Teleport'\]/.test(src),
   'all six appear in the node\'s verb list, in plain English');
 eq((src.match(/\['spawn','Spawn enemies'\]/g) || []).length, 2, '...in BOTH the graph node and the prop-signal editor');

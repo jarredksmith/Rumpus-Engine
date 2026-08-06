@@ -8,10 +8,19 @@ const src = gameSource();
 // --- wiring ---
 assert(/function _schedulePhysRebuild\(\)\{/.test(src), 'a debounced physics-rebuild scheduler exists');
 const fp = extractFunction('finalizeProp');
-assert(/if\(gltf && !obj\.userData\.phys && typeof _schedulePhysRebuild==='function'\) _schedulePhysRebuild\(\);/.test(fp),
-  'a freshly LOADED model (not a primitive, not a dynamic prop) schedules a rebuild');
+/* build 1409 WIDENED this, and the widening is the fix: the `gltf &&` gate meant a PRIMITIVE never
+   qualified, so a prop spawned during play (the graph's spawnprop verb, or a joiner's primitives) got no
+   Rapier body and the player walked through it — measured falling from 3.00 to 0.08 on a slab and straight
+   through a ramp. What this build always asserted is intact and now covers more: a freshly built static
+   prop schedules a rebuild, and a dynamic one does not. */
+assert(/if\(!obj\.userData\.phys && typeof _schedulePhysRebuild==='function'\) _schedulePhysRebuild\(\);/.test(fp),
+  'a freshly built static prop — loaded model OR primitive, never a dynamic prop — schedules a rebuild');
 const sr = extractFunction('_schedulePhysRebuild');
-assert(/_glbPending>0\)\{ _physRebuildT=setTimeout\(tick, 300\); return; \}/.test(sr), 'it waits for the GLB load burst (_glbPending) to finish before rebuilding');
+/* build 1409 bounded that wait: it re-armed for as long as _glbPending was non-zero, so one model that
+   never settles left every later prop intangible for the session. The intent — wait out the burst — is
+   unchanged, and the cap is what makes it a wait rather than a hang. */
+assert(/_glbPending>0 && \+\+_waited <= PHYS_WAIT_MAX\)\{ _physRebuildT=setTimeout\(tick, 300\); return; \}/.test(sr),
+  'it waits for the GLB load burst (_glbPending) to finish before rebuilding — for a bounded time');
 assert(/if\(physWorld && \(typeof editorOpen==='undefined' \|\| !editorOpen\)\)\{/.test(sr) && /else \{ for\(const c of colliders\) addStaticColliderFor\(c\); \}/.test(sr),
   'then it makes the late statics solid (only in play, only if a world exists) — INCREMENTALLY since 1194, with a full buildPhysWorld only when a dynamic prop is missing its body');
 assert(/if\(_physRebuildT\) clearTimeout\(_physRebuildT\);/.test(sr), 'debounced — a burst of model loads coalesces into one rebuild');

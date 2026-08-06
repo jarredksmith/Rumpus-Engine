@@ -8,7 +8,7 @@
 // The bridge to the graph was already there: the `emit` signal verb (build 1027) fires a named logic event.
 // What was missing was a trigger, and a PAYLOAD — build 1221 gave the enemy events `#x/#z/#hp/#hpf` and the
 // prop events never got them, so a graph could be told "a plate was hit" and could not ask where or how hard.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
 
 const src = gameSource();
 
@@ -84,8 +84,11 @@ const src = gameSource();
 // is worth asserting rather than assuming: a sanitizer that silently dropped an unknown `when` would make
 // this a feature that works until you save.
 {
-  assert(/\{ w:s\.when, d:s\.do, t:s\.target \}/.test(src), 'the trigger serializes verbatim...');
-  eq((src.match(/\{ when:s\.w, do:s\.d, target:s\.t \}|\{ when:sg\.w, do:sg\.d, target:sg\.t \}/g) || []).length, 2,
+  /* build 1406 replaced the hand-written mapping with SIG_KEYS + _sigPack/_sigUnpack. This test's point is
+     unchanged and is now STRONGER: the trigger is copied by a loop over the table, so there is not only no
+     allow-list of trigger names, there is no per-field code either. */
+  assert(/\bwhen:'w'/.test(extractConst('SIG_KEYS')), 'the trigger serializes verbatim...');
+  eq((src.match(/obj\.userData\.signals=p\.sg\.map\(_sigUnpack\)/g) || []).length, 2,
     '...and both loaders read it back the same way, with no allow-list of trigger names anywhere between');
   assert(!/when *=== *'destroyed' *\|\| *[^)]*'interacted'/.test(src),
     'nothing filters the trigger by name, so a new one needs no loader change (which is why this build ' +

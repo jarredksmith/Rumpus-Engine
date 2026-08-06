@@ -5,7 +5,7 @@
 // Level Check entry, so a creator's only debug tool was hand-authoring HUD widgets to print variables. Now
 // a do-verb aimed at a tag no placed prop answers, or a verb that throws, is recorded (deduped, capped) and
 // levelIssues() surfaces it the moment the creator returns to the editor — "what happened last run".
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- the recorder, executed
@@ -51,6 +51,12 @@ const src = gameSource();
       'let logicVars = {}; let _lgCtx = { pid:0 }; const LG_NAME_MAX = 64;\n' +
       extractFunction('_lgVarKey') + '\n' + extractFunction('_lgName') + '\n' +
       extractFunction('_lgTagExists') + '\n' +
+      /* build 1407: the do branch derives its argument object from the node's parameter table, so this
+         scope needs both. Without them the branch THROWS, its catch reports "a do action failed", and
+         every count here reads one too high — which is exactly what it did before this line. */
+      'const LG_DEFS = ' + extractConst('LG_DEFS') + ';\n' +
+      'const _LG_NAME_FIELDS = ' + extractConst('_LG_NAME_FIELDS') + ';\n' +
+      extractFunction('_lgDoArgs') + '\n' +
       'function _noteLogicFailure(m){ notes.push(m); }\n' +
       'function _applySignalAction(){}\n function _lgFollow(){}\n' +
       'function fire(p){ const id=0; switch("do"){ ' + doBranch + ' } }\n' +

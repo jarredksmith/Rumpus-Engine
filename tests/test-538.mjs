@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, done } from './harness.mjs';
 /* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
 
 const src = gameSource();
@@ -28,7 +28,10 @@ assert(/if\(s\.do==='objective'\)\{ if\(typeof setGoal==='function'\) setGoal\(s
 assert(/function setGoal\(text\)\{/.test(src), 'setGoal updates _curGoal + banner + HUD');
 // the signal text round-trips
 // build 1280: restored once, in the shared applier every loader calls
-assert(/if\(s\.text\) x\.tx=s\.text;/.test(src) && /if\(s\.tx\) x\.text=s\.tx;/.test(extractFunction('_applyPropEntry')), 'signal objective text serialized + restored');
+/* build 1406 */
+assert(/\btext:'tx'/.test(extractConst('SIG_KEYS')) &&
+       /obj\.userData\.signals=p\.sg\.map\(_sigUnpack\)/.test(extractFunction('_applyPropEntry')),
+  'signal objective text serialized + restored');
 
 // --- the editor exposes the field ---
 const panel = extractFunction('renderEditorFields');

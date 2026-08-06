@@ -2618,6 +2618,297 @@ a station exists — is asserted directly now, beside the url landing as data ei
 from `restoreLevel`, so inserting it first makes every one of those anchors ambiguous. The count assert
 caught it on the first run and nothing was written, which is what they are for.
 
+## A prop spawned during play was intangible (build 1409)
+
+Found by the MOVEMENT booth, which is the fourth of the gauntlet's scoped sections and had never been swept:
+the player walked straight through a ramp while `groundHeightAt` reported its surface climbing under them.
+
+`finalizeProp` scheduled a physics body only `if(gltf && ...)`. Build 643 wrote that line for a late-loading
+MODEL on a joiner — *"you could walk straight through them"* — and a PRIMITIVE has no gltf, so it never
+qualified. Measured with a physics rebuild as the control, so the null cannot be "nothing supports the
+player here":
+
+```
+                  body    stand on it    walk at it
+box,   no rebuild  false  fell to 0.08   walked through
+box,   rebuilt     true   3.00           blocked
+wedge, no rebuild  false  fell to 0.08   walked through
+wedge, rebuilt     true   1.20           climbed to 2.34
+```
+
+So **build 1216's `spawnprop` verb built scenery you fall through** — the verb whose own entry advertises "a
+tycoon's buy → building appears, a wave-defense buildable turret" — and a co-op joiner's primitives arrived
+intangible.
+
+**The DEBOUNCED scheduler is the right hook, not an immediate `addStaticColliderFor`, and the reason is
+ordering.** `finalizeProp` runs BEFORE the entry's dynamic state is applied, and `setPropDynamic` does not
+release a static body it finds — it only splices the prop out of `colliders`. An immediate static body on a
+prop about to become dynamic would strand an invisible solid box at the spawn point. The tick walks
+`colliders`, which a dynamic prop has already left, so it cannot happen.
+
+**Two things the fix had to add, and both are the same defect one layer along:**
+
+- **The wait is now BOUNDED.** It re-armed for as long as `_glbPending` was non-zero, so a single model that
+  never settles — a host that accepts the connection and then hangs, which is *not* the 404 the error path
+  already counts — left every prop after it intangible for the rest of the session. Found because the probe
+  sandbox is exactly that case: `_glbPending` sat at 4 and a platform the graph had just built stayed
+  walk-through indefinitely. Past `PHYS_WAIT_MAX` it goes ahead; `addStaticColliderFor` is idempotent and a
+  later burst schedules again, so the worst case is one extra pass over `colliders`.
+- **With nothing loading the window is 60 ms rather than 350.** The long wait exists to coalesce a load
+  BURST; a primitive is built synchronously and has no burst to wait for, so a platform spawned under a
+  player is solid in ~4 frames instead of ~21.
+
+### The TDZ the fix created, which is build 1331 arriving on schedule
+
+`loadHostedProps()` is called bare at module level and builds the saved level's props at BOOT, so it reaches
+`finalizeProp` — which now schedules for **every** static prop. With the declarations ~15,000 lines below,
+the first saved level threw **`Cannot access '_physRebuildT' before initialization`** on its very first
+prop. The `gltf` gate is what had hidden it: a boot-time primitive never called this, and a model loads
+asynchronously, long after module evaluation. `test-1409` pins the whole chain — declarations before
+`finalizeProp`, before `loadHostedProps`, before the module-level call.
+
+Two pins moved in `test-495` (build 643's own harness), both correctly: "a freshly LOADED model schedules a
+rebuild" became "a freshly built static prop — model OR primitive — schedules a rebuild", which is the
+widening; and "it waits for the burst" gained "for a bounded time".
+
+## The movement booth (probe, at build 1409) — 17/17, and the one bug behind both failures
+
+`tools/probe/movement-booth.mjs` sweeps the traversal verbs from the player's own inputs in a running frame
+loop: the held/tapped jump (1301), coyote time and the press buffer (1160), air control (1361), the slide
+(926), the ledge grab and pull-up (1244/1289/1290), jump pads (993), ladders, water, low-gravity and haste
+zones (1193), and the teleport verb. **All seventeen pass**, and the two that did not are worth recording
+because they were ONE instrument bug wearing two costumes:
+
+**`removeProp` takes an INDEX, not a prop.** Every probe in this directory had been calling it with the
+object — `propModels[obj]` is `undefined` and it returns immediately — so every fixture stayed in the world
+AND in the collider list. That is silent, and the next check then measures a scene it believes it cleared:
+
+- the ramp "stalled the player at 1.44 of 2.4 m", which was the LEDGE check's 3.2 m wall still standing
+  0.6 m ahead of them — the failing check now dumps `surfAhead 3.2, inSolid true` and says so itself;
+- the jump pad read `kick 21.5, launched 0`, which was the coyote check's slab still under the pad.
+
+Both looked like engine defects and neither was. **A physics rebuild mid-play was the leading hypothesis for
+the second and is eliminated by measurement**: a jump apexes at 2.71 before and after `buildPhysWorld()`,
+four times over. `__kill(prop)` lives in the shared rig now, and `__stand` is a full reset (jump, slide, pad
+and ladder cooldowns, the coyote and buffer windows, the ledge record) rather than a teleport.
+
+### Six instrument faults, and three of them read exactly as engine defects
+
+- **`_jPressed` is a per-frame `const`** derived inside `loop()` from the held key's rising edge, so setting
+  it from outside is overwritten before it is read. Three jump checks measured "the jump never fires".
+- **A diagnostic passed SIX numbers to `spawnProp`**, so the scale became the rotation and the "slab" was a
+  wildly rotated unit cube. The engine was right; the fixture was a different shape than I thought.
+- **The debounce runs on the WALL clock**, which a synchronous frame drive never reaches — 180 driven frames
+  looked like "the body never arrives" when no time had passed at all.
+- **`gameOver` does not stop the frame loop** but it stands down the jump pads and the zone updates, so a
+  sweep that cleared only the loop's own gates measured "a jump pad does nothing" with pad and player
+  exactly where they should be. It is in the shared rig's gate list now.
+- **A jump cooldown left by an earlier check** silently ate the next jump: the pad and the low-gravity
+  checks both read "never left the ground" purely from that.
+- **`__stand` settles for four frames, and standing on a pad IS the trigger** — so the pad fired during the
+  settle and the measurement then started from a player already several metres up.
+- **`removeProp` takes an index** (above), which is the one that cost the most: it turned every teardown in
+  every probe here into a no-op, and the accumulated fixtures then read as two separate engine defects.
+
+`tools/probe/drive.mjs` is the frame drive factored out of the AI booth so both sweeps share one
+implementation, with the gate list, the pure virtual clock and the positive control in one place.
+
+## An order reaches the enemies at ONE booth (build 1408)
+
+The gap the AI booth surfaced while it was being written, and the first thing a multi-room level hits.
+`command` resolved its audience with `s.ewho==='nearest' ? 'nearest' : 'enemies'` — all of them, or the
+single nearest one to the PLAYER. So *hold position* fired at the AI booth froze every enemy in the level,
+including the ones down range at the shooting gallery. **`_lgEnemyTargets` has taken a radius around a named
+place since build 1288** and damage/heal/kill have used it since; the command verb could not reach it.
+
+**The scope is its own field, not `at`.** For `alert` and `post`, `at` is the DESTINATION — *alert them to
+the vault*, *move their post to the gate*. Overloading it would have read naturally in the common case and
+quietly made *"post the guards near the gate at the vault"* unsayable, which is the one arrangement a
+creator reaches for. `escope` + `er` sit beside it, shown only when the audience is scoped.
+
+Measured on two booths 70 m apart, three enemies each, **with the other booth as the control** — a scoped
+order that reaches nobody and one that reaches everybody are indistinguishable without it:
+
+```
+control  "all enemies patrol"          range patrol/patrol/patrol   pit patrol/patrol/patrol
+scoped   "hold near range, r 12"       range hold/hold/hold         pit hunt/hunt/hunt
+r 0.5    reaches neither booth         range hunt/hunt/hunt         pit hunt/hunt/hunt
+bad tag  commands nobody, reported     range hunt/hunt/hunt         pit hunt/hunt/hunt
+post     scope range, destination pit  all three range enemies posted at the pit
+```
+
+Both fail-closed rules come from `_lgEnemyTargets` unchanged and are what make a scoped order safe to
+author: **a place that does not exist commands nobody, never everybody**, and **a radius of 0 is nowhere,
+never everywhere.** A scope nothing answers to is reported through build 1214's channel rather than doing
+nothing silently.
+
+### Build 1407 is why this was four small edits
+
+Declaring the two params in the node's table **is** wiring them — the dispatch names neither field, and
+`test-1408` asserts that absence. Before 1407 this would have needed the table AND the hand-written
+forwarding literal, and the second half is the one that got forgotten eight times running. Build 1406 is why
+a scoped order on a prop signal survives a reload: `escope` was already in `SIG_KEYS` with room reserved,
+and `er` is one entry beside it. Three builds compounding is the return on doing them in that order.
+
+Two pins moved (1077, 1407), both re-expressed as the property rather than the count: 1077's *"this field
+names ENEMIES and not the player"* is asserted directly instead of by quoting a two-option list, and 1407's
+name-field count became **every member of the set interpolates**, executed — a count would only ever have
+been a number to bump.
+
+## The prefab pair is clean (verified after build 1407, not a build)
+
+`_pfEntryOf` / `_pfSpawnEntry` were the next place to ask build 1406's question, since build 1280 keeps the
+spawn side deliberately separate from `_applyPropEntry`. Measured (`tools/probe/prefab-roundtrip.mjs`): a
+prop configured with every field the serializer writes — tag, name, folder, interact, NPC + dialogue, lock,
+`sigNeed`, attribution, editor hide/lock, hit sound, four world-verb signals, and the whole dynamic tier
+(mass, HP, break style, explosive, fire, shootable) — is copied through the real pair and its entry diffed
+against the original's. **28 fields, all present, none changed**; only the identity differs, which is the
+designed divergence. No build needed. Recorded so the next person does not re-derive it.
+
+## The Do node dropped two of its own fields (build 1407)
+
+Build 1406's shape, one layer up, found by asking the same question of the next hand-kept list. The graph's
+Do node built a **hand-written literal** to forward to `_applySignalAction`, and the node's parameter table
+is the list of fields a creator can fill in. Two lists, and eight builds added to one of them.
+
+Measured (`tools/probe/do-node-forward.mjs`), against a control that fires:
+
+```
+missing: ["once", "r"]
+control   "damage all enemies"        both enemies 31 -> 26
+then      "damage enemies near X"     the one two metres from X: 26 -> 26
+```
+
+**So build 1288's area damage did NOTHING from the graph** — the feature whose whole point was that tower
+defence, traps and mines were structurally unbuildable without it — and **build 1399's once-only pickup was
+never once-only.** Both work fine from a prop SIGNAL, which is why nobody noticed: only the graph dropped
+them.
+
+The argument object is derived from the table now, and so are the defaults:
+- **A select's default is its FIRST OPTION** — which is what all seven hand-written defaults already were
+  (grunt, health, player, normal, speed, enemies, hunt), so nothing moved. The test asserts that against the
+  real table rather than restating the seven, so reordering a dropdown fails there instead of silently
+  moving a default.
+- **A checkbox defaults to `def`**, which exists for exactly one field: build 1404's `vtrack`. That default
+  lived only inside the forwarding literal, so **the editor rendered the box UNCHECKED while the runtime
+  treated it as on.** The table is the one place that says so now, and the node renderer reads it too.
+- A text/number field arrives BLANK rather than absent, which every handler already reads as its own default
+  (`+s.amt||25`, `+s.r||0` — and 0 is the fail-closed direction for a radius).
+- `_LG_NAME_FIELDS` states build 1402's four (now six) interpolating fields once, instead of one `_lgName`
+  call per site.
+
+### Two instrument faults, both of which read exactly like the defect
+
+`_lgPulse` takes a node **ID** and looks it up, so passing it a node OBJECT returns at `_lgNode(id)` and
+does nothing. And the switch is on **`n.type`**, not `n.t`, so a node keyed the other way is found and then
+falls through every case. Neither throws. **The positive control — the same verb with an audience that has
+always worked — is the only reason those were not published as "the feature is dead".** Build 1316 recorded
+the general form and it earned its keep again: *before believing a null, prove the instrument can produce a
+positive.*
+
+The probe's first check also SCANNED THE SOURCE for the forwarding literal. After the fix there is no
+literal, so it reported every field missing — a probe that reads the code rather than the behaviour calls
+the fix a regression. It fires a node and reports what the handler received.
+
+Eight harnesses moved (1027, 1073, 1074, 1077, 1214, 1277, 1402, 1404), each keeping its intent. Two of them
+EXECUTE the do branch and needed the derivation supplied, lifted from source rather than restated; without
+it the branch threw, its own catch reported "a do action failed", and test-1214's failure counts read one
+too high — which is the same class of silent miscount this build removes.
+
+## A prop signal lost everything but its verb (build 1406)
+
+Found while scoping the AI booth's next gap, and it had been true for a long time. `serializeLevel` wrote a
+prop's signals through a HAND-WRITTEN short-key list — `w, d, t, c, n, f, ci, tx, ni, nc, cn, so` — and the
+signal editor writes `etype, n, at, pk, item, once, who, amt, r, stat, mul, ewho, cmd, vmode, vtag, vtrack`
+on top of that. Nothing carried the second list.
+
+Measured with the real serializer across all seventeen verbs a signal can carry
+(`tools/probe/signal-roundtrip.mjs`):
+
+```
+before   3/17 survive        after   17/17
+"command nearest -> hold @post1"   {"w":"used","d":"command"}
+                               ->  {"w":"used","d":"command","a":"post1","ew":"nearest","cm":"hold"}
+"view fixed on cam1, tracking"     {"w":"used","d":"view"}
+                               ->  {"w":"used","d":"view","vm":"fixed","vt":"cam1","vk":1}
+```
+
+**Fourteen of seventeen lost every parameter.** `music` and `objective` survived only because `sound` and
+`text` happened to be on the list; `anim` survived because it is a tag verb. So a creator authors "the
+pressure plate spawns 3 brutes at the gate", tests it — it works, because the in-memory object is right —
+saves, reloads, and gets one grunt at the player. **Silently, and only after a save**, which is the worst
+shape a data-loss bug can have.
+
+**The cause is not a missing field; it is that the mapping was kept by hand in three places.** The list was
+written when signals were tag verbs only, and builds 1073, 1074, 1077, 1170, 1216, 1258, 1399 and 1404 each
+added a world verb to the signal dropdown without touching it. That is build 1280's finding one layer down —
+*a test that counts copies of a thing is a test of the copying* — so `SIG_KEYS` names the mapping once and
+`_sigPack` / `_sigUnpack` derive from it, used by the serializer and by BOTH loaders.
+
+Three constraints on the table, each of which is a defect the other way:
+- **The twelve original short keys are FROZEN.** Every level ever saved uses them, so `cs` must stay `n` —
+  which is why the count field `n` takes `q` rather than the obvious letter. A short key is a wire format.
+- **Falsy is absent**, exactly as the hand-written emitter had it (`if(s.clip) x.c=s.clip`). Nothing in the
+  engine can tell an amount of 0 from an unset one (`+s.amt||25`), so emitting it would grow every saved
+  level for a value that means nothing — and would break `pack(unpack(x)) === x` for a pre-1406 signal,
+  which is the property that makes this safe to ship over existing content.
+- **Booleans emit 1**, matching the old wire form, and come back as 1 rather than `true`. Every consumer
+  tests truthiness; test-1280's `eq(sg.contain, true)` became `assert(sg.contain)` for that reason.
+
+**And build 1404's own gap, one build later.** That build put `view` in the signal verb dropdown and never
+gave it a parameter row, so a signal could select *Camera view* and had no way to say WHICH view. It is
+build 1277's defect — a verb offered and not reachable — committed by the build that recorded it. The row is
+here, gated on `fixed` exactly as the graph node gates its tag field.
+
+### The test asserts the property, not the fields
+
+Pinning the field list is what failed for eight builds. `test-1406` instead extracts the signal editor's own
+`s.X =` writes and asserts **every one is a key `SIG_KEYS` carries** — so the next verb that adds a field
+fails here rather than shipping. It asks the same question of the verb dropdown: every configurable verb it
+offers must have a row that configures it. That second check is what caught `view`.
+
+**A slice scoped by a character count broke it first**, for the umpteenth time: the dropdown scan used a
+fixed window that reached back into the WHEN select and reported `destroyed` and `contact` as verbs with no
+row. It walks back from the select's own callback to its option list now.
+
+**And the probe was wrong before the engine was right.** Its first draft PASTED the loader's body inline, so
+after the fix the serializer carried every field and the probe still reported them lost — it was measuring
+its own stale copy of the thing under test. It calls the engine's `_sigUnpack` now. *A probe that reimplements
+the code under test is a probe of the reimplementation.*
+
+Seven harnesses moved (242, 291, 528, 538, 549, 1280, 1397), every one keeping its intent: "this field
+serializes and is restored at every load site" is now asserted against the one table and the two shared
+functions rather than against a quotation of the code that had drifted.
+
+## The AI booth (probe, after build 1405)
+
+The last of the three the gauntlet is scoped around. `tools/probe/ai-booth.mjs` reads **16/16** and found no
+engine defect — every one of its seven failures was an instrument fault, and four are worth carrying:
+
+- **`loop()` early-returns past the ENTIRE simulation** when any UI gate is up (the level loader, a cutscene,
+  an interstitial, the shop, the upgrade picker, the map, the inventory, `paused`) — and `_frameNo` is
+  incremented BEFORE all of them, so a drive that simulated nothing still reported its full frame count.
+  That is why two runs of the same sweep disagreed 8/15 against 11/15 on the same tree: clearing the field
+  reaches `beginUpgradeChoice`. The gates are cleared at the head of every drive and `__gate()` names the
+  one that was closed.
+- **Half the AI's timers are wall-clock TIMESTAMPS, not countdowns** (`_windupT = performance.now() + 320`),
+  so a drive that advances only the simulated clock never completes a wind-up. The telegraph fired, the
+  squash played, and the swing never landed — which reads exactly like broken melee.
+- **Clamping that virtual clock forward to the real one advanced it at the REAL rate** (2 ms a call instead
+  of 16.67), so an enemy twenty simulated seconds into a chase had not moved. It is a pure counter now, and
+  `_tabHidden` holds the page's own rAF frames off so the virtual clock is the only clock.
+- The spawn descriptor key is `fac`; what lands on the enemy is **`faction`**.
+
+**There is no `updateEnemyAI`** — the enemy tick is inline in `loop()`, and real frames are unusable here
+(measured: `_frameNo` advances 3 times in 3 seconds, so 3 simulated seconds would take 3 real minutes).
+`__drive(n)` calls the real `loop()` with `renderer.render` a no-op and the rAF re-arm neutralised: **300
+frames in 469 ms.**
+
+`tools/probe/lint.mjs` closes the backtick trap that has cost eleven cycles — a backtick inside a probe's
+page-code template literal closes it, and Node reports "missing ) after argument list" at an innocent line.
+It skips escaped backticks and nested `${...}` interpolation, and is controlled both ways: 123 probes clean,
+one injected backtick caught at the right line. **Run it before running a probe.**
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

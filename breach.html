@@ -12826,6 +12826,38 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
   for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
   _lgFireEvents('start','');
 }
+/* ---- build 1407: the Do node forwards what it was given ----------------------------------------
+   The dispatch below built a HAND-WRITTEN literal to hand to _applySignalAction, and the node's own
+   parameter table is the list of fields a creator can fill in. Two lists, and eight builds added to one of
+   them. Measured with a control that fires: `once` and `r` were offered and never forwarded, so build
+   1288's "damage the enemies near a place" did NOTHING from the graph (the enemy beside the place took 0
+   while the control took 5 off both), and build 1399's once-only pickup was never once-only.
+
+   Build 1406 had just finished paying for this exact shape one layer down. So the argument object is
+   DERIVED from the table now, and the defaults come from the table too:
+   - a SELECT's default is its FIRST OPTION, which is what every one of the seven hand-written defaults
+     already was — grunt, health, player, normal, speed, enemies, hunt — so nothing moved;
+   - a CHECKBOX defaults to `def`, which exists for exactly one field: build 1404's `vtrack`, whose "follows
+     the player" is on unless turned off. That default lived only in the forwarding literal, so the editor
+     rendered the box UNCHECKED while the runtime treated it as on — the table is now the one place that
+     says so and the renderer reads it too;
+   - everything else passes through, with the four fields that NAME something interpolated (build 1402).  */
+const _LG_NAME_FIELDS = new Set(['target','prefab','item','text','at','vtag','escope']);
+function _lgDoArgs(p){
+  const out = { do: p.verb || 'toggle' };
+  const params = (typeof LG_DEFS!=='undefined' && LG_DEFS.do && LG_DEFS.do.params) || [];
+  for(const pm of params){
+    const k = pm.k; if(!k || k==='verb') continue;
+    let v = p[k];
+    if(v===undefined || v===null || v===''){
+      if(pm.sel && pm.sel.length) v = pm.sel[0][0];        // a select's default IS its first option
+      else if(pm.chk) v = !!pm.def;
+      else v = '';                                          // a text/number field: the handlers all read `+x||default`
+    }
+    out[k] = _LG_NAME_FIELDS.has(k) ? _lgName(v) : v;
+  }
+  return out;
+}
 function _lgPulse(id, pin){
   if(++_lgBudget > 400){   // a wiring loop stalls the graph for a frame, never the game
     if(!_lgWarned){ _lgWarned=true; console.warn('[RUMPUS] logic graph: pulse budget exceeded — is a wire looping without a Delay?'); if(typeof toast==='function') toast('Logic graph paused this frame — too many pulses (a loop without a Delay?)'); }
@@ -12973,13 +13005,9 @@ function _lgPulse(id, pin){
     case 'emit': { _lgEmit(_lgName(p.name)); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
     case 'do': { const _verb=p.verb||'toggle', _tgt=_lgName(p.target);   /* build 1402: `plate{n}` — resolved BEFORE the tag check, so a computed tag that resolves to nothing is reported by its REAL name */
       if(_LG_TAG_VERBS.has(_verb) && _tgt && _tgt!=='this' && typeof _lgTagExists==='function' && !_lgTagExists(_tgt)) _noteLogicFailure('A "'+_verb+'" action targets the tag "'+_tgt+'", but no placed prop has that tag.');
-      try{ _applySignalAction({ do:_verb, target:_tgt, prefab:_lgName(p.prefab),   /* build 1277: spawnprop was dead twice — the forwarded object dropped its prefab name */
-        clip:p.clip||'', cs:p.cs||'', text:_lgName(p.text), sound:p.sound||'',
-        /* build 1402: the four fields that NAME something interpolate — a tag, a prefab, an item, and the
-           text a player reads. The rest (clip, sound, etype, pk, who, stat, cmd) are enums or urls. */
-        etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:_lgName(p.item), who:p.who||'player', amt:p.amt, at:_lgName(p.at),
-        vmode:p.vmode||'normal', vtag:_lgName(p.vtag), vtrack:(p.vtrack!==false && p.vtrack!==0),   /* build 1404; the tag is a NAME, so it interpolates (1402) — `cam{n}` for a bank of them */
-        stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }
+      /* build 1407: derived from the node's own parameter table. The tag was already resolved above for
+         the exists-check, so it is written over the derived one rather than interpolated twice. */
+      try{ const _args=_lgDoArgs(p); _args.target=_tgt; _applySignalAction(_args, null); }
       catch(e){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "'+_verb+'" action failed: '+((e&&e.message)||e)); } _lgFollow(id,0); break; }
     case 'toast': { const msg=_lgName(String(p.text||'').slice(0,120));   // {score} interpolates live variables; build 1231: {coins@} reads the event's player; build 1402: through the ONE interpolator, so the syntax cannot drift between the fields that use it
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
@@ -13367,7 +13395,7 @@ const LG_DEFS = {
        vocabulary (tags, `me`, `start`), which is exactly what _lgPlaceAt accepts. */
     {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist']],listId:'lgPlaceList'},
     {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -13554,7 +13582,7 @@ function _lgRenderNode(n){
       for(const o of pm.sel){ const ov=Array.isArray(o)?o[0]:o, ot=Array.isArray(o)?o[1]:o;
         const op=document.createElement('option'); op.value=ov; op.textContent=ot; if(cur===ov) op.selected=true; inp.appendChild(op); }
       inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
-    else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=!!n.p[pm.k]; inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
+    else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=(n.p[pm.k]!=null)?!!n.p[pm.k]:!!pm.def;   /* build 1407: an unset box shows the default the runtime will use, rather than contradicting it */ inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
     else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList' || pm.listId==='lgVarList' || pm.listId==='lgListList') _lgRefreshDatalists(); }; }
     if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:'+(pm.w||100)+'px;';
     inp.onpointerdown=(e)=>e.stopPropagation();
@@ -14245,7 +14273,18 @@ function _applyWorldAction(s){
     if(who==='actor'){ if(_wactToActor({ vw:[vm, vt, tr?1:0] })) return; }
     _setViewOverride(vm, vt, tr); _wactSend({ vw:[vm, vt, tr?1:0] }); return; }
   if(s.do==='command'){
-    const list=_lgEnemyTargets(s.ewho==='nearest'?'nearest':'enemies'); if(!list.length) return;   // 'the player' is meaningless here
+    /* build 1408: an order can be given to the enemies at ONE PLACE. This resolved to all of them or to the
+       single nearest one to the PLAYER, so in a level with more than one room "hold position" froze every
+       enemy in it — including the ones two booths away, which is most of what a multi-room level is.
+       _lgEnemyTargets has taken a radius around a named place since build 1288; the verb could not reach it.
+
+       THE SCOPE IS ITS OWN FIELD, not `at`. For alert and post, `at` is the DESTINATION ("alert them to the
+       vault", "move their post to the gate"), and overloading it would quietly make "post the guards near
+       the gate to the vault" unsayable — the one arrangement a creator reaches for. */
+    const ewho=(s.ewho==='nearest'||s.ewho==='near') ? s.ewho : 'enemies';
+    const scope=(ewho==='near') ? _lgPlaceAt(s.escope) : null;
+    if(ewho==='near' && !scope){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "command" action is aimed at the enemies near "'+String(s.escope||'')+'", but no such place exists.'); return; }
+    const list=_lgEnemyTargets(ewho, scope, +s.er||0); if(!list.length) return;   // 'the player' is meaningless here
     const cmd=LG_CMDS[s.cmd]?s.cmd:'hunt';
     const at=(cmd==='alert'||cmd==='post') ? _lgPlaceAt(s.at) : null;
     if((cmd==='alert'||cmd==='post') && !at) return;                    // a place that does not exist: do nothing
@@ -19734,6 +19773,21 @@ function releaseModelLights(obj){
   const ls = obj && obj.userData && obj.userData.modelLights; if(!ls) return;
   for(const L of ls){ if(typeof unregisterEmitterLight==='function') unregisterEmitterLight(L); }
 }
+/* build 1409: DECLARED HERE, above finalizeProp, and that placement is the fix's own bug report.
+   `loadHostedProps()` is called bare at module level and builds the saved level's props at BOOT, so it
+   reaches finalizeProp — which now schedules a physics body for every static prop rather than only for a
+   model. With these two ~15,000 lines below, the first saved level threw
+   "Cannot access '_physRebuildT' before initialization" on the very first prop. Build 1331 recorded this
+   exact class and its rule: anything the boot loader can reach must be declared above it. The gltf guard
+   is what hid it before — a boot-time primitive never called this, and a model loads asynchronously, long
+   after module evaluation.
+
+   The long wait exists to coalesce a LOAD BURST — a joiner's models arriving over seconds. A primitive is
+   built synchronously and has no burst to wait for, so when nothing is loading the window is short: a
+   platform the graph spawns under a player is solid in ~4 frames instead of ~21. The tick re-arms itself
+   on _glbPending, so a burst that starts later is still coalesced. */
+let _physRebuildT = 0;
+const PHYS_DEBOUNCE_MS = 350, PHYS_DEBOUNCE_FAST_MS = 60, PHYS_WAIT_MAX = 20;   // 20 x 300 ms = 6 s, then go ahead regardless
 function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   obj.position.set(t[0], t[1], t[2]);   // provisional; the terrain lift is applied below once the footprint is known
   obj.rotation.set(t[3], t[4], t[5]);
@@ -19797,7 +19851,19 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   else propModels.push(obj);
   if(gltf){ obj.userData.animClip = animClip || ''; playModelAnimations(obj, gltf, obj.userData.animMode, true); }   // build 1064: props accept custom-clip-only rigs (static models become animatable)
   if(mat && isMatPrimitive(src)) applyStoredMaterial(obj, mat);   // color / texture / emissive
-  if(gltf && !obj.userData.phys && typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();   // build 643: a model loaded late (e.g. on a joiner) -> rebuild physics so it's solid (you can't walk through it)
+  /* build 1409: EVERY static prop, not just a model. Build 643 wrote this for a late-loading GLB on a
+     joiner and gated it on `gltf`; a primitive has none, so a prop spawned during play never got a Rapier
+     body and the player walked straight through it. Measured on a box and a wedge, with a physics rebuild
+     as the control: no body -> the player falls from 3.00 to 0.08 and walks through the ramp; rebuilt ->
+     stands at 3.00 and climbs the ramp to 2.34. That is build 1216's spawnprop verb ("buy -> building
+     appears") building scenery you fall through, and a co-op joiner's primitives arriving intangible.
+
+     THE DEBOUNCED SCHEDULER IS THE RIGHT HOOK RATHER THAN AN IMMEDIATE addStaticColliderFor, and the
+     reason is ordering: finalizeProp runs BEFORE the entry's dynamic state is applied, and
+     setPropDynamic() does not remove a static body it finds — it only splices the prop out of `colliders`.
+     An immediate static body on a prop about to become dynamic would strand an invisible solid box at the
+     spawn point. The tick walks `colliders`, which a dynamic prop has already left, so it cannot happen. */
+  if(!obj.userData.phys && typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();
   return obj;
 }
 // Physics state (declared here, before spawnProp, because restoring a saved/synced dynamic prop calls
@@ -19996,8 +20062,56 @@ function _bumpGroupSeq(gid){ if(typeof gid==='string' && gid[0]==='g'){ const n=
 // _pfSpawnEntry keeps its own near-copy DELIBERATELY and is not merged here: prefabs and paste strip
 // identity (a fresh gid, no nid) and that difference is the feature. Two functions that differ on purpose
 // beat three that are supposed to match.
+/* ---- build 1406: a prop signal serializes WHOLE -------------------------------------------------
+   serializeLevel wrote a prop's signals through a hand-written short-key list — w, d, t, c, n, f, ci, tx,
+   ni, nc, cn, so — and every world verb added to the signal dropdown since wrote fields that list never
+   heard of. Measured with the real serializer across all 17 verbs a signal can carry: FOURTEEN lost every
+   parameter. "Command the nearest enemy to hold at post1" serialized to {w:'used', d:'command'} — the verb
+   survives and everything about it is gone, so the plate you tested spawns a grunt at the player after a
+   reload. Silently, because the in-memory object is right until the level is saved.
+
+   This is build 1280's lesson one layer down: a list kept by hand in three places drifts, and the drift is
+   invisible until someone saves. SIG_KEYS is the ONE place the mapping exists; the serializer and both
+   loaders derive from it, so a verb that adds a field is carried without anyone remembering to.
+
+   Two constraints on the table:
+   - THE TWELVE ORIGINAL SHORT KEYS ARE FROZEN. Every level ever saved uses them, so `cs` must stay `n` —
+     which is why the count field `n` takes `q` rather than the obvious one. A short key is a wire format.
+   - Booleans emit 1, matching what the old code wrote, so a level with no new fields authored serializes
+     byte-identically. They come back as 1 rather than true; every consumer tests truthiness. */
+const SIG_KEYS = {
+  when:'w', do:'d', target:'t', clip:'c', cs:'n', from:'f', contain:'ci', text:'tx',
+  needItem:'ni', needConsume:'nc', consume:'cn', sound:'so',            // <- frozen: pre-1406 levels
+  etype:'et', n:'q', at:'a', pk:'pk', item:'it', once:'o1',             // spawn / pickup / give / take
+  who:'wh', amt:'am', r:'rr', stat:'st', mul:'mu',                      // damage / heal / kill / stat
+  ewho:'ew', cmd:'cm',                                                  // command
+  vmode:'vm', vtag:'vt', vtrack:'vk',                                   // view (build 1404)
+  prefab:'pb', escope:'es', er:'er'                                     // build 1408: the command's own scope
+};
+const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
+const SIG_STR_MAX = 300;   // a signal can carry a sound URL; the consumers keep their own tighter caps
+function _sigPack(s){
+  const x={};
+  if(!s) return x;
+  /* FALSY IS ABSENT, exactly as the hand-written emitter had it (`if(s.clip) x.c=s.clip`). Nothing in the
+     engine can tell an amount of 0 from an unset one — every consumer reads `+s.amt||25` — so emitting it
+     would grow every saved level for a value that means nothing, and would break the byte-identical
+     round trip that makes this safe over existing content. */
+  for(const k in SIG_KEYS){ const v=s[k];
+    if(!v) continue;
+    x[SIG_KEYS[k]] = (v===true) ? 1 : v; }
+  return x;
+}
+function _sigUnpack(x){
+  const s={};
+  if(!x) return s;
+  for(const sk in x){ const k=SIG_UNKEYS[sk]; if(!k) continue;          // an unknown short key is ignored, never trusted
+    const v=x[sk];
+    s[k] = (typeof v==='string') ? v.slice(0, SIG_STR_MAX) : v; }       // level data is untrusted (build 1325)
+  return s;
+}
 function _applyPropEntry(obj, p){
-  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
+  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406: one derivation, or the world verbs' fields keep being dropped */ if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
 }
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
@@ -33382,7 +33496,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1405 · 2026-08-06';
+const BUILD_VERSION = 'build 1409 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34428,13 +34542,20 @@ function buildJoints(){
 // arrive over the network well after the world was built at match start) — so they had no Rapier collider and
 // you could walk straight through them. Whenever a model finishes loading, rebuild the world once the load burst
 // settles, so every static prop becomes solid for the character controller. Debounced; waits out _glbPending.
-let _physRebuildT=0;
 function _schedulePhysRebuild(){
   if(typeof buildPhysWorld!=='function') return;
   if(_physRebuildT) clearTimeout(_physRebuildT);
+  const _wait = (typeof _glbPending!=='undefined' && _glbPending>0) ? PHYS_DEBOUNCE_MS : PHYS_DEBOUNCE_FAST_MS;
+  let _waited = 0;
   _physRebuildT=setTimeout(function tick(){
     _physRebuildT=0;
-    if(typeof _glbPending!=='undefined' && _glbPending>0){ _physRebuildT=setTimeout(tick, 300); return; }   // still loading models — wait for the burst to finish
+    /* build 1409: THE WAIT IS BOUNDED. This re-armed itself for as long as _glbPending was non-zero, so a
+       single model that never settles — a host that accepts the connection and then hangs, which is not the
+       404 the error path already counts — left every prop after it intangible for the rest of the session.
+       Found because this sandbox is exactly that case: _glbPending sat at 4 and a platform the graph had
+       just built stayed walk-through indefinitely. Past the cap it goes ahead: addStaticColliderFor is
+       idempotent and a later burst schedules again, so the worst case is one extra pass over `colliders`. */
+    if(typeof _glbPending!=='undefined' && _glbPending>0 && ++_waited <= PHYS_WAIT_MAX){ _physRebuildT=setTimeout(tick, 300); return; }   // still loading models — wait for the burst to finish
     // build 1194: INCREMENTAL. A late-loading GLB is a new STATIC — nothing about the terrain, the other
     // statics, the dynamics or the joints changed, so rebuilding all of it (the multi-second trimesh
     // stall, once per load burst) bought nothing. Add the missing statics to the live world; fall back to
@@ -34445,7 +34566,7 @@ function _schedulePhysRebuild(){
       if(_needFull) buildPhysWorld();
       else { for(const c of colliders) addStaticColliderFor(c); }   /* stamped ones return immediately */
     } }catch(e){}
-  }, 350);
+  }, _wait);
 }
 function destroyPhysWorld(){
   if(typeof clearFragments==='function') clearFragments();   // drop transient debris first, so its bodies aren't left dangling after free()
@@ -42348,7 +42469,7 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     if(gid) obj.userData.groupId=gid;
     if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(x=>String(x).slice(0,200));
     if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40);
-    if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(sg=>{ const x={ when:sg.w, do:sg.d, target:sg.t }; if(sg.c) x.clip=sg.c; if(sg.n) x.cs=sg.n; if(sg.f) x.from=sg.f; if(sg.ci) x.contain=true; if(sg.tx) x.text=sg.tx; if(sg.ni) x.needItem=sg.ni; if(sg.nc) x.needConsume=true; if(sg.cn) x.consume=true; if(sg.so) x.sound=sg.so; return x; });
+    if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406 */
     if(p.snd>1) obj.userData.sigNeed=+p.snd;
     if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); }
     if(p.xa) xaApply(obj, p.xa);
@@ -42655,7 +42776,7 @@ function propEntry(o){
   if(o.userData.groupId) e.gid=o.userData.groupId;   // build 798: prop group link
   if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,120).map(s=>String(s).slice(0,200));   // build 695 / 1076: NPC dialogue script
   if(o.userData.npcName) e.npc=String(o.userData.npcName).slice(0,40);
-  if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(s=>{ const x={ w:s.when, d:s.do, t:s.target }; if(s.clip) x.c=s.clip; if(s.cs) x.n=s.cs; if(s.from) x.f=s.from; if(s.contain) x.ci=1; if(s.text) x.tx=s.text; if(s.needItem) x.ni=s.needItem; if(s.needConsume) x.nc=1; if(s.consume) x.cn=1; if(s.sound) x.so=s.sound; return x; });
+  if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(_sigPack);   /* build 1406 */
   if(o.userData.sigNeed>1) e.snd=o.userData.sigNeed;
   if(o.userData.attribution) e.att=o.userData.attribution;
   if(o.userData.pf && o.userData.pf.id) e.pf={ id:String(o.userData.pf.id), inst:String(o.userData.pf.inst||'i0'), slot:o.userData.pf.slot|0 };   // build 1030: prefab instance mark
@@ -45497,8 +45618,21 @@ function _sigWorldRow(s, rerender){
     lab('(\u00d71 puts it back)');
   } else if(s.do==='music'){
     txt('music URL (blank = silence)', s.sound, v=>{ if(v) s.sound=v; else delete s.sound; }, 210, 'lgSndList');
+  } else if(s.do==='view'){
+    /* build 1406: build 1404 added this verb to the dropdown above and never gave it a row, so a signal
+       could select "Camera view" and had no way to say WHICH view — build 1277's defect, one build later. */
+    sel([['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']], s.vmode||'normal', v=>{ s.vmode=v; });
+    if(s.vmode==='fixed'){
+      lab('tag'); txt('camera prop tag', s.vtag, v=>{ if(v) s.vtag=v; else delete s.vtag; }, 110, 'lgTagList');
+      chk('follows the player', s.vtrack, v=>{ if(v) s.vtrack=1; else delete s.vtrack; });
+    }
+    sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
   } else if(s.do==='command'){
-    sel([['enemies','All enemies'],['nearest','Nearest enemy']], s.ewho||'enemies', v=>{ s.ewho=v; });
+    sel([['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']], s.ewho||'enemies', v=>{ s.ewho=v; });
+    if(s.ewho==='near'){   /* build 1408: WHICH enemies, kept apart from WHERE the order sends them */
+      txt('place', s.escope, v=>{ if(v) s.escope=v; else delete s.escope; }, 96, 'lgPlaceList');
+      lab('within'); txt('12', s.er, v=>{ if(v) s.er=v; else delete s.er; }, 40);
+    }
     sel(Object.keys(LG_CMDS).map(k=>[k, LG_CMDS[k]]), s.cmd||'hunt', v=>{ s.cmd=v; });
     if((s.cmd||'hunt')==='alert' || s.cmd==='post'){ txt('place', s.at, v=>{ if(v) s.at=v; else delete s.at; }, 120, 'lgPlaceList'); }
   }
