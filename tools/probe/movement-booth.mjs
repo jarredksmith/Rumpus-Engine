@@ -31,16 +31,30 @@ await withGame(async (P) => {
     /* the player's own inputs, driven the way the keyboard drives them */
     window.__keys = function(o){ for(const k in o){ if(o[k]) keys[k]=true; else delete keys[k]; } };
     window.__allKeysOff = function(){ for(const k of Object.keys(keys)) delete keys[k]; _jPressed=false; };
-    window.__stand = function(x, z, y){
+    /* A FULL RESET, not a teleport. Every check here leaves state behind — a jump cooldown, a slide
+       cooldown, a pad cooldown, a live coyote or buffer window, a ledge record, a ladder engagement — and
+       the next check then measures the leftovers. Two of this booth's three "engine defects" were exactly
+       that: a ramp the player climbed perfectly on its own stalled halfway when run after the ledge check,
+       and a jump pad that imparts 21.7 m/s standalone read "launched 0" in sequence. Anything a check can
+       set, this clears.
+       Yaw is a PARAMETER rather than a constant, because the first draft set it after the settle frames had
+       already run facing the other way. Engine forward is (-sin yaw, -cos yaw), so PI faces +Z and 0 faces -Z. */
+    window.__stand = function(x, z, y, yaw){
       __allKeysOff();
       player.pos.set(x, (y==null?1.7:y), z); player.vel.set(0,0,0);
-      player.yaw = Math.PI; player.pitch = 0;            /* engine forward is (-sin yaw, -cos yaw): +Z */
+      player.yaw = (yaw==null) ? Math.PI : yaw; player.pitch = 0;
       player.onGround = true; player.hp = player.maxHp || 100;
-      player.jumpCd = 0;                                 /* a cooldown left by an earlier check silently
-                                                            eats the next jump — measured: the pad and the
-                                                            low-gravity checks both read "never left the
-                                                            ground" purely from this */
+      player.jumpCd = 0;
       sliding = false; slideT = 0; _ledge = null;
+      if(typeof slideCD!=='undefined') slideCD = 0;
+      if(typeof _slideBufT!=='undefined') _slideBufT = 0;
+      if(typeof _sprintGraceT!=='undefined') _sprintGraceT = 0;
+      if(typeof _coyoteT!=='undefined') _coyoteT = 0;
+      if(typeof _jumpBufT!=='undefined') _jumpBufT = 0;
+      if(typeof _jpPlayerCd!=='undefined') _jpPlayerCd = 0;
+      if(typeof _onLadder!=='undefined') _onLadder = false;
+      if(typeof _ladderEngaged!=='undefined') _ladderEngaged = false;
+      if(typeof _climbAnim!=='undefined') _climbAnim = 0;
       camera.position.copy(player.pos); camera.updateMatrixWorld(true);
       __drive(4);                                        /* settle onto whatever is underfoot */
     };
@@ -79,7 +93,7 @@ await withGame(async (P) => {
        it. Without this the player falls through every slab and walks through every ramp, which reads
        exactly like broken movement — it is what this booth measured on its first four runs. */
     window.__solid = function(){ if(typeof buildPhysWorld==='function') buildPhysWorld(); };
-    window.__clearProps = function(){ for(const o of __props.splice(0)) try{ removeProp(o); }catch(e){}
+    window.__clearProps = function(){ for(const o of __props.splice(0)) try{ __kill(o); }catch(e){}
       __solid(); };
 
     __wavesOff(); __clearEnemies();
@@ -244,15 +258,25 @@ await withGame(async (P) => {
       __solid();
       /* the wedge is flat at +Z and rises toward -Z, so approach from +Z facing -Z. Engine forward is
          (-sin yaw, -cos yaw), so yaw 0 faces -Z. */
-      __stand(__B, __B + 14);
-      player.yaw = 0; camera.updateMatrixWorld(true); __drive(1);
+      __stand(__B, __B + 14, null, 0);                   /* yaw 0 faces -Z, up the wedge */
       keys[BINDS.fwd] = true;
       const y0 = __feet();
-      let top = y0; const tr = [];
+      let top = y0; const tr = []; let stall = null, still = 0, prevZ = player.pos.z;
       for(let i=0;i<240;i++){ __drive(1); const f=__feet(); if(f>top) top=f;
-        if(i%40===0) tr.push([+player.pos.z.toFixed(1), f]); }
+        if(i%40===0) tr.push([+player.pos.z.toFixed(1), f]);
+        /* a check that fails should say WHY — eight frames of no progress, then dump the state */
+        if(Math.abs(player.pos.z - prevZ) < 0.005){ still++;
+          if(still === 8 && !stall) stall = { z:+player.pos.z.toFixed(2), feet:f,
+            vz:+player.vel.z.toFixed(2), vy:+player.vel.y.toFixed(2), onGround:player.onGround,
+            ledge:_ledge?_ledge.ph:null, sliding,
+            props: propModels.length, colliders: colliders.length,
+            surfHere:+surfaceTopAt(player.pos.x, player.pos.z).toFixed(2),
+            surfAhead:+surfaceTopAt(player.pos.x, player.pos.z-0.6).toFixed(2),
+            inSolid: (typeof insideSolid==='function') ? String(insideSolid(player.pos.x, player.pos.z-0.6, f)) : '?' }; }
+        else still = 0;
+        prevZ = player.pos.z; }
       __allKeysOff();
-      const out = { y0, top, tr, climbed: +(top - y0).toFixed(2) };
+      const out = { y0, top, tr, stall, climbed: +(top - y0).toFixed(2) };
       __clearProps(); __stand(__B, __B);
       return out;
     })()`);
@@ -270,7 +294,6 @@ await withGame(async (P) => {
          who was already several metres up, reading "the pad did nothing". Put them down with the pad
          cooled, then let it fire and watch the velocity it imparts. */
       __stand(__B, __B);
-      _jpPlayerCd = 0;
       const y0 = player.pos.y;
       let top = y0, kick = 0;
       for(let i=0;i<120;i++){ __drive(1);

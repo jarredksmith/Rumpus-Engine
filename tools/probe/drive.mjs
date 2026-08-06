@@ -61,6 +61,16 @@ export const DRIVE_RIG = `
   };
   window.__release = function(){ _tabHidden = false; __ungate(); };
 
+  /* REMOVEPROP TAKES AN INDEX, NOT A PROP. Every probe in this directory had been calling it with the
+     object — propModels[obj] is undefined and it returns immediately, so the fixture stayed in the world
+     AND in the collider list. That is silent: the next check then measures a scene it thinks it cleared. It cost
+     two false engine defects in the movement booth (a ramp the player climbs perfectly "stalled" halfway
+     against the previous check's 3.2 m wall, and a jump pad "did nothing" with a leftover slab under it).
+     __kill takes the prop. */
+  window.__kill = function(o){ if(!o) return false;
+    const i = propModels.indexOf(o); if(i < 0) return false;
+    removeProp(i); return true; };
+
   /* the wave machine, off through the engine's own switch rather than by poking a timer: build 685's
      puzzle objective makes noEnemyMode() true, so the whole wave block is skipped */
   window.__obj0 = gameCfg.objective;

@@ -16,6 +16,10 @@ await withGame(async (P) => {
     paused = false; gameOn = true;
     const B = 44;
 
+    /* removeProp takes an INDEX, not a prop — passing the object is a silent no-op that leaves the
+       fixture in the world and in 'colliders' (see tools/probe/drive.mjs) */
+    window.__kill = function(o){ if(!o) return false; const i = propModels.indexOf(o);
+      if(i < 0) return false; removeProp(i); return true; };
     /* one prop, configured the way a creator would configure a finished object */
     let src = null;
     spawnProp('box',[B, 0, B, 0,0,0, 2,2,2],(b)=>{src=b;});
@@ -67,7 +71,7 @@ await withGame(async (P) => {
                   lost, changed,
                   identity: { nid: before.nid !== after.nid, gid: after.gid,
                               posMoved: JSON.stringify(before.t) !== JSON.stringify(after.t) } };
-    try{ removeProp(src); removeProp(copy); }catch(e){}
+    try{ __kill(src); __kill(copy); }catch(e){}
     return out;
   })()`);
 

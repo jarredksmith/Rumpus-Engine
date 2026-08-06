@@ -19,6 +19,10 @@ await withGame(async (P) => {
   await P(`(function(){
     paused = false; gameOn = true;
     window.__B = 44;
+    /* removeProp takes an INDEX, not a prop — passing the object is a silent no-op that leaves the
+       fixture in the world and in 'colliders' (see tools/probe/drive.mjs) */
+    window.__kill = function(o){ if(!o) return false; const i = propModels.indexOf(o);
+      if(i < 0) return false; removeProp(i); return true; };
     window.__node = function(p){
       logicGraph = logicGraph || { nodes:[], wires:[] };
       logicGraph.nodes = (logicGraph.nodes||[]).filter(n => n.id !== 'probe1');
@@ -90,7 +94,7 @@ await withGame(async (P) => {
       const out = { ctlHit, n0, n1, f0, f1, n2: near.hp, f2: far.hp,
                     hitTheOneNearThePad: near.hp < n1, sparedTheFarOne: far.hp === f1 };
       for(let i=enemies.length-1;i>=0;i--){ try{ killEnemy(enemies[i]); }catch(e){} } enemies.length = 0;
-      try{ removeProp(pad); }catch(e){}
+      try{ __kill(pad); }catch(e){}
       return out;
     })()`);
     chk('the instrument works: a plain "damage all enemies" node lands', r.ctlHit, r);

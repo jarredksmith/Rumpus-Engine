@@ -2671,21 +2671,26 @@ Two pins moved in `test-495` (build 643's own harness), both correctly: "a fresh
 rebuild" became "a freshly built static prop — model OR primitive — schedules a rebuild", which is the
 widening; and "it waits for the burst" gained "for a bounded time".
 
-## The movement booth (probe, at build 1409) — 15/17, and the two open
+## The movement booth (probe, at build 1409) — 17/17, and the one bug behind both failures
 
 `tools/probe/movement-booth.mjs` sweeps the traversal verbs from the player's own inputs in a running frame
 loop: the held/tapped jump (1301), coyote time and the press buffer (1160), air control (1361), the slide
 (926), the ledge grab and pull-up (1244/1289/1290), jump pads (993), ladders, water, low-gravity and haste
-zones (1193), and the teleport verb. **Fifteen pass.** Two remain, stated rather than hidden:
+zones (1193), and the teleport verb. **All seventeen pass**, and the two that did not are worth recording
+because they were ONE instrument bug wearing two costumes:
 
-- **A ramp stalls the player partway up.** Feet climb 0 → 1.44 of a 2.4 m wedge and then stop dead at the
-  same z for the rest of the run. The same wedge is climbed to 2.39 by an ENEMY (the AI booth's own check),
-  and the KCC's `maxSlopeClimbAngle` is 55° against this slope's 16.7°, so neither the geometry nor the
-  slope limit explains it. Unexplained; the next thing to probe.
-- **A jump pad reads `kick 21.5` and `launched 0` inside the booth's sequence**, while the identical pad
-  measured standalone imparts 21.7 and lifts the player 0.22 → 4.55. So the pad works and something in the
-  booth's accumulated state defeats it. A physics rebuild mid-play was the obvious suspect and is
-  **eliminated by measurement**: a jump apexes at 2.71 before and after `buildPhysWorld()`, four times over.
+**`removeProp` takes an INDEX, not a prop.** Every probe in this directory had been calling it with the
+object — `propModels[obj]` is `undefined` and it returns immediately — so every fixture stayed in the world
+AND in the collider list. That is silent, and the next check then measures a scene it believes it cleared:
+
+- the ramp "stalled the player at 1.44 of 2.4 m", which was the LEDGE check's 3.2 m wall still standing
+  0.6 m ahead of them — the failing check now dumps `surfAhead 3.2, inSolid true` and says so itself;
+- the jump pad read `kick 21.5, launched 0`, which was the coyote check's slab still under the pad.
+
+Both looked like engine defects and neither was. **A physics rebuild mid-play was the leading hypothesis for
+the second and is eliminated by measurement**: a jump apexes at 2.71 before and after `buildPhysWorld()`,
+four times over. `__kill(prop)` lives in the shared rig now, and `__stand` is a full reset (jump, slide, pad
+and ladder cooldowns, the coyote and buffer windows, the ledge record) rather than a teleport.
 
 ### Six instrument faults, and three of them read exactly as engine defects
 
@@ -2702,6 +2707,8 @@ zones (1193), and the teleport verb. **Fifteen pass.** Two remain, stated rather
   checks both read "never left the ground" purely from that.
 - **`__stand` settles for four frames, and standing on a pad IS the trigger** — so the pad fired during the
   settle and the measurement then started from a player already several metres up.
+- **`removeProp` takes an index** (above), which is the one that cost the most: it turned every teardown in
+  every probe here into a no-op, and the accumulated fixtures then read as two separate engine defects.
 
 `tools/probe/drive.mjs` is the frame drive factored out of the AI booth so both sweeps share one
 implementation, with the gate list, the pure virtual clock and the positive control in one place.

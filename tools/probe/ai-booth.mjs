@@ -111,6 +111,10 @@ await withGame(async (P) => {
     window.__wavesOn  = () => { gameCfg.objective = __obj0; };
     window.__clear = () => { for(let i=enemies.length-1;i>=0;i--){ try{ killEnemy(enemies[i]); }catch(e){} }
       enemies.length = 0; __wavesOff(); };
+    /* removeProp takes an INDEX, not a prop — passing the object is a silent no-op that leaves the
+       fixture in the world and in 'colliders' (see tools/probe/drive.mjs) */
+    window.__kill = function(o){ if(!o) return false; const i = propModels.indexOf(o);
+      if(i < 0) return false; removeProp(i); return true; };
     window.__spawn = (opts) => { const n=enemies.length; spawnEnemy(opts);
       return enemies.length > n ? enemies[enemies.length-1] : null; };
     window.__at = (e) => [ +e.mesh.position.x.toFixed(2), +e.mesh.position.z.toFixed(2) ];
@@ -177,7 +181,7 @@ await withGame(async (P) => {
         ? navFindPath(navNearestWalkable(__B, __B-24, 1), navNearestWalkable(__B, __B, 1)) : null;
       const inWall = Math.abs(end[1] - (__B-12)) < 1.2 && end[0] < __B + 5;
       const reached = Math.hypot(end[0]-player.pos.x, end[1]-player.pos.z);
-      for(const o of __wall) try{ removeProp(o); }catch(e){}
+      for(const o of __wall) try{ __kill(o); }catch(e){}
       __wall.length = 0;
       return { start, end, navBuilt: !!NAV.built, pathLen: path ? path.length : null,
                reached:+reached.toFixed(1), inWall };
@@ -345,7 +349,7 @@ await withGame(async (P) => {
       for(let i=0;i<120;i++){ __drive(10); if(e.mesh.position.y > best) best = e.mesh.position.y; }
       const out = { y0:+y0.toFixed(2), best:+best.toFixed(2), climbed:+(best-y0).toFixed(2), at: __at(e),
                     toPlayer: +Math.hypot(e.mesh.position.x-player.pos.x, e.mesh.position.z-player.pos.z).toFixed(1) };
-      try{ removeProp(ramp); removeProp(top); }catch(e){}
+      try{ __kill(ramp); __kill(top); }catch(e){}
       return out;
     })()`);
     chk('climb', 'an enemy walks UP a ramp to reach a player above it (build 1158)',

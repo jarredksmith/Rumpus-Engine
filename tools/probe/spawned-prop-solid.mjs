@@ -44,7 +44,7 @@ await withGame(async (P, page) => {
       __stand(__B, __B, 3 + EYE);
       __drive(45);
       const out = { body: !!(o && o.userData._physStatic), feet: __feet(), onGround: player.onGround };
-      try{ removeProp(o); }catch(e){}
+      try{ __kill(o); }catch(e){}
       if(typeof buildPhysWorld==='function') buildPhysWorld();
       return out;
     })()`);
@@ -97,9 +97,9 @@ await withGame(async (P, page) => {
       __drive(45);
       out.feet = __feet();
       out.stoodOnIt = out.feet > 2.5;
-      for(const o of made) try{ removeProp(o); }catch(e){}
+      for(const o of made) try{ __kill(o); }catch(e){}
       window.__made = [];
-      try{ removeProp(window.__pad); }catch(e){}
+      try{ __kill(window.__pad); }catch(e){}
       delete prefabLib['platform'];
       if(typeof buildPhysWorld==='function') buildPhysWorld();
       return out;

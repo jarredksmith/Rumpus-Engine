@@ -20,6 +20,10 @@ await withGame(async (P) => {
     window.__B = 44;
     player.pos.set(__B, 1.7, __B); camera.position.copy(player.pos); camera.updateMatrixWorld(true);
 
+    /* removeProp takes an INDEX, not a prop — passing the object is a silent no-op that leaves the
+       fixture in the world and in 'colliders' (see tools/probe/drive.mjs) */
+    window.__kill = function(o){ if(!o) return false; const i = propModels.indexOf(o);
+      if(i < 0) return false; removeProp(i); return true; };
     window.__node = function(p){
       logicGraph.nodes = (logicGraph.nodes||[]).filter(n => n.id !== 'probe1');
       logicGraph.nodes.push({ id:'probe1', type:'do', x:0, y:0, p:p });   /* the switch is on n.type */
@@ -38,7 +42,7 @@ await withGame(async (P) => {
     window.__reset = function(){
       for(let i=enemies.length-1;i>=0;i--){ try{ killEnemy(enemies[i]); }catch(e){} }
       enemies.length = 0;
-      for(const o of propModels.slice()) if(o && o.userData && (o.userData.tag==='range'||o.userData.tag==='pit')) try{ removeProp(o); }catch(e){}
+      for(const o of propModels.slice()) if(o && o.userData && (o.userData.tag==='range'||o.userData.tag==='pit')) try{ __kill(o); }catch(e){}
     };
     return 1;
   })()`);
