@@ -16,7 +16,15 @@ const src = gameSource();
   assert(/if\(url && url\.indexOf\('local:'\)===0\)\{ _loadLocalModel\(url, \(gltf\)=>\{ gltfCache\[url\]=gltf; _cb\(gltf\); \}, _ec\); return; \}/.test(src),
     'loadGLTFCached branches to the local loader BESIDE the sketchfab: branch — same cache, same waiter/pump machinery');
   const llm = extractFunction('_loadLocalModel');
-  assert(/new THREE\.GLTFLoader\(gltfManager\(\)\)/.test(llm),
+  /* This assertion's SENTENCE was true-as-intent and its REGEX pinned the code that contradicted it, for
+     242 builds — it even names the codecs the path was not getting. `new THREE.GLTFLoader(gltfManager())`
+     is the bare constructor; `_mkGLTFLoader` is the only thing that attaches KTX2, meshopt and Draco, and
+     the local path did not call it. Reported from play at build 1419 as "No DRACOLoader instance provided"
+     on some model imports. The sentence is unchanged; it is now true.
+
+     Same shape as build 1417's test-1132 pin, three builds earlier. When a message says "the SAME X as
+     everything else", the regex has to assert sameness — quoting one instance of X cannot. */
+  assert(/_mkGLTFLoader\(gltfManager\(\)\)/.test(llm),
     'the local parse uses the SAME manager — KTX2/meshopt codecs and URL modifiers still apply');
   assert(/local model not on this device/.test(llm),
     'a missing blob (level opened on another device) fails with a message 1167 can surface, not a hang');

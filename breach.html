@@ -19640,10 +19640,37 @@ function _lmDb(){ if(_lmDbP) return _lmDbP;
   return _lmDbP; }
 function _localModelPut(key, blob){ return _lmDb().then(db=>new Promise((res,rej)=>{ const tx=db.transaction('models','readwrite'); tx.objectStore('models').put(blob, key); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); })); }
 function _localModelGet(key){ return _lmDb().then(db=>new Promise((res,rej)=>{ const rq=db.transaction('models').objectStore('models').get(key); rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>rej(rq.error); })); }
+/* Reported from play: "I get this error on some model imports — THREE.GLTFLoader: No DRACOLoader instance
+   provided."  This function was the reason, and the word SOME is the tell: it is the local-import path
+   (build 1177's drag-and-drop and 1348's picker), and it constructed a BARE `new THREE.GLTFLoader`.
+
+   `_mkGLTFLoader` exists precisely so every loader in the engine gets the three optional codecs attached —
+   KTX2 (917), meshopt (918) and Draco (1256). This site bypassed it, so a locally imported model carrying
+   ANY of the three failed, with no retry, and surfaced three's own raw message. Sketchfab and most
+   "optimize my glTF" pipelines emit Draco by default, which is why it hits some imports and not others.
+
+   TWO halves are needed and only one is the helper. The decoders are LAZY — `_dracoLoader` is still null
+   until the first model that needs one asks — so attaching what exists is not enough on the FIRST such
+   model. The hosted path handles that in `_ec`: read the codec named in the error, pull it in, retry. This
+   now does the same, against the same three needles, with the same one-shot latch per codec so a decoder
+   that genuinely cannot be fetched reports instead of looping.
+
+   The buffer is captured rather than re-read, because a retry must not need IndexedDB a second time. */
 function _loadLocalModel(url, cb, errcb){
+  const tried = {};
+  const parse = (buf)=>{
+    const loader = _mkGLTFLoader(gltfManager());
+    loader.parse(buf, '', (g)=>cb(g), (e)=>{
+      const m = (e && e.message) || '';
+      for(const [needle, ensure] of [['DRACOLoader', _ensureDraco], ['setKTX2Loader', _ensureKTX2], ['setMeshoptDecoder', _ensureMeshopt]]){
+        if(m.indexOf(needle) >= 0 && !tried[needle]){ tried[needle] = 1; ensure().then(()=>parse(buf)).catch(()=>errcb(e)); return; }
+      }
+      errcb(e || new Error('glb parse failed'));
+    });
+  };
   _localModelGet(url.slice(6))
     .then(blob=>{ if(!blob) throw new Error('local model not on this device — re-import or upload it'); return blob.arrayBuffer(); })
-    .then(buf=>{ const loader=new THREE.GLTFLoader(gltfManager()); loader.parse(buf, '', (g)=>cb(g), (e)=>errcb(e||new Error('glb parse failed'))); })
+    .then(parse)
     .catch(errcb);
 }
 const LOCAL_MODEL_MAX_MB = 64;
@@ -33976,7 +34003,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1418 · 2026-08-06';
+const BUILD_VERSION = 'build 1419 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

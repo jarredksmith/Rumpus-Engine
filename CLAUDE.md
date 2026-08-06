@@ -3416,6 +3416,62 @@ published wrong conclusion.
 probe *after* running the lint. The habit that actually fixes it: run `tools/probe/lint.mjs` after the last
 edit, not before the first.
 
+## The local-import path had no codecs (build 1419)
+
+Reported from play: *"I get this error on some model imports — THREE.GLTFLoader: No DRACOLoader instance
+provided."*
+
+**The word SOME is the tell.** `_loadLocalModel` — build 1177's drag-and-drop import and 1348's picker —
+constructed a **bare `new THREE.GLTFLoader`**, bypassing `_mkGLTFLoader`, which is the one function that
+attaches the three optional codecs: KTX2 (917), meshopt (918) and Draco (1256). So a model you dragged in
+carrying any of the three failed, with no retry, surfacing three's own raw message. Sketchfab and most
+"optimize my glTF" pipelines emit Draco by default, which is exactly why it hits some imports and not
+others.
+
+Build 1256 wired Draco properly and its retry works — **on the hosted path only**. This is the same defect
+shape this file records more than any other: one behaviour, two implementations, and only one maintained.
+The helper existed for precisely this reason and one site did not call it.
+
+**Two halves are needed and only one is the helper.** The decoders are LAZY — `_dracoLoader` is null until
+the first model that needs one asks — so attaching what exists is not enough on the FIRST such model. The
+hosted path solves that in `_ec`: read the codec named in the error, pull it in, retry. The local path now
+does the same, against the same three needles, with a one-shot latch per codec so a decoder that genuinely
+cannot be fetched reports rather than looping. The buffer is captured rather than re-read, so a retry needs
+no second trip to IndexedDB.
+
+Verified both ways. `test-1419` executes the real function with a fake loader through every branch (first
+Draco model, all three codecs, one-shot, a decoder fetch that rejects, an ordinary corrupt file, a model
+not on this device). And the shipped function driven in the running game with a real IndexedDB blob:
+
+```
+mkGLTFLoader -> parse:12 -> ensureDraco -> mkGLTFLoader -> parse:12  =>  ok
+```
+
+**The test asserts the property, not a count.** My first version required exactly one
+`new THREE.GLTFLoader(` in the engine and failed at two — because `_mkGLTFLoader`'s own line is a ternary
+and contains two. The property that was actually false is that every construction site lives INSIDE that
+function, and that is what it checks now.
+
+### The guard for this existed and had the right sentence attached to the wrong regex
+
+`test-1177` has asserted, since the build that introduced the defect:
+
+> *the local parse uses the SAME manager — KTX2/meshopt codecs and URL modifiers still apply*
+
+…against `/new THREE\.GLTFLoader\(gltfManager\(\)\)/`. **That regex pinned the bare constructor — the
+defect itself — while the sentence beside it named the very codecs the path was not getting.** Green for
+242 builds, and the test's own title says "through the same loader/codec path as every model".
+
+This is the SECOND occurrence in three builds: build 1417 moved `test-1132`'s *"a light switched off by a
+signal does not hold a shadow slot"*, which had been true-as-intent with a regex quoting the code that
+contradicted it. So it is a pattern, not a coincidence, and it has a rule now:
+
+**When an assertion's message says "the SAME X as everything else", the regex must assert SAMENESS.**
+Quoting one instance of X cannot — it will keep passing after that instance drifts away from the others,
+which is precisely when the assertion becomes worth having. This file already records pins *satisfied* by
+prose and pins *defeated* by prose; this is the third kind, where the message and the regex simply describe
+different things.
+
 ## A light's colour decayed to red, one save at a time (build 1418)
 
 Found by asking a question no single-feature test asks, and that no feature owns: **is

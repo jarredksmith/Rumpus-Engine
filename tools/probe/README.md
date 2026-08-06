@@ -40,6 +40,7 @@ once by accident and removed in build 1293's follow-up.
 | `campaign-carry.mjs` | whether a carried value survives a room that never declared it (1416) |
 | `shadow-slot-dark.mjs` | whether a lamp a signal switched off still spends a shadow slot (1417) |
 | `level-roundtrip.mjs` | is serialize -> restore -> serialize idempotent? the whole-level save/load check (1418) |
+| `local-model-draco.mjs` | a dragged-in .glb gets Draco/KTX2/meshopt, and a codec failure retries (1419) |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.
