@@ -33,6 +33,7 @@ once by accident and removed in build 1293's follow-up.
 | `sign-boot-tdz.mjs` | that a SAVED level with a live sign still boots — `withGame(..., {savedLevel})` (1411) |
 | `objective-marker.mjs` | where an on-screen marker actually lands, including behind you (build 1412) |
 | `chase-pivot.mjs` | the third-person camera's height through the whole boom, per character (1413) |
+| `fair-hub.mjs` | builds 1410/1411/1412 driven TOGETHER — the composition, not the features |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.
