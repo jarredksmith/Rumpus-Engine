@@ -30377,6 +30377,26 @@ function updateFlipbooks(dt){
   }
 }
 
+// build 1405: a blast throws a dynamic PROP. `explodeAt` only ever called damageProp on them, so an
+// explosion beside a stack of crates knocked their health down and left every one of them standing exactly
+// where it was — while the enemy loop three lines above it has thrown actors since build 636.
+//
+// It routes through `pushDynamic`, which is what a SHOT uses, rather than build 1258's push verb. The two
+// have deliberately different semantics and this is the fork: the VERB multiplies by mass so an authored
+// "20" moves a crate and a barrel the same amount, and a SHOT does not, so a heavy crate takes a hit better.
+// A blast is a physical event, not an authored amount, so it takes the shot's.
+//
+// The direction is the full 3D one, which makes the vertical term GEOMETRIC rather than a constant: a charge
+// under a crate lifts it and one above slams it down. Scaled by the same `(8 + R*1.2) * f * launchPower` the
+// actor launch uses, so the one slider a creator already tunes for enemies moves both.
+const _blastDir = new THREE.Vector3();
+function _blastShoveProp(o, pos, R, f){
+  _blastDir.set(o.position.x - pos.x, o.position.y - pos.y, o.position.z - pos.z);
+  if(_blastDir.lengthSq() < 1e-6) return;   // dead centre: nothing to point along, and the caller's d>0.01 gate already covers it
+  _blastDir.normalize();
+  const LP = (typeof worldCfg!=='undefined' && +worldCfg.launchPower) || 1;
+  pushDynamic(o, _blastDir, (8 + R*1.2) * f * LP);
+}
 function _blastLaunch(actor, cx, cy, cz, R, f){   // shove an AI actor (enemy or bot) away from a blast center + pop it up, scaled by falloff f
   const ax = actor.pos ? actor.pos.x : actor.mesh.position.x, az = actor.pos ? actor.pos.z : actor.mesh.position.z;
   const kx=ax-cx, kz=az-cz, kh=Math.hypot(kx,kz)||1, LP=(worldCfg&&+worldCfg.launchPower)||1, kb=(8+R*1.2)*f*LP;
@@ -30472,7 +30492,18 @@ function explodeAt(pos, R, dmg, byId){
   // the local (host) player — environmental hazard hits you too
   { const d=player.pos.distanceTo(pos); if(d<R){ const f=1-d/R, pd=dmg*f, kx=player.pos.x-pos.x, kz=player.pos.z-pos.z, kh=Math.hypot(kx,kz)||1, LP=(worldCfg&&+worldCfg.launchPower)||1, kb=(8+R*1.2)*f*LP; player.extVel.x+=kx/kh*kb; player.extVel.z+=kz/kh*kb; player.vel.y=Math.max(player.vel.y,(5+R*0.6)*f*LP); player.onGround=false; if(!pvpMode()) applyEnemyDamageToSelf(pd, pos.x, pos.z); else if(!duelDead) applyPvpDamage(pd, byId); } }   // explosions launch you too (rocket / prop blasts), on top of the damage
   // chain reaction: damage nearby breakable props (explosive ones detonate; the _shattered guard stops loops)
-  for(const o of dynamicProps.slice()){ if(!o.userData || o.userData._shattered || o.userData.breakable===false || !o.userData.phys) continue; const d=o.position.distanceTo(pos); if(d>0.01 && d<R) damageProp(o, dmg*(1-d/R), null, null, 6, byId); }
+  /* build 1405: damage AND throw. Damage first, and shove only what SURVIVED — the same order every other
+     damage site here uses (`if(!damageProp(...)) pushDynamic(...)`), because a shattered prop's body is
+     gone and its debris is its own system.
+     `breakable:false` no longer skips the prop entirely: it means "cannot be damaged", not "is not made of
+     matter", so an unbreakable crate beside a grenade still goes flying. */
+  for(const o of dynamicProps.slice()){
+    if(!o.userData || o.userData._shattered || !o.userData.phys) continue;
+    const d=o.position.distanceTo(pos); if(!(d>0.01 && d<R)) continue;
+    const f=1-d/R;
+    const broke = (o.userData.breakable===false) ? false : damageProp(o, dmg*f, null, null, 6, byId);
+    if(!broke) _blastShoveProp(o, pos, R, f);
+  }
   /* build 1390: static TARGETS are not in `dynamicProps`, so a grenade at the range would have left every
      plate standing while the crates beside them broke. Opt-in, so a level with none pays one flag test. */
   for(const o of propModels){ if(!o || !o.userData || !o.userData.shootable || o.userData.phys) continue;
@@ -33351,7 +33382,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1404 · 2026-08-06';
+const BUILD_VERSION = 'build 1405 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

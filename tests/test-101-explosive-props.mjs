@@ -14,7 +14,14 @@ assert(/bt\.grounded=false;[\s\S]*?if\(botHurt\(bt, dmg\*f, pos\.x, pos\.z\)\) r
 assert(/sendToPlayer\(\+id, \{t:'pvpHit', d:dmg\*\(1-d\/R\), from:byId\}\)/.test(ex), 'PvP: damages remote players');
 assert(/if\(!pvpMode\(\)\) applyEnemyDamageToSelf\(pd, pos\.x, pos\.z\); else if\(!duelDead\) applyPvpDamage\(pd, byId\)/.test(ex), 'the blast hits the local player too (correct death path per mode)');
 assert(/sameTeam\(byId,bt\.id\)/.test(ex) && /sameTeam\(byId,\+id\)/.test(ex), 'no friendly fire');
-assert(/for\(const o of dynamicProps\.slice\(\)\)\{ if\(!o\.userData \|\| o\.userData\._shattered.*damageProp\(o, dmg\*\(1-d\/R\)/.test(ex), 'chain-detonates nearby breakable props');
+// build 1405: the loop became multi-line and now THROWS as well as damages. What this has always asserted —
+// that a blast damages the dynamic props around it with the same falloff, which is what chains a barrel to
+// its neighbour — is unchanged; the falloff is a named `f` now instead of being written out twice.
+assert(/for\(const o of dynamicProps\.slice\(\)\)\{/.test(ex) &&
+       /const f=1-d\/R;/.test(ex) && /damageProp\(o, dmg\*f, null, null, 6, byId\)/.test(ex),
+  'chain-detonates nearby breakable props');
+assert(/if\(!broke\) _blastShoveProp\(o, pos, R, f\);/.test(ex),
+  '...and throws the ones it did not destroy (build 1405)');
 
 assert(/function damageProp\(obj, dmg, point, dir, power, byId\)/.test(src) && /function shatterProp\(obj, point, dir, power, byId\)/.test(src), 'destroyer id threaded through destruction');
 assert(/if\(obj\.userData\.explosive\)\{ explodeAt\(_shCtr\.clone\(\), obj\.userData\.blastRadius\|\|7, obj\.userData\.blastDmg\|\|70, byId\); \}/.test(src), 'destruction detonates an explosive prop');

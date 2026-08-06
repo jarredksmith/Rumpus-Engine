@@ -130,7 +130,11 @@ const src = gameSource();
   const fn = extractFunction('explodeAt');
   assert(/for\(const o of propModels\)\{ if\(!o \|\| !o\.userData \|\| !o\.userData\.shootable \|\| o\.userData\.phys\) continue;/.test(fn),
     'static targets get their own sweep');
-  eq((fn.match(/if\(d>0\.01 && d<R\)/g) || []).length, 2,
+  /* build 1405 restructured the DYNAMIC sweep so it can throw as well as damage, so the guard is written as
+     an early `continue` there and as the old inline `if` in the static sweep. Both still hold it, which is
+     what this has always asserted. */
+  eq(((fn.match(/if\(d>0\.01 && d<R\)/g) || []).length +
+      (fn.match(/if\(!\(d>0\.01 && d<R\)\) continue;/g) || []).length), 2,
     'both sweeps keep the d>0.01 self-damage guard, so an exploding barrel cannot damage itself — which ' +
     'also means a blast placed exactly on a prop origin does nothing, and reading that as a dead feature ' +
     'cost this build a probe run');

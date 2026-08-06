@@ -2256,6 +2256,74 @@ block. And my replacement pin `/g\.view==='chase'/` silently matched the tail of
 as well — six hits where one was meant. **A short variable name in a source pin is a substring of everything
 that ends with it**; that one asks `extractFunction('_applyGameCfg')` instead.
 
+## An explosion launched nothing it damaged (build 1405)
+
+Found by sweeping the **physics booth** — the third of the three the gauntlet is scoped around ("range +
+physics + AI", "movement & traversal", "logic & interaction") and the only one with no end-to-end coverage.
+Thirteen of fourteen things worked: props fall and settle, crates stack, a stack topples when you shove the
+top one, barrels chain-detonate, a prop can be carried and thrown, a trigger zone scores when a prop rolls
+into it, and a knocked-about prop returns home on Deploy.
+
+The fourteenth: **`explodeAt`'s dynamic-prop loop called `damageProp` and nothing else.** An explosion beside
+a stack of crates knocked their health down and left every one of them standing exactly where it was —
+while the ENEMY loop three lines above it has thrown actors since build 636.
+
+### Which impulse, and why it matters
+
+There are already two impulse writers with **deliberately different semantics**, and picking the right one
+is the whole design decision:
+
+| | |
+|---|---|
+| build 1258's push VERB | multiplies by mass, so an authored "20" moves a crate and a barrel the same amount |
+| `pushDynamic` (a SHOT) | does not, so a heavy crate takes a hit better |
+
+A blast is a physical event, not an authored amount, so it takes the shot's — and therefore the shot's
+existing function. **No third impulse writer.** The vertical term is GEOMETRIC rather than a constant (the
+full 3D direction, normalised), so a charge under a crate lifts it and one above slams it down; the strength
+is the actor launch's own `(8 + R*1.2) * f * launchPower`, so the one slider a creator already tunes for
+enemies moves both.
+
+**Damage first, shove what SURVIVED** — the order every other damage site here already uses
+(`if(!damageProp(...)) pushDynamic(...)`), because a shattered prop's body is gone and its debris is its own
+system. And **`breakable:false` no longer skips the prop entirely**: it means "cannot be damaged", not "is
+not made of matter", so an unbreakable crate beside a grenade still goes flying.
+
+### Measured, A/B'd against the pre-1405 loop pasted back into the same tree
+
+```
+BEFORE        the crate takes 32 damage and moves 0.00 m
+AFTER         2.68 m, hp 1000 -> 969
+mass          a 25x heavier crate 4 m away moves 0.00 and takes 15 damage — the shot's raw-impulse
+              semantics doing exactly what they should, and the reason a blast does NOT use the push verb
+unbreakable   0.92 m, health untouched
+```
+
+### Four instrument faults in the new sweep, and every one read as a broken feature
+
+| it looked like | it was |
+|---|---|
+| a crate that never lands, a blast that moves nothing, a goal that never scores | the booth was built at 700 to be "far from the stock level" and **fell out of the world** — the ground plane stops at ±ARENA (70). Far from the level's geometry, not out of the level |
+| a crate resting *through* the floor | a box primitive is **BASE-at-origin** (build 871), so resting ON the ground is `y = 0`, and the assertion `y > 0` called a correct landing a failure |
+| a goal zone that fires for anything | the trigger field is **`ptag`**; a plain `tag` sanitizes away to blank, which silently means ANY prop |
+| a goal edge that would not re-arm | the check asserted an outcome without reporting whether the ball had actually LEFT the zone. It reports the position at every step now |
+
+### And the rig had been measuring a world with no physics in it
+
+The first run reported `physWorld: false`. `mkprobe` used to stub `__PHYSICS_READY` dead — correctly, when
+Rapier came from a CDN that hangs here. **Build 1389 had already made that stub opt-in** once `rapier3d-compat.js`
+was vendored and the staging started copying it; I re-derived the same finding from scratch because I did not
+read that build first. Worth the line: the note in `mkprobe` is the record, and the check that matters is the
+sweep's own first row — *is the physics world live?* — which is the control that makes every row under it
+mean something.
+
+**Eighteenth container rollback, mid-build.** The tree reverted to 1382 between two commands and the edit
+script's `BUILD_VERSION` assert caught it before writing a byte. Recovery was the documented one — `git log`
+first, then fetch + `reset --hard FETCH_HEAD`. One thing to do differently: I rescued `mkprobe.mjs` from the
+working tree *after* the rollback, so the copy I saved was the STALE one, and restoring it over the recovered
+file silently un-did build 1389's work. `assertFreshStaging` is what caught that, by name. **Rescue untracked
+files; for tracked ones, trust the remote.**
+
 ## A trigger can change the camera, and change it back (build 1404)
 
 Asked for from use: *"a player walks into a zone that triggers the camera to be from a single, security
