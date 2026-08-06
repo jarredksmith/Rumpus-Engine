@@ -1712,6 +1712,46 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The booth survives a save (probe pass, after build 1423)
+
+`range-booth.mjs` has built the gauntlet's shooting range in memory and driven it with shots since build
+1403. What no probe did was the thing a creator does every session: **press Save, come back, and play what
+came out.** That gap is where this repo's expensive bugs live — 1398 (a shootable target saved and was never
+read back), 1400 (five game settings written and never loaded), 1401 (thirteen sections a joiner never
+received), 1406 (fourteen of seventeen signal verbs lost every parameter). Builds 1421-1423 had just changed
+what `breakable` means, which props a Destroy mission counts, and what the Level Check says — all of it prop
+and objective state that travels in the file.
+
+`tools/probe/range-booth-level.mjs` authors the whole booth with nothing a creator could not author — three
+bolted-down plates with on-hit signals, an UNBREAKABLE practice plate, an interact lever, a world sign
+showing `{score}`, a HUD widget showing the same variable, a five-node graph, a Destroy objective — then
+`serializeLevel()`, `restoreLevel()` the JSON, and **shoots the restored props**.
+
+**20/20, and no engine change was needed.** That is the result: everything builds 1390-1423 added survives
+the file and works on the other side of it. Worth having as a standing guard precisely because it would not
+have been obvious which of those builds had left something behind.
+
+### The two apparent failures were both the instrument
+
+- **"The HUD widget did not survive."** It never existed: widgets live in a TOP-LEVEL `hudWidgets` array,
+  not on `hudCfg`, and the probe wrote a field nothing serializes. *Read the serializer before believing a
+  round-trip failure* — the symptom of writing to the wrong field is identical to the symptom of a loader
+  that drops it.
+- **"The file is not idempotent."** Real, measured, and **not degradation**: the boot state carries
+  `aim.state.ry` = `…045` while `aimWep.sniper.ry` = `…046`, and the loader makes the global ADS pose adopt
+  the per-weapon one. One ULP, once. Over six cycles: `0 -> 1` differs, `1 -> 2 -> 3 -> 4 -> 5` byte-identical.
+
+  That second one is worth the space because the FIRST assertion was measuring the wrong property. Build
+  1420's subject is *"a value that drifts a little each time is a level that degrades every time the creator
+  presses Save, and this engine autosaves every 20 seconds."* A one-time normalisation is not that, and
+  1420's own guard (`level-roundtrip.mjs`) is still clean for exactly that reason — its fixture has already
+  been through one load. **"Reproduces the first save" and "is stable" are different claims, and only the
+  second one is what anybody cares about.** The probe measures stability over four cycles now.
+
+**And backticks inside a template literal for the THIRTEENTH time**, in a comment naming `hudWidgets`, added
+after the lint had been run. Build 1398 judged this not worth tooling because node reports it instantly and
+unambiguously; that judgement stands, and the count is kept honest here rather than re-litigated.
+
 ## The level check never asked whether the level could be won (build 1423)
 
 Level Check has reported lights, texture memory, missing models, third-party hosts, locks without keys and
