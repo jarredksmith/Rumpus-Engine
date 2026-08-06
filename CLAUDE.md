@@ -1712,6 +1712,70 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The level check never asked whether the level could be won (build 1423)
+
+Level Check has reported lights, texture memory, missing models, third-party hosts, locks without keys and
+the graph's own last-run failures for a long time. It said **nothing about the one setting that decides
+whether the level can be finished at all** — and three of the eight objective modes are silently unwinnable
+when under-authored. None of the three announces itself in play:
+
+| mode | why it cannot be won | what the player sees |
+|---|---|---|
+| **destroy** | the win test is `_destroyTotal>0 && remain<=0` | the HUD reads `NO TARGETS SET` and the run has no ending |
+| **puzzle** | nothing spawns and `objectiveTick` has **no puzzle branch** — an authored win action is the only exit | a walking simulator |
+| **race** | with no Start-line piece `_raceStartO` is null | the lap never arms and the race HUD hides itself |
+
+**Runtime spawning cannot rescue the Destroy case, which is why it is a hard statement rather than a
+guess:** `_setupDestroyTargets` runs once at deploy, so a level that starts with zero usable targets stays
+at zero however many the graph spawns later.
+
+### `goto` counts as a win path, and that decision is load-bearing
+
+A campaign room whose exit is a doorway (build 1394) is finished by loading the next one. Treating only
+`win` as an ending would have fired this row on **every room of a multi-room game** — which is exactly the
+shape this engine now encourages, and exactly what the gauntlet being built against it is made of. A false
+positive on the commonest structure would have trained the panel out of being read.
+
+The Destroy check also reports the *mixed* case — targets marked but unusable while others work — as a
+**clickable** row (build 1300), because there is a specific prop to go and fix. The level-wide cases have
+nothing to point at and stay plain, which is 1300's own rule.
+
+**Five modes are deliberately never mentioned.** `eliminate`, `survival`, `extraction`, `defend` and
+`escort` all provision themselves, and a panel that always complains is not read (1274). The test asserts
+their ABSENCE rather than trusting it.
+
+### The first draft wrote markup into a text node
+
+The rows were written with `<b>` around every control name — and `renderLevelIssues` sets `d.textContent =
+msg`. It would have printed literal `<b>` tags in the panel. `textContent` is not an oversight there and
+must not be "fixed": other rows interpolate level-authored strings (key names, audio-zone names, hostnames
+— builds 1325 and 1335), so markup in a message is a stored-XSS shaped hole. Caught by reading the renderer
+before believing the writer, and `test-1423` now pins both halves — the renderer sets text, and these rows
+carry no markup.
+
+**And the probe measured the PANEL, not just the check.** `levelIssues()` returning the right string and
+the creator being able to read it are two different claims; the first draft's markup bug lives entirely in
+the gap between them. The panel row needed the editor opened and switched to the Save tab first, because
+build 1293 does not build a section that is not on screen.
+
+Measured (`tools/probe/objective-check.mjs`, 13/13), with a correctly authored level of the same mode as
+the control at every step:
+
+```
+destroy, nothing marked    reported, naming NO TARGETS SET
+destroy, one real target   SILENT                                  <- the control
+destroy, unbreakable only  reported as unusable (build 1421)
+destroy, one good one bad  the unusable one only, and clickable
+puzzle, no win path        reported · a win node / goto / signal each silence it
+race, no start line        reported
+eliminate/survival/extraction/defend/escort   silent on a bare level
+rendered panel             1 row, as prose, no literal tags
+```
+
+One pin moved (1300), which counts how many rows are CLICKABLE — seven to eight. That count is worth
+keeping exactly rather than loosening: it is what stops a future build making every row clickable, and this
+build's own rule is that a level-wide issue with nowhere to send you stays a plain row.
+
 ## The Destroy mission could not see the targets (build 1422)
 
 Found by sweeping for siblings of 1421 rather than waiting for a report, and it is the **fifth** arrival of

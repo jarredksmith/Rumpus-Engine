@@ -34005,7 +34005,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1422 · 2026-08-06';
+const BUILD_VERSION = 'build 1423 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45888,6 +45888,51 @@ function _edGoToIssue(resolve){
   if(typeof renderEditorFields==='function') renderEditorFields();
   return true;
 }
+/* build 1423: CAN THE OBJECTIVE ACTUALLY BE COMPLETED?
+   Level Check has told creators about lights, textures, missing models, third-party hosts, locks without
+   keys and the graph’s own last-run failures for a long time, and said NOTHING about the one setting that
+   decides whether the level can be finished at all. Three of the eight modes are silently unwinnable when
+   they are under-authored, and every one of them LOOKS fine in the editor:
+
+     destroy  `_destroyTotal>0 && remain<=0` is the win test, so with no usable target the HUD reads
+              "NO TARGETS SET" and the run has no ending. Runtime `spawnprop` cannot rescue it either —
+              `_setupDestroyTargets` runs once at deploy, so a level that starts with none stays at zero.
+     puzzle   nothing spawns and `objectiveTick` has no puzzle branch: the ONLY way to finish is a win
+              action a creator wired themselves. With none, the room is a walking simulator.
+     race     without a Start-line track piece `_raceStartO` is null, the lap counter never arms and the
+              race HUD hides itself.
+
+   These are reported, never refused (build 1282’s rule): the check is a heuristic and a creator may be
+   mid-build. What it must not do is stay quiet, because none of the three announces itself in play. */
+function _objectiveTargets(){   // the props a Destroy mission can actually finish on
+  const usable = [], marked = [];
+  for(const o of propModels){
+    if(!o || !o.userData || !o.userData.objective) continue;
+    marked.push(o);
+    if((o.userData.phys || o.userData.shootable) && o.userData.breakable !== false) usable.push(o);
+  }
+  return { usable, marked };
+}
+function _hasWinPath(){
+  /* Any authored way to END the room. `goto` counts: a campaign level whose exit is a doorway (build 1394)
+     is finished by loading the next one, and calling that "no win path" would false-positive on every
+     room of a multi-room game — which is exactly the shape this engine now encourages. */
+  try{
+    for(const n of (logicGraph.nodes||[])){
+      if(n.type==='win' || n.type==='goto') return true;
+      if(n.type==='do' && n.p && (n.p.verb==='win')) return true;
+    }
+  }catch(e){}
+  for(const o of propModels){
+    const sg = o && o.userData && o.userData.signals; if(!sg) continue;
+    for(const s of sg){ if(s && s.do==='win') return true; }
+  }
+  return false;
+}
+function _raceHasStart(){
+  for(const o of propModels){ const d = o && o.userData && TRACK_PIECES[o.userData.src]; if(d && d.start) return true; }
+  return false;
+}
 function levelIssues(){
   const issues=[]; _issueFind.clear();   /* build 1300: locators belong to THIS run of the check */
   try{
@@ -45973,6 +46018,25 @@ function levelIssues(){
     for(const lk of locks) if(!keys.has(lk)) issues.push('Something is locked with the '+keyDisplayName(lk)+', but no matching key pad is placed.');
     for(const k of keys) if(!locks.has(k)) issues.push('A '+keyDisplayName(k)+' pad is placed, but nothing is locked with it.');
     if(!pickupsOn && pickupSpots.length) issues.push('Pickups are turned off, but '+pickupSpots.length+' pickup spot'+(pickupSpots.length>1?'s are':' is')+' placed.');
+    /* build 1423: the objective, which nothing here has ever looked at */
+    { const mode = (typeof objectiveActive==='function') ? objectiveActive() : 'eliminate';
+      if(mode==='destroy'){
+        const t = _objectiveTargets();
+        if(!t.usable.length)
+          issues.push('The objective is Destroy, but nothing in this level is a target it can finish on'
+            + (t.marked.length ? ' \u2014 '+t.marked.length+' prop'+(t.marked.length>1?'s are':' is')+' marked Objective target but cannot be destroyed (each needs Dynamic or \ud83c\udfaf Shootable target, with Breakable ON).' : '. Tick \ud83c\udfaf Objective target on the props that must be destroyed \u2014 they need Dynamic or \ud83c\udfaf Shootable target first.')
+            + ' The run has no way to end: the HUD will read NO TARGETS SET.');
+        else if(t.marked.length > t.usable.length){
+          const n = t.marked.length - t.usable.length;
+          issues.push(_issueAt(n+' prop'+(n>1?'s are':' is')+' marked Objective target but cannot be destroyed, so '+(n>1?'they do':'it does')+' not count toward the Destroy objective (needs Dynamic or \ud83c\udfaf Shootable target, with Breakable ON).',
+            ()=>_objectiveTargets().marked.filter(o=>!((o.userData.phys||o.userData.shootable) && o.userData.breakable!==false))));
+        }
+      }
+      else if(mode==='puzzle' && !_hasWinPath())
+        issues.push('The objective is Puzzle, which spawns no enemies and ends only when you say so \u2014 and nothing in this level ends it. Add a Win level action (a prop signal, or a node in the logic graph), or a Go to level node if this room leads to another.');
+      else if(mode==='race' && !_raceHasStart())
+        issues.push('The objective is Race, but no Start line track piece is placed \u2014 the lap counter never arms and the race HUD stays hidden. Place one from the track builder.');
+    }
     audioZones.forEach((z,i)=>{ if(!(z.url||'').trim()) issues.push('Audio zone '+(i+1)+' has no sound URL.'); });
     { const _ccs=[cineCfg, ...((cineCfg&&Array.isArray(cineCfg.others))?cineCfg.others:[])];
       _ccs.forEach((cc,ci)=>{ if(!cc) return; const used = (ci===0) ? !!cc.on : true;   // #1 matters when it plays on deploy; extras exist to be played

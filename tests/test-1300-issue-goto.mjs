@@ -94,8 +94,12 @@ const mkGo = (props, resolveTo) => {
     'the unattributed-model check resolves the actual props…');
   assert(/_issueAt\(bare\+' Sketchfab model'[\s\S]{0,180}, _bareOf\)\)/.test(li),
     '…and hands the panel the finder, not a snapshot of it');
-  eq((li.match(/_issueAt\(/g) || []).length, 7,
-    'seven raise-sites point somewhere (both cutscene faults among them); the rest are level-wide — a light budget or a missing key pad has no single prop to blame');
+  // build 1423 added the EIGHTH: a prop marked Objective target that cannot be destroyed, which has a
+  // specific prop to go and fix. The intent is unchanged and is what the exact count guards — only the
+  // checks with somewhere to send you are clickable; the level-wide ones (a light budget, a missing key
+  // pad, a Destroy mission with no targets at all) stay plain rows, which is this build's own rule.
+  eq((li.match(/_issueAt\(/g) || []).length, 8,
+    'eight raise-sites point somewhere (both cutscene faults among them); the rest are level-wide — a light budget or a missing key pad has no single prop to blame');
 }
 
 // ---------------------------------------------------------------- the row
