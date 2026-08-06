@@ -186,8 +186,10 @@ eq((src.match(/\['command','Command enemies'\]/g) || []).length, 2, 'it appears 
     '...and does not offer "the player", which would mean nothing here'); }
 assert(/\{k:'cmd',l:'',w:120,ifv:\['verb','command'\],sel:\[\['hunt','Hunt the player'\],\['patrol','Patrol'\],\['hold','Hold position'\],\['alert','Alert them to'\],\['calm','Lose the player'\],\['post','Move their post to'\]\]\}/.test(src),
   '...and all six commands in plain English');
-assert(/ifv:\['verb',\['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill'\]\],listId:'lgPlaceList'/.test(src),   // build 1170; build 1216: + spawnprop; build 1288: + the area verbs
-  'it shares the place field with the other verbs that point somewhere');
+{ /* build 1412: membership, not a quoted list — see test-1073's note. */
+  const at = /ifv:\['verb',\[([^\]]*)\]\],listId:'lgPlaceList'/.exec(src);
+  assert(at && at[1].indexOf("'command'") >= 0 && at[1].indexOf("'spawn'") >= 0,
+    'it shares the place field with the other verbs that point somewhere'); }
 /* build 1407 replaced the hand-written forwarding literal with a derivation over the node's own
    parameter table — which is what stopped `once` and `r` being silently dropped. The intent here is
    unchanged and now stronger: these fields reach the handler because EVERY declared param does. */

@@ -20,8 +20,14 @@ const src = gameSource();
 const table = (new Function('return (' + (src.match(/const PRIM_SHAPES = (\[[\s\S]*?\n\]);/) || [])[1] + ')'))();
 const fx    = (new Function('return (' + (src.match(/const FX_SHAPES = (\[[\s\S]*?\n\]);/) || [])[1] + ')'))();
 {
-  const builders = src.slice(src.indexOf('const PRIMITIVE_BUILDERS = {'),
-    src.indexOf("buildFxEmitter('fx_fountain') };") + 26);
+  // build 1411: this slice used to END on the literal `buildFxEmitter('fx_fountain') };`, which was the
+  // last entry until the sign arrived after it. indexOf then returned -1 and the slice ran to the wrong
+  // place, failing EVERY key check against correct code — build 1392's recorded hazard, and the same
+  // class as a character-budget window. It ends on the named declaration that follows the table, and
+  // asserts both anchors were found, so a future move fails loudly instead of testing nothing.
+  const _bi = src.indexOf('const PRIMITIVE_BUILDERS = {'), _be = src.indexOf('function isPrimitive(', _bi);
+  assert(_bi >= 0 && _be > _bi, 'the builder table is where this test thinks it is');
+  const builders = src.slice(_bi, _be);
   // the shape keys must BE the builder keys — that is the property the five copies kept failing
   for (const [key] of table)
     assert(new RegExp('(^|[{,\\s])' + key + ':').test(builders), 'PRIM_SHAPES key `' + key + '` is a real builder');
@@ -32,7 +38,10 @@ const fx    = (new Function('return (' + (src.match(/const FX_SHAPES = (\[[\s\S]
   const keys = [...builders.matchAll(/(?:^|[{,\s])([a-z_0-9]+):/g)].map(m => m[1])
     .filter(k => !/^track_/.test(k) && !/^\d/.test(k));   /* the inline "build 1250:" comment is not a key */
   for (const k of keys) assert(declared.has(k), 'builder `' + k + '` is offered somewhere (' + k + ')');
-  eq(table.length, 10, 'ten shapes');
+  eq(table.length, 11, 'eleven shapes (build 1411 added the sign)');
+  assert(table.some(r => r[0] === 'sign'),
+    '...including the sign, which is why it reaches the + menu, the palette, the radial and the ' +
+    'Object panel without a line of wiring — this table IS that plumbing');
   eq(fx.length, 6, 'six emitters');
   assert(table.every(r => typeof r[1] === 'string' && r[1].length > 1), 'each carries a LABEL…');
   assert(/The label matters as much as the key/.test(src),

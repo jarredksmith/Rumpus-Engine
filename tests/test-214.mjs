@@ -11,8 +11,15 @@ const tcp = extractFunction('tpCameraPushback');
 assert(/_tpPivot\(_ownAvatar, player\.pos, _camYaw, player\.pos\.y-EYE\)/.test(tcp), 'chase cam uses the model centre');
 { const pv=extractFunction('_tpPivot');
   assert(/obj\.userData\.centerLocal/.test(pv), '...read off the model');
-  assert(/_TPP\.x = base\.x \+ cl\.x\*cy \+ cl\.z\*sy;/.test(pv) && /_TPP\.z = base\.z - cl\.x\*sy \+ cl\.z\*cy;/.test(pv) && /_TPP\.y = fY \+ cl\.y;/.test(pv),
-    'pivot rotates the local centre by yaw + sits at model-centre height');
+  assert(/_TPP\.x = base\.x \+ cl\.x\*cy \+ cl\.z\*sy;/.test(pv) && /_TPP\.z = base\.z - cl\.x\*sy \+ cl\.z\*cy;/.test(pv),
+    'pivot rotates the local centre by yaw');
+  /* build 1413 split this: the HORIZONTAL half above is byte-identical and still what stops the model
+     swinging around the reticle. The vertical half used to read `_TPP.y = fY + cl.y`, which was asserting
+     the DEFECT — the camera's sight line was half the drawn model's height, so it changed with the
+     costume (build 1290 measured 0.25 for a 0.5 m creature against an EYE of 1.7). It is still the
+     model's centre, now bounded by the player's own body. */
+  assert(/_TPP\.y = fY \+ Math\.max\(TP_PIVOT_MIN, Math\.min\(TP_PIVOT_MAX, cl\.y\)\);/.test(pv),
+    '...and sits at model-centre height, bounded by the PLAYER (build 1413)');
   const f=extractFunction('_tpFrame');
   assert(/_TPF\.x = pivot\.x - fx\*dist \+ rx\*side;/.test(f), 'chase cam pulls back with blended side/distance/height framing (build 373)'); }
 done();

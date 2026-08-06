@@ -44,7 +44,7 @@ eq(san(new Array(40).fill({ kind: 'text' })).length, 24, 'hard cap at 24 widgets
 // ---- the timer format and live interpolation, executed ----
 // build 1287: _hwText resolves per-player names through _hwVarKey (NOT _lgVarKey — a HUD draws outside
 // any event context), so the rig needs it too. Lifted from source, never restated.
-const glue = extractFunction('_hwVarKey', src) + '\n' + extractFunction('_lgVarKey', src) + '\n' + extractFunction('_lgNum', src) + '\n' + extractFunction('_hwFmtTimer', src) + '\n' + extractFunction('_hwText', src);   // build 1231: _lgNum scopes names through _lgVarKey
+const glue = extractFunction('_hwVarKey', src) + '\n' + extractFunction('_lgVarKey', src) + '\n' + extractFunction('_lgNum', src) + '\n' + extractFunction('_hwFmtTimer', src) + '\n' + extractFunction('_hwInterp', src) + '\n' + extractFunction('_hwText', src);   // build 1411: the interpolation is its own function now, shared with the world sign   // build 1231: _lgNum scopes names through _lgVarKey
 const env = new Function('logicVars', 'NET', glue + '\nreturn { fmt:_hwFmtTimer, text:_hwText };');
 {
   const e = env({ score: 12.345, time: 65, kills: 3 });

@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
 // build 1086: tuning the third-person framing meant drag a slider, press play, look, pause, drag again —
 // the Player tab's viewport is a free ORBIT for inspecting the model and deliberately ignores Side,
@@ -77,8 +77,14 @@ const P0 = { x: 0, y: 1.4, z: 0 };
 }
 
 // ---------------------------------------------------------------- the pivot
+/* build 1413 bounded the pivot's HEIGHT by the player's own body, so the rig needs those two constants —
+   lifted from source rather than restated, or this would keep passing against a stale pair. They share one
+   `const` statement, which extractConst cannot read, so the whole declaration comes out by regex. Both of
+   the heights this file exercises (0.95 and 1.0) sit inside the band, so every assertion is unchanged. */
+const PIVOT_BOUNDS = (/const TP_PIVOT_MIN = [^;]+;/.exec(src) || [''])[0];
+assert(PIVOT_BOUNDS, 'the pivot bounds are where this test thinks they are');
 const pv = (obj, base, yaw, fb) => new Function('EYE',
-  `const _TPP={x:0,y:0,z:0};\n${pivot}\nreturn _tpPivot;`)(1.7)(obj, base, yaw, fb);
+  `const _TPP={x:0,y:0,z:0};\n${PIVOT_BOUNDS}\n${pivot}\nreturn _tpPivot;`)(1.7)(obj, base, yaw, fb);
 {
   const c = pv({ userData: { centerLocal: { x: 0, y: 0.95, z: 0 }, footY: 3 } }, { x: 2, y: 9, z: -1 }, 0, 0);
   near(c.y, 3 + 0.95, 1e-9, 'the pivot sits at the model centre above its FEET, not above the body origin');

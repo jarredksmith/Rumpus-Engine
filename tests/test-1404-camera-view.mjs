@@ -35,6 +35,8 @@ const src = gameSource();
 
 // ------------------------------------------------------------- the state, executed ----
 const MODES = JSON.parse(/const VIEW_MODES = (\[[^\]]*\]);/.exec(src)[1].replace(/'/g, '"'));
+const DWELL_MIN = +/const VIEW_DWELL_MIN = ([\d.]+)/.exec(src)[1];
+const DWELL_MAX = +/VIEW_DWELL_MAX = ([\d.]+)/.exec(src)[1];
 function rig(opts) {
   opts = opts || {};
   const notes = [];
@@ -46,7 +48,9 @@ function rig(opts) {
     'let gameOn = ctx.gameOn, editorOpen = ctx.editorOpen;\n' +
     'const gameCfg = ctx.gameCfg;\n' +
     'function _noteLogicFailure(m){ notes.push(m); }\n' +
-    extractFunction('_viewNow') + '\n' + extractFunction('_viewMountFor') + '\n' +
+    'const VIEW_DWELL_MIN = ' + DWELL_MIN + ', VIEW_DWELL_MAX = ' + DWELL_MAX + ';\n' +
+    extractFunction('_viewNow') + '\n' + extractFunction('_viewMountsFor') + '\n' +
+    extractFunction('_viewDwell') + '\n' +
     extractFunction('_setViewOverride') + '\n' + extractFunction('_vcamMode') + '\n' +
     'return { set:_setViewOverride, now:_viewNow, vcam:_vcamMode, ov:()=>_viewOv, notes,' +
     '         setEditor:(b)=>{ editorOpen=b; }, setPlay:(b)=>{ gameOn=b; } };')(props, notes, opts.ctx || { gameOn: true, editorOpen: false, gameCfg: { view: 'fps' } });
@@ -55,8 +59,10 @@ function rig(opts) {
 {
   eq(MODES.join(','), 'fps,chase,top,side,fixed', 'the vocabulary is NAMED, so nothing can validate against a comment');
 
-  const cam = { userData: { tag: 'seccam' } };
-  const r = rig({ props: [{ userData: { tag: 'other' } }, cam, { userData: { tag: 'seccam' } }] });
+  // `parent` is what build 1410 reads to mean LIVE — every prop in propModels is in the scene, and a
+  // detached one is a corpse the bank must not cut to.
+  const cam = { parent: {}, userData: { tag: 'seccam' } };
+  const r = rig({ props: [{ parent: {}, userData: { tag: 'other' } }, cam, { parent: {}, userData: { tag: 'seccam' } }] });
 
   eq(r.now(), 'fps', 'with no override the level plays its own view');
   eq(r.set('top'), true, 'a trigger can arm one...');
@@ -67,7 +73,9 @@ function rig(opts) {
   eq(r.set(''), true, 'a blank mode is "back to normal" too, so an unset field cannot strand a camera');
 
   eq(r.set('fixed', 'seccam', true), true, 'a fixed camera arms on a tag');
-  eq(r.ov().mount, cam, '...mounting on the FIRST prop carrying it — a camera is ONE place (build 1394)');
+  eq(r.ov().mounts[0], cam,
+    '...and camera 1 is the FIRST prop carrying the tag (build 1394; a LIST since 1410, and the head of it ' +
+    'is what a bank with no dwell shows — byte-identical to what 1404 mounted)');
   eq(r.ov().track, true, '...tracking by default, because a security camera watches you');
   eq(r.now(), 'fixed');
   eq(r.vcam(), '', '...and the ORBIT framing declines it, so _viewFixedPose is the only thing placing it');
@@ -123,8 +131,9 @@ function rig(opts) {
   assert(/m\.getWorldQuaternion\(_vfQ\); cam\.quaternion\.copy\(_vfQ\)/.test(f),
     'and an untracked mount takes the PROP\'s own orientation — both are -Z forward (build 1394), so it is ' +
     'the identity mapping rather than a conversion');
-  assert(/if\(m && !m\.parent\) m = _viewOv\.mount = _viewMountFor\(_viewOv\.tag\)/.test(f),
-    'a mount destroyed mid-round is re-resolved by tag rather than held as a dead object');
+  assert(/if\(m && !m\.parent\)\{\s*list = ov\.mounts = _viewMountsFor\(ov\.tag\);/.test(f),
+    'a mount destroyed mid-round is re-resolved by tag rather than held as a dead object (build 1410: the ' +
+    'whole bank is re-resolved, since the destroyed one has to leave the cycle as well as the frame)');
   assert(/if\(!m\)\{ _viewOv = null; return; \}/.test(f),
     '...and if the tag is gone entirely the override DROPS, so the player returns to the level\'s own ' +
     'camera instead of staring at wherever the last frame left them');
@@ -156,14 +165,16 @@ function rig(opts) {
 {
   const wa = extractFunction('_applyWorldAction');
   assert(/if\(s\.do==='view'\)\{/.test(wa), 'the verb is a WORLD verb — it acts on WHO, not on a tag list');
-  assert(/if\(who==='actor'\)\{ if\(_wactToActor\(\{ vw:\[vm, vt, tr\?1:0\] \}\)\) return; \}/.test(wa),
+  assert(/if\(who==='actor'\)\{ if\(_wactToActor\(\{ vw:\[vm, vt, tr\?1:0, dw\] \}\)\) return; \}/.test(wa),
     'and `who:actor` sends it to the player who tripped the trigger and nobody else, which is what a ' +
     'security camera in a co-op level means (build 1232)');
-  assert(/_setViewOverride\(vm, vt, tr\); _wactSend\(\{ vw:\[vm, vt, tr\?1:0\] \}\);/.test(wa),
+  assert(/_setViewOverride\(vm, vt, tr, dw\); _wactSend\(\{ vw:\[vm, vt, tr\?1:0, dw\] \}\);/.test(wa),
     '...while the default reaches everyone, like the other world verbs');
   assert(/if\(msg\.vw && typeof _setViewOverride==='function'\)/.test(src),
     'a client applies the identical payload through the identical function');
-  assert(/\|\|s\.do==='resetprop'\|\|s\.do==='view'\)\{/.test(src),
+  /* build 1412: this quoted `view` as the LAST verb in the router's chain, so the next verb to join
+     broke it with the assertion still true. Assert that the chain names it — which is the wire. */
+  assert(/\|\|s\.do==='view'(\|\||\)\{)/.test(src),
     'the signal router forwards it to the world handler (build 1277: the wire, not the ends)');
 
   // it must not survive a deploy — an override is play state
@@ -171,8 +182,7 @@ function rig(opts) {
     'a deploy clears it, so the level\'s own camera always comes back');
 
   // both authoring surfaces
-  assert(/\['command','Command enemies'\],\['view','Camera view'\],\['showprop','Show props'\]/.test(src),
-    'the Do node offers it');
+  assert(/\['view','Camera view'\]/.test(src), 'the Do node offers it');
   assert(/\['command','Command enemies'\],\['view','Camera view'\]\], s\.do, v=>\{ s\.do=v; \}\)\);/.test(src),
     '...and so does the prop-signal editor, so a camera prop can arm itself on contact');
   assert(/\{k:'vmode',l:'',w:130,ifv:\['verb','view'\]/.test(src), 'with a mode picker...');
@@ -182,8 +192,10 @@ function rig(opts) {
      editor reads it too — the box used to render UNCHECKED while the runtime treated it as on. */
   assert(/\{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:\['verb','view'\],ifv2:\['vmode','fixed'\]\}/.test(src),
     '...and the tracking switch beside it, on by default in the table the editor and the runtime share');
-  assert(/ifv:\['verb',\['damage','heal','kill','teleport','give','take','view'\]\]/.test(src),
-    '...plus build 1232\'s who field');
+{ /* build 1412: membership, not a quoted list — every verb that joins the audience broke this
+     with its assertion still true (builds 519/928/1073's trap). */
+  const who = /\{k:'who',l:'',w:104,ifv:\['verb',\[([^\]]*)\]\]/.exec(src);
+  assert(who && who[1].indexOf("'view'") >= 0, '...plus build 1232\'s who field'); }
 
   // build 1402's rule: the camera tag is a NAME
   const doCase = extractFunction('_lgPulse');

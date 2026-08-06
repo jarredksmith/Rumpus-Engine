@@ -25,12 +25,26 @@ for (const f of files) {
   const lineOf = (i) => src.slice(0, i).split('\n').length;
 
   /* Walk the file's OPENING backticks rather than pairing them up: a probe's page code always starts
-     with the same shape, and the first stray backtick inside is what ends the literal early. */
-  const open = /`\(\s*(?:function\s*\(\s*\)\s*\{|async\s*\(\s*\)\s*=>)/g;
-  let m;
+     with the same shape, and the first stray backtick inside is what ends the literal early.
+
+     BUILD 1413: this regex required the `(` to follow the backtick IMMEDIATELY. Every probe written
+     against DRIVE_RIG opens `probe(DRIVE_RIG + \`` and puts the `(function(){` on the NEXT LINE, so the
+     opener matched nothing, the walk never ran, and the lint reported those files CLEAN without ever
+     looking inside them. It had been doing that for every booth probe in this session. A checker that
+     cannot find the thing it checks reports success — which is worse than not running it, because it is
+     believed. Hence the `\s*`, and the vacuous-run warning below. */
+  const open = /`\s*\(\s*(?:function\s*\(\s*\)\s*\{|async\s*\(\s*\)\s*=>)/g;
+  let m, found = 0;
   while ((m = open.exec(src))) {
+    found++;
     const start = m.index + 1;
-    const close = src.indexOf('})()`', start);
+    /* The close is `})()` and its backtick, which are NOT always adjacent — a probe that stores its page
+       code in a const usually puts the closing backtick on its own line. Searching for the exact string
+       `})()\`` missed those, ran past the real end, and reported the CLOSING backtick as a stray one:
+       four false positives, which is the other way for a checker to be useless. */
+    const cm = /\}\)\(\)\s*`/g; cm.lastIndex = start;
+    const cx = cm.exec(src);
+    const close = cx ? cx.index : -1;
     if (close < 0) {
       console.log(`  ${basename(f)}:${lineOf(m.index)}  UNTERMINATED page-code literal`);
       bad++; break;
@@ -50,7 +64,13 @@ for (const f of files) {
         bad++; break;
       }
     }
-    open.lastIndex = close;
+    open.lastIndex = cm.lastIndex;
+  }
+  /* A file that hands a template literal to probe() and whose page code this cannot find is a file this
+     lint did not check. Say so loudly rather than counting it clean — that silence is the defect above. */
+  if (!found && /probe\((?:[^)]*\+\s*)?`/.test(src)) {
+    console.log(`  ${basename(f)}  NOT CHECKED — page code found but its opening shape is unrecognised`);
+    bad++;
   }
 }
 console.log(bad ? `\n  ${bad} problem(s) — write the identifier as plain prose inside page code`

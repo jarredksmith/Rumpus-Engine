@@ -2909,36 +2909,419 @@ page-code template literal closes it, and Node reports "missing ) after argument
 It skips escaped backticks and nested `${...}` interpolation, and is controlled both ways: 123 probes clean,
 one injected backtick caught at the right line. **Run it before running a probe.**
 
-## The next build, specified (critic pass after build 1381)
+## The chase camera frames the player, not the costume (build 1413)
 
-A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its
-blind verdict names ONE tell: *"regular, unbroken texture tiling on the two largest surfaces in frame."*
-The finding is verified in source and is worth writing down precisely, because it is a real interaction
-between the two builds that came before it:
+Recorded with numbers at build 1290 and deferred there: `centerLocal.y` is **half the drawn model's
+height** (a hardcoded 1.0 for the stock capsule), and it is the third-person pivot — so the camera's
+height, and everything the player can see over, was a property of whichever character was equipped. A
+0.5 m creature gives 0.25 and a 4 m mech gives 2.0, against an `EYE` that is 1.7 whatever the model.
 
-**Builds 1378 and 1379 exclude each other from the surfaces that most need both.** `albedoDetailWanted`
-requires `!mat.map`, and 1378 gave `floorMat` and `wallMat` an authored map — so the ground plane and the
-boundary walls are the only surfaces in the engine that get NEITHER a break-up layer (1379 refuses them)
-NOR macro variation (the texture is a 4 m tile repeated ~35x across 140 m with nothing on top of it).
+This is **build 1289's rule one function along**: *a gameplay quantity must never be derived from
+something only the renderer knows.* That build fixed the ledge hang, which read the drawn body's bounding
+box for the COLLIDER's reach. And this function already knew better in its other half — the no-model
+fallback has always been `EYE - 0.3`, player-derived. The two halves disagreed about what the pivot is for.
 
-1379's gate was written for a real reason — *two detail systems on one surface is double grain* — and that
-reason does not cover this case. A MACRO layer is a different technique from a detail layer: at 2-3x the
-tile period it breaks the visible repeat rather than competing with the texture's own frequency.
+`TP_PIVOT_MIN = EYE * 0.5` and `TP_PIVOT_MAX = EYE + 0.15` — the player's own hip and the top of their
+own head. **Every model between 1.7 m and 3.7 m tall is byte-identical**, which is every humanoid and the
+stock capsule; outside it the camera was looking along the floor, or down at a character it was supposed
+to be behind.
 
-What the build has to get right, and neither is a free choice:
-- **The period must NOT be an integer multiple of `SURF_TILE_M`**, or it reinforces the repeat it exists to
-  hide. ~11 m against a 4 m tile is 2.75x.
-- **The frequency semantics differ from the primitive path.** `_albDetailFreq(span) = ALB_DETAIL_PER_M x
-  span` assumes a UNIT local box scaled by the object. `floorMat`'s geometry is a real
-  `PlaneGeometry(ARENA*2, ARENA*2)` and the boundary walls are `BoxGeometry(ARENA*2, H, 2)` — both
-  unscaled, in metres — so `vOdPos` spans 140, and the frequency there is `1 / periodMetres`, not
-  `perMetre x span`. Using the primitive derivation on them would put the macro layer three orders of
-  magnitude off, and it would look like nothing at all rather than like an error.
+### Why clamping Y is safe and clamping X/Z would not be
 
-The critic's other two findings, both verified: point lights still cannot cast shadows (build 1132, and
-build 1142 counts 29 of them around the stock spawn), and there is no temporal or specular AA, so the
-1145/1379 procedural normal noise aliases with nothing to suppress it once MSAA sheds — its suggestion is
-to fade `uOdBump` down with `_prStepI` so the noise never outruns the AA meant to cover it.
+`_tpPivot`'s own comment says pivoting on the model's real centre *"keeps ANY model on the crosshair while
+it rotates in place instead of swinging around the reticle"* — and that is what stopped this being
+clamped for 120 builds. It is **true of x and z, which are ROTATED by yaw**, and **false of y, which is a
+plain add**: a vertical difference between the pivot and the model's centre is a constant screen offset
+and can never become a swing. `test-1413` measures it over 720 headings rather than restating it — x and
+z sweep the full diameter of the model's own horizontal offset, y is identical at every one.
+
+### Measured through the whole boom (`tools/probe/chase-pivot.mjs`, 12/12)
+
+`test-1413` drives `_tpPivot` in isolation; the probe drives `tpCameraPushback` — damping, tilt, collide —
+and reads `camera.position.y` off the real camera, which is the number a player experiences. The stock
+capsule is the control.
+
+```
+pivot above the avatar's own feet    humanoid 0.90 (untouched) · creature 0.25 -> 0.85 · mech 2.00 -> 1.85
+camera height, full boom             humanoid 0.98 vs stock 1.08 (within 15 cm)
+                                     creature 0.93 — no longer at ankle height
+                                     mech 1.93 vs a tall humanoid's 1.18 — bounded, not a stop above
+ordering                             0.93 < 0.98 < 1.93 — a bigger character still frames higher
+in frame                             the character's own centre projects inside the frame at all three
+```
+
+**The first probe run read every pivot 0.0801 too high, and the engine was right.** The pivot is
+`footY + clamped(cl.y)`, and `footY` is the avatar's own foot height — not zero, and not
+`player.pos.y - EYE`. Comparing a pivot to a bare bound compares two different origins. The tell was that
+all three readings were out by *exactly* the same amount.
+
+### What this does NOT close, stated rather than implied
+
+Build 1290 recorded two things: the pivot is derived from the art, and *"there is no authored control over
+it"*. This closes the first. The second is now much smaller and deliberately left: with the pivot bounded
+to the player's own body the spread across every humanoid a creator would equip is ~0.25 m, and `tpHeight`
+is a **parallel** camera offset (`tpCameraPushback` looks along the frame's own forward, not back at the
+pivot — asserted), so it absorbs that. A fifth framing slider would be a fifth value in `_sanitizeView` /
+`_snapshotView` / `_applyView` / `_loadPersonalView`, which is the hand-kept-list defect this file records
+more than any other, for a quarter of a metre a creator can already dial out.
+
+**Three pins moved, and one of them CRASHED rather than failing** — `test-1086` evaluates `_tpPivot` in an
+isolated scope, so a new module-level constant is genuinely missing there. It printed no PASS/FAIL line at
+all, so the summary said `1149/1151, 2 FAILED` with only ONE `FAIL` visible; `run-all` reports a crashed
+harness on a `stderr:` line, which is the thing to grep for when those two numbers disagree. Its rig lifts
+the bounds from source rather than restating them — and `extractConst` cannot read them, because both live
+on one `const` statement, so the whole declaration comes out by regex.
+
+**And half of another pin had been asserting the defect.** `test-214`'s quoted
+`_TPP.x = … && _TPP.z = … && _TPP.y = fY + cl.y` in one assertion called *"pivot rotates the local centre
+by yaw + sits at model-centre height"*. The first clause is byte-identical and still the thing that stops
+the model swinging around the reticle; the second was a pin ON the bug. They are two assertions now.
+
+## The probe lint had been passing vacuously (build 1413)
+
+`tools/probe/lint.mjs` exists because a backtick inside a probe's page-code template closes the literal and
+Node reports it at an innocent line — a trap recorded against builds 1328, 1342 and 1357. It has been run
+before every probe this session and **it was checking nothing.**
+
+Its opener required the page code's `(` to follow the backtick IMMEDIATELY. Every probe written against
+`DRIVE_RIG` opens `probe(DRIVE_RIG + \`` and puts `(function(){` on the **next line**, so the opener matched
+nothing, the walk never ran, and those files were reported CLEAN without being looked inside. It was found
+the only way it could be: by writing a probe with the fault in it, watching Node's parse error, and running
+the lint that had just called that file clean.
+
+**A checker that cannot find the thing it checks reports success, which is worse than not running it at
+all — because it is believed.** So the fix is two parts: the opener tolerates whitespace, and a file that
+hands a template literal to `probe()` whose page code the lint *cannot* find is now reported as
+**NOT CHECKED** rather than counted clean. Silence about a file it did not examine was the defect.
+
+Widening the opener then produced **four false positives** — probes that store their page code in a const
+and put the closing backtick on its own line, where `indexOf('})()\`')` misses and the walk runs past the
+real end and flags the CLOSING backtick. That is the other way for a checker to be useless, so the close is
+a regex over `})()` plus whitespace plus the backtick. Controlled both directions: a deliberately broken
+file still fires, and 136 real probes are clean.
+
+## The level can point at where to go (build 1412)
+
+A level made of separate places — a fair with five booths, a hub with four doors, an objective across the
+map — could TELL the player where to go (objective text, a toast, and since 1411 a sign at the door) and
+could not **point**. The only marker in the engine was `mapWaypoint`, which a PLAYER drops on their own
+map. A creator had nothing.
+
+`marker` is a world verb, so it inherits `who` from build 1232 unchanged: the default reaches everyone,
+and `actor` marks the objective for the one player who tripped the trigger — which is what a co-op level
+with a split objective means. `_applyMarker` is the ONE applier and a client runs it on the identical
+payload, so the two cannot come to different answers.
+
+Four decisions:
+
+- **A SET, not one marker, capped at 8.** "The objective" and "here are the five booths" are both real,
+  and a creator switching between them should not need a different verb. **The same tag twice is the same
+  marker**, updated in place — otherwise an interval that re-marks fills the cap in four seconds.
+- **One place, never a random one.** `_lgPlaceAt` picks at RANDOM among props sharing a tag so a spawned
+  squad scatters (1394 recorded that distinction), and an arrow that points at a different crate every
+  frame is not a marker. A tag resolves the FIRST live prop — which is also what makes it **track**: a
+  marker on a lift rides it, and one on a prop the graph moves follows. Anything else (`me`, `start`,
+  `#here`, a trigger name) resolves to a static point through the same shared vocabulary.
+- **DOM in the HUD, not a world sprite.** An objective marker has to read THROUGH geometry (that is what
+  it is for), stay crisp at any distance, and clamp to the screen edge when the target is behind you. A
+  world-space sprite fights all three.
+- **A place nothing answers to is REFUSED and reported** (1214's channel). An arrow pointing nowhere is
+  worse than no arrow.
+
+The label interpolates through `_hwInterp` — the same function a HUD widget and a build-1411 sign use — so
+all three agree about what `{coins@}` means, and `Hits {hits}` on a marker is a scoreboard you can see
+from across the map.
+
+### The one thing the maths will not do for you
+
+**Behind the camera, `project()` mirrors BOTH axes.** A target at your back therefore lands on the wrong
+side of the screen, and the arrow points the player exactly the wrong way — the single worst failure this
+feature has, and it looks entirely plausible in code. `const behind = _mkV.z > 1` flips it back before the
+edge clamp. The probe measures it directly: with the player facing −Z and the target at +Z, the arrow must
+sit at the BOTTOM of the screen (**y 326 of 360**); unflipped it sits at the top.
+
+### Two defects the live probe found and no Node test could have
+
+- **The signal router's verb list — build 1277's defect, committed again, by me.** `marker` was in the Do
+  node's dropdown, in the signal editor, in `SIG_KEYS` and in `_applyWorldAction`, and the router's
+  hand-kept `s.do==='…'||…` chain did not name it, so **the verb was completely inert**. Every end was
+  pinned and the wire was not. `test-1412` opens by asserting the router line, because that is the link
+  that keeps going missing.
+- **A null read that took the frame loop down.** The guard for "the marked prop was destroyed" was written
+  INSIDE the re-resolve — so it covered the frame the prop died on and **not the next one**, when
+  `m.prop` is already null, the re-resolve is skipped, and the static-point branch reads `m.pt.x` off
+  null. The probe hit it on its second drive. It is a bare statement followed by the guard now, and the
+  test asserts that SHAPE rather than the behaviour, because the behaviour needs a frame to show.
+
+### Measured live (`tools/probe/objective-marker.mjs`, 21/21)
+
+```
+in frame     diamond, no rotation, "RANGE  40m", authored colour, at 320,187 of 640x360
+behind you   arrow, rotated, at the BOTTOM (y 326 of 360)
+same tag     2 markers stay 2, the label updates in place
+label        {hits} = 5 renders "Hits 5"
+tracking     moving the prop moves the marker
+destroyed    the marker stops showing rather than freezing over a corpse
+bad tag      nothing added, and the Level Check says why
+cap          12 requests -> 8 markers
+editor       all hidden, and back on the way out
+clear        every element removed, not just the entries
+```
+
+### Eight pins moved, and seven were the same trap
+
+Six quoted a WHOLE VERB LIST (1073 x2, 1077, 1232, 1404 x3) and one a whole verb COUNT (1277) — so every
+verb that legitimately joined broke them **with every part of what they meant still true**. That is builds
+519 and 928's trap from build 1411, one day later and in a different table, and the fix is the same:
+assert MEMBERSHIP of the real field, extracted, rather than quoting the literal. 1073's now also asserts
+what must NOT be in the list, which is the half a quoted literal was silently providing.
+
+The eighth is 1074's, and it is the character-budget trap: `src.slice(i, i + 1200)` over the client's
+`wact` block, which this build's own line pushed two still-true assertions past the end of. `wact` is the
+LAST case in its handler, so there is no next case to end on — `extractFunction('handleHostMsg')`
+brace-matches and cannot drift at all, which is build 1149's preferred answer rather than its fallback.
+
+**The general form, now stated once for both:** *a pin that quotes a neighbourhood — a whole list, a whole
+count, a fixed number of characters — is a pin against the neighbourhood, not against what it says.*
+
+### And prose defeated a pin for the third time in two builds
+
+`!/innerHTML/` failed against correct code — it matched this build's own comment saying it never uses
+`innerHTML`. Build 1411's `!/raycast/` was the same, and 164/1393/1395 record it from the other direction
+(a pin SATISFIED by prose). The rule is now unconditional: **pin the syntax, never the bare word** —
+`/\.textContent = /` and `/\.innerHTML\s*=/`, not the identifier.
+
+## A sign in the world, and a scoreboard on it (build 1411)
+
+The engine could draw text in the world for **damage numbers** and **player name tags**, and nowhere else.
+A creator labelling a room, a booth or a door had to leave the engine, make an image, host it and import it
+as a textured plane — and could never show a NUMBER that changes. Every other authoring tool ships a text
+object; this one had two hardcoded ones and no way to author either.
+
+**It is a PRIMITIVE, which is the whole reason it is small.** The gizmo, snapping, duplication, the
+clipboard, prefabs, tags, serialization, undo, multiplayer prop sync, the outliner and the LOD all arrive
+for free — build 1250 made exactly this argument for the ambient emitters, and build 1320 made the shape
+tables one table, so the + menu, the palette, the radial and the Object panel all serve it with no wiring.
+
+**And the two tables it is deliberately NOT in are behaviour, bought for nothing.** `SHAPE_PRIMS` gates
+instancing: a sign carries its own canvas texture and could never share a batch material (1139's `_instKey`
+lesson), so excluding it is correct AND free. `MAT_PRIMS` gates the colour/texture panel, which would
+otherwise fight the sign panel for the same material.
+
+### It interpolates, which is the half no imported image can do
+
+`Hits {score}` is a live scoreboard on a wall. Three decisions:
+
+- **It shares `_hwInterp` with the HUD.** Build 1287 established that a HUD widget resolves `name@` through
+  `_hwVarKey` (`NET.myId`) and NOT through `_lgVarKey` (the event's pid), because it draws **every frame,
+  outside any event**. A world sign is the identical case. So the function was lifted out of `_hwText`
+  rather than the regex copied — two implementations of one syntax is how the two drift (1402's rule, and
+  1287 was the bug).
+- **A sign with no brace is rendered once and never touched again.** `_signTick` runs at 4 Hz, skips every
+  sign whose text carries no `{`, and `_signRender` returns immediately when the resolved text and the
+  geometry are unchanged. A level with a hundred labels pays for one boolean each.
+- **The canvas follows the prop's SCALE**, quantised to 64 px, so a 4×1 banner is not the same text
+  stretched and a gizmo nudge does not reallocate a canvas every frame.
+
+### Four decisions that are each a defect the other way
+
+- **Unlit (`MeshBasicMaterial`).** A label has to be readable in an unlit corner — and an unlit material
+  also keeps the sign out of every shader patch (1139/1384/1388) that assumes a Standard material.
+- **Double-sided.** A sign that is invisible from one side is the "nothing happened" failure. The honest
+  cost is that the back reads mirrored; the panel says so, and two signs back to back fix it.
+- **`noCol` ON by default** (build 1324's flag). A label is not a pane of glass: defaulting it solid would
+  put an invisible wall in front of a booth that stops bullets and makes enemies path around it. A creator
+  who wants a solid board unticks it — and the builder deliberately does **not** stamp the raycast itself,
+  so `refreshPropCollider` stays the one writer and unticking gives the board its hits back cleanly.
+- **The colours are VALIDATED, not escaped.** They go into a canvas `fillStyle`, and a bad value there does
+  not throw — it silently keeps the PREVIOUS `fillStyle`. So one hostile string would paint the text in the
+  board colour and the sign would read **blank with nothing failing**. `_signColor` accepts a hex or hands
+  back the default.
+
+`_pfSpawnEntry` needed the apply too, not just `_applyPropEntry` — build 1280 keeps that near-copy separate
+on purpose, and without the line a duplicated sign comes back blank, which is build 1162's defect exactly.
+`test-1411` counts the apply sites at exactly two.
+
+### Measured live (`tools/probe/sign-prop.mjs`, 21/21)
+
+A canvas is the one thing a Node harness structurally cannot check — it can prove the maths and the wiring,
+and only a real 2D context can say whether anything was DRAWN. So the probe reads the canvas back and counts
+text pixels, **with an empty sign as the control** so the count is provably measuring text:
+
+```
+'SHOOTING RANGE'   14,386 ink pixels        ''   0
+4x2 prop           canvas 2.00:1            1x4 prop   0.50:1
+'Hits {hits}' at hits=0   byte-identical ink to the literal 'Hits 0'
+hits 0 -> 7        the live board repaints within the tick
+                   the STATIC sign beside it does not move a pixel
+                   and 40 more frames change nothing — it stops working when the variable does
+{coins@}           resolves through the HUD's per-player key, not the graph event's
+noCol on           0 collider boxes, raycast neutralised
+noCol off          1 box, raycast back — both from the one writer
+round trip         {text, size:90, align:'left'} out and back, already drawn on arrival
+```
+
+**The static sign beside the live one is what makes the repaint mean anything.** Without it, "the ink
+changed" is equally consistent with the tick repainting everything every frame, which is the thing this
+design exists not to do.
+
+### Two pin-writing notes, both mine, both the same trap from opposite ends
+
+`!/raycast/.test(buildSignProp)` failed against correct code — it matched the builder's own COMMENT
+explaining that it leaves the raycast alone. Builds 164, 1393 and 1395 record a pin being **satisfied** by
+prose; this is a pin being **defeated** by it, and the fix is the same: assert the ASSIGNMENT
+(`/\braycast\s*=/`), never the bare name.
+
+And `bga: 0` must survive the sanitizer — "floating text with no board behind it" is a real thing to author,
+and the `+c.bga || 0` shape that would silently swallow it is build 1329's recorded trap.
+
+`docs/REFERENCE.md` gained the sign in the same pass, and **`+ Pillar`** with it — the docs' shape list was
+still the pre-1320 nine, which is that build's own finding surviving in the one place it did not look.
+
+### And it did not boot — the TDZ, for the fifth time
+
+A saved level containing ONE live sign stopped the game starting: **`Cannot access 'NET' before
+initialization`**. `loadHostedProps()` is called bare at module level and builds the saved level's props
+during boot (1331's whole subject), so a saved sign is applied there, rendered there, and therefore
+resolves its variables there — through `_hwVarKey`, which reads `NET`. **`const NET` is declared ~5,700
+lines below that call.**
+
+`_hwVarKey` had guarded with `typeof NET!=='undefined'` since build 1287, and that guard was correct for
+124 builds because its only caller was the HUD, which draws long after boot. **`typeof` does not guard a
+temporal dead zone — it THROWS for an uninitialised `const`** (1127, 1331, 1350, 1383, and now this). A
+`try/catch` is what actually guards one.
+
+**The whole Node suite passed at 1149/1149 while the game did not boot**, because nothing in it evaluates
+a saved level with a sign in it. What found it was reading the declaration order and then *reproducing it*:
+`tools/probe/sign-boot-tdz.mjs` seeds a saved level into localStorage through an init script — a driver
+capability this build added, and the only way to probe what a saved level does to the boot path — with a
+STATIC sign beside the live one as the control, since a static sign never reaches the interpolator.
+
+```
+before   [ERR] Cannot access 'NET' before initialization   ...then a 90 s boot timeout
+after    2 signs in the scene, both DRAWN during the load, the live one resolved to "Score 0"
+```
+
+`test-1411` turns it into a standing guard three ways: the `try/catch` is pinned, the ORDERING that makes
+it necessary is asserted (so moving either end is visible), and `_hwVarKey` is **executed inside a real
+dead zone** — the pre-fix form throws there.
+
+### Six pins moved, and one of them was testing nothing
+
+1058 and 1287 EXECUTE `_hwText`, so a lifted-out dependency is genuinely missing in those rigs; both are
+handed `_hwInterp` **from source**, never restated, and 1287's two regex pins moved to its new address with
+their intent untouched. 1250's anchored on `buildFxEmitter('fx_fountain') };` being the END of the builder
+table; it asserts the six entries as a property instead.
+
+**1320's was the interesting one.** It sliced the builder table from its declaration to that same
+`fx_fountain` literal — and when the sign landed after it, `indexOf` returned **−1**, the slice ran to the
+wrong place, and **every key check failed against correct code**. That is build 1392's recorded hazard (an
+`indexOf` that misses is not an error, it is a wrong answer) and the same class as a character-budget
+window. It ends on the named declaration that follows the table now, and **asserts both anchors were
+found**, so the next move fails loudly instead of quietly testing an empty string.
+
+519 and 928 are the other kind: both asserted the shape set as a **quoted join** of all ten keys, so they
+broke the day the list grew with every part of what they meant still true. Both assert MEMBERSHIP now (928
+keeps `box` first, which is its slot picker's actual default). *A pin that quotes a whole list is a pin
+against the list, not against what it says* — the character-budget trap in its other costume.
+
+## Several props under one tag are a camera BANK (build 1410)
+
+Build 1404 resolved the camera tag to the **first** prop carrying it and wrote *"a camera is ONE place"*.
+That is the one place in the engine where a tag means one thing: a tag has named a **set** since build 1299
+— a level has thirty crates and one tag — and every other tag-taking verb acts on all of them. So the
+second, third and fourth props a creator tagged `seccam` were placed, serialized, tagged and **unreachable**,
+and the security-desk idiom the verb was asked for needed a graph counter plus one `view` node per angle.
+
+`_viewMountsFor(tag)` returns them all in `propModels` order — the level's own order, which is what the
+outliner shows — and `vdwell` cuts between them. **The singular `_viewMountFor` is GONE**, not rewritten in
+terms of the list: after this build nothing called it, and a second resolver with no callers is a trap —
+the next build that wants "the camera" reaches for it and gets camera 1 rather than the one the bank is
+currently showing. `test-1410` pins its absence.
+
+Four decisions:
+
+- **0 is OFF and byte-identical to 1404.** No clock is read at all (`if(ov.dwell > 0)` guards the whole
+  block), so every level authored before this build pays nothing and behaves exactly as it did. That is
+  also what a pre-1410 host sends: the `vw` payload gained a fourth element, and a missing one reads 0.
+- **A positive dwell is FLOORED, not honoured.** A level file is untrusted input (1325) and an authored
+  0.001 would strobe the screen. `VIEW_DWELL_MIN` is 0.25 — a fast cut, which is a legitimate thing to
+  author — rather than a refusal.
+- **A gap over a second RE-BASES the clock instead of cutting.** It is a pause, a tab-back or a level
+  load, not elapsed dwell; without it, unpausing after thirty seconds flicks through ten cuts in the frame
+  the player comes back on. Same rule, same reason, as the chase camera's `_tpPrevT` (build 894).
+- **Membership is re-resolved ON THE CUT**, never per frame — `_viewMountsFor` is an O(propModels) walk,
+  and a cut is exactly the moment a camera spawned or destroyed since the last one should join or leave.
+  A mount destroyed mid-*dwell* still re-resolves on the spot, because the alternative is a player staring
+  at a corpse for a whole dwell.
+
+**`_viewMountsFor` skips a prop with no `parent`, and that is not tidiness.** Build 1404's re-resolve —
+*"the mount can be destroyed mid-round, re-resolve by tag rather than holding a dead object"* — only works
+if the resolver refuses the dead one; otherwise it hands back the very object it was called to replace.
+The probe found this by killing a camera mid-cycle and watching the bank sit on it.
+
+**And the row says so.** Nothing else in the product tells a creator that tagging a SECOND prop makes a
+bank — the field reads *"cut every [ ] s — tag several props to cut between them"*, because a capability
+nobody can find is one that does not exist (build 1348).
+
+**Each peer runs its own dwell clock from the moment it armed the bank.** The camera is a local view
+(`who:'actor'` sends it to one player), so there is nothing to keep in step and a synchronised bank would
+need a clock in the message for no gain.
+
+### Two kills, recorded so they are not rediscovered as gaps
+
+- **BLEND between mounts.** A security camera cuts; a survival-horror fixed camera cuts at the doorway.
+  Sliding the viewpoint from one mount to another is a CINEMATIC move and this engine already has
+  cinematics for it (`cineCfg`, shots carrying `path` / `lensFrom-To` / `focusOn` / `ease`). A second,
+  weaker path to the same thing inside a gameplay camera would duplicate that system and would read as a
+  drifting camera rather than as a camera bank.
+- **GEOMETRY AVOIDANCE.** `tpCameraPushback` collides for a reason that does not apply here: the player
+  DRAGS that camera through the level and it legitimately ends up inside a wall. A mount is **authored** —
+  the creator chose where it goes, and pulling it toward the player would move it off the spot they picked.
+  The case that looks like a defect (the player walks behind a pillar and the camera shows a pillar) is
+  the fixed-camera idiom working, not failing. `test-1410` pins the absence of `_cameraCollide`.
+
+### Three instrument failures, and the last one is a standing trap
+
+Measured live (`tools/probe/camera-bank.mjs`, 16/16): three real props, armed through the real
+`_applySignalAction`, sampled off the real frame loop — every sample lands EXACTLY on a mount, all three
+are visited and the cycle wraps, a destroyed camera is never shown again while the surviving two keep
+cutting. Getting there cost three wrong readings:
+
+| # | it reported | why |
+|---|---|---|
+| 1 | 2 of 3 cameras | the sample stride (500 ms) DIVIDED the dwell (2 s), so every cut landed on the exact boundary frame and float drift in `__vnow += (1/60)*1000` decided whether the last one fired |
+| 2 | 1 of 3 — "the bank never cuts" | rewritten to sleep in Node. **`__drive` VIRTUALISES `performance.now()`** (drive.mjs installs a counter and restores the real clock on the way out), so sleeping advances a clock the engine is not reading |
+| 3 | — | and the drives must be ONE eval: between `probe()` calls the real clock is back, ~1e5 ms behind the virtual one, so the next drive's first frame looks like a 100-second gap and trips the pause re-base, throwing the cycle's progress away every sample |
+
+**#1 is the general one: a sampling stride that divides the period under test measures the boundary, not
+the behaviour.** Both #2 and #3 are the same root — a probe rig that virtualises a clock has to be the
+only thing driving anything that reads it.
+
+Three pins moved (1404 ×3), each keeping its intent: the override holds a LIST whose head is what a
+bank with no dwell shows, the re-resolve covers the whole bank, and the `vw` payload carries the dwell.
+1404's own stubs gained a `parent`, which is what the engine reads to mean live.
+
+## The post-1381 critic pass is CLOSED (recorded build 1414)
+
+This section used to be titled *"The next build, specified"* and it sat near the top of the file reading
+as the standing next task **after all three of its items had shipped**. A session picked it up, started
+re-implementing the macro layer, and found `applyMacroDetail` already in the tree. A stale "build this
+next" note is worse than no note: it is followed.
+
+The blind verdict named ONE tell — *"regular, unbroken texture tiling on the two largest surfaces in
+frame"* — and two supporting findings. Where each of them went:
+
+| finding | closed by |
+|---|---|
+| `floorMat`/`wallMat` get neither a break-up layer (1379 refuses a material with a map) nor macro variation | **build 1382.** `applyMacroDetail(floorMat, MACRO_PERIOD_M)` and the same for `wallMat`, at `MACRO_TILE_MUL = 2.75` — deliberately not an integer multiple of `SURF_TILE_M`, or the layer lands on the repeat it exists to hide. The frequency is `1 / periodMetres`, because these two geometries are real metres and unscaled; the primitive path's `_albDetailFreq` would have been three orders of magnitude off and would have looked like nothing happening |
+| the 1145/1379 procedural normal noise aliases with no AA to suppress it once MSAA sheds | **build 1383.** `_syncOdBump` indexes `_OD_BUMP_STEP` by `_prStepI`, so the relief fades down the adaptive ladder exactly as the critic suggested — by reference through one shared uniform (1181), so a rung change is one CPU write and recompiles nothing |
+| point lights still cannot cast shadows (29 of them around the stock spawn) | **build 1348, deliberately parked with its reasons.** Flipping `castShadow` at runtime recompiles (measured: 54 → 65 programs in one frame), so a point shadow could never be a live toggle; and the frame-cost sweep **failed its own control** (a 0-caster baseline read 396 ms and the return to 0 read 554 ms), so there was no honest number to ship a cube shadow against. The panel names the consequence and the fix (use a Spot) instead |
+
+**The third is the only one still open, and it is open on an INSTRUMENT, not on a decision.** What it
+needs is a cost measurement that survives a control — which this session's rig can now plausibly give
+(paused scene, `__drive` on a virtual clock, a control pair that returns). Anyone picking it up should
+start by reproducing 1348's failed sweep and getting the control to close, not by writing a cube shadow.
 
 ## The shadow patches are verified to land (build 1381)
 

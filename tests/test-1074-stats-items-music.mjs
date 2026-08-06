@@ -174,8 +174,12 @@ assert(/k:'stat'/.test(src) && /k:'mul'/.test(src) &&
 
 // clients apply their half
 {
-  const i = src.indexOf("else if(msg.t==='wact')");
-  const blk = src.slice(i, i + 1200);
+  // build 1412: this was `src.slice(i, i + 1200)` — a character budget, and this build's own line pushed
+  // two still-true assertions past the end of it. `wact` is the LAST case in its handler, so there is no
+  // next case to end on; extractFunction BRACE-MATCHES the handler and cannot drift at all, which is
+  // build 1149's preferred answer rather than its fallback.
+  const blk = extractFunction('handleHostMsg');
+  assert(/else if\(msg\.t==='wact'\)/.test(blk), 'the wact case is in the client handler');
   assert(/if\(msg\.gi && typeof giveItem==='function'\)/.test(blk), 'a teammate receives a given item');
   assert(/if\(msg\.ti && typeof takeItem==='function'\)/.test(blk), '...and loses a taken one');
   assert(/if\(msg\.st && typeof _lgApplyStat==='function'\)/.test(blk), '...and moves at the same speed');

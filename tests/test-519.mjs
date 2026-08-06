@@ -14,7 +14,11 @@ const PRIM_SHAPES = (new Function('return ('+(src.match(/const PRIM_SHAPES = (\[
 assert(/const RADIAL_PRIMS = PRIM_SHAPES\.map\(_s=>_s\[0\]\);/.test(src), 'RADIAL_PRIMS IS the shape table');
 const RADIAL_PRIMS = PRIM_SHAPES.map(s=>s[0]);
 assert(Array.isArray(DEFAULT_RADIAL) && DEFAULT_RADIAL.length===5, 'five default slots');
-assert(RADIAL_PRIMS.join(',')==='box,cylinder,sphere,cone,pillar,wedge,stairs,dome,tube,torus', 'the built-in shapes (build 928: the full 871 primitive set)');
+// build 1411: this quoted the whole list, so adding a shape broke it with its assertion still true —
+// a pin against the literal rather than against what it says. Line 14 already asserts RADIAL_PRIMS
+// IS the shape table; what THIS means is that every buildable shape is on the radial.
+for(const k of ['box','cylinder','sphere','cone','pillar','wedge','stairs','dome','tube','torus','sign'])
+  assert(RADIAL_PRIMS.indexOf(k)>=0, 'the built-in shapes are all on the radial (build 928: the full 871 primitive set) — '+k);
 
 const _sanitizeRadial = new Function('DEFAULT_RADIAL','RADIAL_PRIMS', extractFunction('_sanitizeRadial') + '; return _sanitizeRadial;')(DEFAULT_RADIAL, RADIAL_PRIMS);
 {

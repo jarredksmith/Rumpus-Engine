@@ -91,8 +91,12 @@ function rig(kind) {
 }
 
 // --- wiring pins ------------------------------------------------------------------------------------
-assert(/fx_ember:\(\)=>buildFxEmitter\('fx_ember'\)/.test(src) && /fx_fountain:\(\)=>buildFxEmitter\('fx_fountain'\) \};/.test(src),
-  'all six presets are PRIMITIVE_BUILDERS entries — spawnProp/serialize/duplicate/net-sync work unchanged');
+// build 1411 put the sign after the emitters, so this can no longer anchor on `fx_fountain: ... };`
+// being the END of the table. It asserts the property instead of the table's shape.
+for (const k of ['fx_ember','fx_dust','fx_smoke','fx_steam','fx_firefly','fx_fountain'])
+  assert(new RegExp(k + ":\\(\\)=>buildFxEmitter\\('" + k + "'\\)").test(src),
+    'all six presets are PRIMITIVE_BUILDERS entries — spawnProp/serialize/duplicate/net-sync work ' +
+    'unchanged (' + k + ')');
 assert(/if\(obj\.userData\.fx\)\{ obj\.userData\.boxes = \[\]; return; \}/.test(src),
   'collider exemption 1: no per-mesh collision boxes, ever (the overall box stays for selection)');
 assert(/if\(o\.userData && o\.userData\.fx\) return;   \/\/ build 1250: an emitter never gets a physics body/.test(src),

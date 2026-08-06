@@ -232,11 +232,25 @@ const W = new Function(NAME_GLUE + WORLD_GLUE
 assert(/\['spawn','Spawn enemies'\],\['pickup','Spawn pickup'\],\['damage','Damage'\],\['heal','Heal'\],\['kill','Kill'\],\['teleport','Teleport'\]/.test(src),
   'all six appear in the node\'s verb list, in plain English');
 eq((src.match(/\['spawn','Spawn enemies'\]/g) || []).length, 2, '...in BOTH the graph node and the prop-signal editor');
-assert(/\{k:'at',l:'at',w:84,ifv:\['verb',\['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill'\]\],listId:'lgPlaceList'\}/.test(src),   // build 1170: moveprop points somewhere too; build 1216: so does spawnprop; build 1288: damage/heal/kill point at the AREA they affect
-  'the place field appears for exactly the verbs that need one, and offers a dropdown of real places');
+/* build 1412: this quoted the WHOLE verb list, so every verb that legitimately joined broke it with the
+   assertion still true — builds 519/928's trap. Assert MEMBERSHIP of the real field, and that it offers
+   the place dropdown. (1170: moveprop; 1216: spawnprop; 1288: the area verbs; 1412: marker.) */
+{
+  const at = /\{k:'at',l:'at',w:84,ifv:\['verb',\[([^\]]*)\]\],listId:'lgPlaceList'\}/.exec(src);
+  assert(at, 'the place field exists and offers a dropdown of real places');
+  for(const v of ['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill'])
+    assert(at[1].indexOf("'"+v+"'") >= 0, 'the place field appears for the verbs that need one — '+v);
+  for(const v of ['toggle','win','sound','stat'])
+    assert(at[1].indexOf("'"+v+"'") < 0, '...and not for one that does not — '+v);
+}
 // build 1404: `view` joined the audience list — a security camera in a co-op level means the player who
 // tripped the trigger, not everyone.
-assert(/\{k:'who',l:'',w:104,ifv:\['verb',\['damage','heal','kill','teleport','give','take','view'\]\]/.test(src), 'and the who field for exactly those');   // build 1232: give/take joined — the actor option is how a key reaches the player who earned it
+{ const who = /\{k:'who',l:'',w:104,ifv:\['verb',\[([^\]]*)\]\]/.exec(src);
+  assert(who, 'the who field exists');
+  for(const v of ['damage','heal','kill','teleport','give','take','view'])
+    assert(who[1].indexOf("'"+v+"'") >= 0, 'and the who field for the verbs that act on somebody — '+v);
+  /* 1232: give/take joined, so a key reaches the player who earned it. 1404: the camera. 1412: the
+     marker — a split objective in co-op means pointing ONE player at their half. */ }
 assert(/\{k:'item',l:'item',w:76,ifv:\['verb','pickup'\],ifv2:\['pk','item'\]/.test(src),
   'the inventory-item field needs BOTH conditions — it only shows for an item pickup');
 

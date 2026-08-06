@@ -12821,6 +12821,7 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
   if(typeof _lgResetStats==='function') _lgResetStats();     // build 1074: a bent stat springs back to what the level authored
   if(typeof _lgMusic!=='undefined') _lgMusic=null;           // ...and the level's own music track comes back
   _viewOv=null;                                              // build 1404: ...and so does the level's own camera
+  if(typeof _markersClear==='function') _markersClear();     // build 1412: ...and the objective arrows are play state too
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   _lgRunT = performance.now();   // build 1169: the 'time' stat reads seconds since this deploy
   for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
@@ -13229,15 +13230,28 @@ function _hwFmtTimer(sec){ sec=Math.max(0, Math.ceil(+sec||0)); return Math.floo
 // per connection instead of becoming a routing problem.
 function _hwVarKey(k){
   if(!k || k.charAt(k.length-1)!=='@') return k;
-  return k + ((typeof NET!=='undefined' && NET.myId!=null) ? (NET.myId|0) : 0);
+  /* build 1411: `typeof` does NOT guard a temporal dead zone — it THROWS for an uninitialised `const`,
+     which is this file's most repeated trap (1127, 1331, 1350, 1383). `const NET` is declared ~5,700
+     lines below `loadHostedProps()`, and that call builds the saved level's props at BOOT — so the
+     moment a WORLD SIGN could carry `{coins@}`, a saved level containing one stopped the game booting
+     at all. The build-1287 caller (the HUD) only ever ran long after NET existed, so the guard read as
+     correct for 124 builds. A try/catch is what actually guards a TDZ. */
+  let id = 0;
+  try{ if(typeof NET!=='undefined' && NET && NET.myId!=null) id = NET.myId|0; }catch(e){}
+  return k + id;
 }
 function _hwText(w){
   // build 1287: the `@` class the toast node has accepted since 1231, resolved through _hwVarKey (above).
   // Without it a widget bound to `coins@` matched nothing and rendered the literal text; with the mirror
   // below fixed too, it now shows THIS player's value. A co-op shop or scoreboard needed both halves.
-  const interp=(t)=>String(t).replace(/\{([\w#@]+)\}/g, (m,k)=>String(Math.round((+logicVars[_hwVarKey(k)]||0)*100)/100));
-  if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (interp(w.label)+' '+t) : t; }
-  return interp(w.label);
+  if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (_hwInterp(w.label)+' '+t) : t; }
+  return _hwInterp(w.label);
+}
+/* build 1411: lifted out of _hwText so the world SIGN can share it. A sign renders outside any event,
+   exactly like a widget, so `coins@` must mean THIS player's coins there too — and one function is what
+   stops the HUD and the sign coming to different answers about the same text (1287's lesson, 1402's rule). */
+function _hwInterp(t){
+  return String(t==null?'':t).replace(/\{([\w#@]+)\}/g, (m,k)=>String(Math.round((+logicVars[_hwVarKey(k)]||0)*100)/100));
 }
 // build 1255: THE HUD BECOMES AN INTERFACE. Widgets could show numbers and never take a click, so
 // no creator could author a shop, a quest log, an upgrade menu or a tycoon panel — the audit's #1
@@ -13395,7 +13409,7 @@ const LG_DEFS = {
        vocabulary (tags, `me`, `start`), which is exactly what _lgPlaceAt accepts. */
     {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist']],listId:'lgPlaceList'},
     {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['marker','Objective marker'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb',['objective','marker']]},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'vdwell',l:'cut every (s)',w:44,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'mkmode',l:'',w:112,ifv:['verb','marker'],sel:[['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']]},{k:'mcol',l:'colour',w:70,ifv:['verb','marker']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view','marker']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill','marker']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -13979,7 +13993,7 @@ function _applySignalAction(s, src){
     // HANDLER's source and the DROPDOWN's source and never that a node reaches the handler. test-1277
     // walks the path instead.
     if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'
-       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'||s.do==='view'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
+       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'||s.do==='view'||s.do==='marker'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
       if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
       return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
@@ -14270,8 +14284,17 @@ function _applyWorldAction(s){
   if(s.do==='view'){
     const vm=String(s.vmode==null?'normal':s.vmode).trim(), vt=String(s.vtag==null?'':s.vtag).trim();
     const tr=(s.vtrack!==false && s.vtrack!==0 && s.vtrack!=='0');
-    if(who==='actor'){ if(_wactToActor({ vw:[vm, vt, tr?1:0] })) return; }
-    _setViewOverride(vm, vt, tr); _wactSend({ vw:[vm, vt, tr?1:0] }); return; }
+    const dw=_viewDwell(s.vdwell);   /* build 1410: seconds per camera; 0 holds on the first one */
+    if(who==='actor'){ if(_wactToActor({ vw:[vm, vt, tr?1:0, dw] })) return; }
+    _setViewOverride(vm, vt, tr, dw); _wactSend({ vw:[vm, vt, tr?1:0, dw] }); return; }
+  /* build 1412: point at it. Same shape as the camera above — a local view thing, so `who:'actor'` marks
+     the objective for one player and the default reaches everyone. */
+  if(s.do==='marker'){
+    const mm=(s.mkmode==='hide'||s.mkmode==='clear') ? s.mkmode : 'show';
+    const at=String(s.at==null?'':s.at).trim(), tx=String(s.text==null?'':s.text).slice(0,40), mc=String(s.mcol||'');
+    const pay={ mk:[mm, at, tx, mc] };
+    if(who==='actor'){ if(_wactToActor(pay)) return; }
+    _applyMarker(mm, at, tx, mc); _wactSend(pay); return; }
   if(s.do==='command'){
     /* build 1408: an order can be given to the enemies at ONE PLACE. This resolved to all of them or to the
        single nearest one to the PLAYER, so in a level with more than one room "hold position" froze every
@@ -15294,6 +15317,115 @@ function refreshPropCollider(obj, mover){
   if(typeof _pcCacheBuild==='function') _pcCacheBuild(obj, finalBoxes, !isModelSrc(obj.userData.src));
 }
 // A built-in box primitive (used when src === 'box'): a 1×1×1 crate you scale via the transform.
+/* ---- build 1411: a sign ------------------------------------------------------------------------
+   The engine could draw text in the world for damage numbers and name tags and nowhere else, so a
+   creator labelling a room, a booth or a door had to leave the engine, make an image, host it and
+   import it. Every other authoring tool ships a text object.
+
+   It is a PRIMITIVE, which is what makes it small: the gizmo, snapping, duplication, the clipboard,
+   prefabs, tags, serialization, undo, multiplayer sync, the outliner and the LOD all arrive for free
+   (build 1250 made the same argument for emitters). It is deliberately NOT in SHAPE_PRIMS or
+   MAT_PRIMS, so instancing and the colour/texture panel exclude it with no code at all — each sign
+   carries its own canvas and could never share a batch material.
+
+   And it INTERPOLATES, which is the half no imported image can do: `Score {hits}` is a live scoreboard
+   on a wall. A sign whose text carries no braces is rendered once and never touched again. */
+const SIGN_DEF = { text:'Sign', size:64, color:'#eafff7', bg:'#0b1418', bga:0.85, align:'center' };
+const SIGN_TEXT_MAX = 240, SIGN_LINES_MAX = 8;
+const SIGN_ALIGNS = ['left','center','right'];
+function _signCfgSan(c){
+  c = c || {};
+  const out = {};
+  out.text  = String(c.text==null ? SIGN_DEF.text : c.text).slice(0, SIGN_TEXT_MAX);
+  out.size  = Math.max(8, Math.min(200, +c.size || SIGN_DEF.size));
+  out.color = _signColor(c.color, SIGN_DEF.color);
+  out.bg    = _signColor(c.bg, SIGN_DEF.bg);
+  out.bga   = Math.max(0, Math.min(1, c.bga==null ? SIGN_DEF.bga : +c.bga || 0));
+  out.align = (SIGN_ALIGNS.indexOf(c.align) >= 0) ? c.align : SIGN_DEF.align;
+  return out;
+}
+/* A level file is untrusted input (build 1325) and these two strings go into a canvas fillStyle. A bad
+   colour there does not throw — it silently keeps the PREVIOUS fillStyle, so one hostile value would
+   paint the text in the background colour and the sign would read blank. Validate, never pass through. */
+function _signColor(v, dflt){
+  const s = String(v==null ? '' : v).trim();
+  return /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(s) ? s : dflt;
+}
+function buildSignProp(){
+  const geo = new THREE.PlaneGeometry(1, 1); geo.translate(0, 0.5, 0);   // base at y=0, like every primitive (build 871)
+  /* MeshBasicMaterial, not Standard: a label has to be READABLE in an unlit corner, and an unlit
+     material also keeps the sign out of every shader patch (1139/1384/1388) that assumes Standard.
+     DoubleSide so a sign can never be invisible from one side — the "nothing happened" failure. The
+     honest cost is that the back reads mirrored; the panel says so, and two signs back to back fix it. */
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent:true, side:THREE.DoubleSide, depthWrite:false }));
+  m.userData.sign = Object.assign({}, SIGN_DEF);
+  /* A sign is a LABEL. Defaulting it solid would put an invisible pane in front of a booth that stops
+     bullets and makes enemies path around it — build 1324's noCol is exactly the control for this, and
+     a creator who wants a solid board unticks it. */
+  m.userData.noCol = true;   /* refreshPropCollider does the rest, including neutralising the raycast —
+                                one writer, so unticking the box gives the sign its hits back cleanly */
+  return m;
+}
+/* The canvas is sized from the prop's own SCALE, so text on a 4x1 banner is not the same text stretched.
+   Quantised to 64 px so nudging the gizmo does not re-render every frame. */
+function _signCanvasSize(o){
+  const sx = Math.abs(o.scale.x) || 1, sy = Math.abs(o.scale.y) || 1;
+  const asp = Math.max(0.25, Math.min(8, sx / sy));
+  const W = 768, H = Math.max(128, Math.min(1536, Math.round((W / asp) / 64) * 64));
+  return [W, H];
+}
+function _signRender(o){
+  const c = o && o.userData && o.userData.sign;
+  if(!c || !o.material) return;
+  const txt = (typeof _hwInterp==='function') ? _hwInterp(c.text) : String(c.text||'');
+  const [W, H] = _signCanvasSize(o);
+  /* Nothing changed -> nothing to do. This is what lets the tick below run over every sign in the level
+     at no cost: a sign whose text carries no braces resolves to the same string forever. */
+  if(o.userData._signKey === txt+'|'+W+'|'+H+'|'+c.size+'|'+c.color+'|'+c.bg+'|'+c.bga+'|'+c.align) return;
+  o.userData._signKey = txt+'|'+W+'|'+H+'|'+c.size+'|'+c.color+'|'+c.bg+'|'+c.bga+'|'+c.align;
+  let cv = o.userData._signCv;
+  if(!cv || cv.width!==W || cv.height!==H){
+    cv = o.userData._signCv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    if(o.material.map && o.material.map.dispose) o.material.map.dispose();
+    o.material.map = null;   // a new canvas needs a new texture; the old one is this sign's own
+  }
+  const x = cv.getContext('2d');
+  x.clearRect(0, 0, W, H);
+  if(c.bga > 0){ x.globalAlpha = c.bga; x.fillStyle = c.bg; x.fillRect(0, 0, W, H); x.globalAlpha = 1; }
+  const lines = String(txt).split('\n').slice(0, SIGN_LINES_MAX);
+  /* The authored size is in CANVAS pixels against a 768-wide board, so it means the same thing whatever
+     the sign is scaled to — and it is then shrunk to fit rather than overflowing, because a creator who
+     types a long line wants to read it, not to lose the ends of it. */
+  let fs = Math.max(8, Math.min(200, +c.size || 64));
+  fs = Math.min(fs, (H * 0.86) / Math.max(1, lines.length));
+  x.font = 'bold ' + fs + 'px system-ui, sans-serif';
+  let widest = 0; for(const ln of lines) widest = Math.max(widest, x.measureText(ln).width);
+  if(widest > W * 0.92){ fs = Math.max(6, fs * (W * 0.92) / widest); x.font = 'bold ' + fs + 'px system-ui, sans-serif'; }
+  x.textBaseline = 'middle';
+  x.textAlign = c.align;
+  const px = (c.align === 'left') ? W * 0.05 : (c.align === 'right' ? W * 0.95 : W / 2);
+  x.fillStyle = c.color;
+  const lh = fs * 1.18, y0 = H / 2 - (lines.length - 1) * lh / 2;
+  for(let i = 0; i < lines.length; i++) x.fillText(lines[i], px, y0 + i * lh);
+  if(!o.material.map){
+    const t = new THREE.CanvasTexture(cv);
+    t.minFilter = THREE.LinearFilter; t.anisotropy = (typeof MAX_ANISO === 'number') ? MAX_ANISO : 1;
+    o.material.map = t; o.material.needsUpdate = true;   // first map on this material -> compile USE_MAP once
+  } else o.material.map.needsUpdate = true;
+}
+/* Live signs. A scoreboard has to follow the variable it names, and a variable can change on any pulse —
+   but re-rendering a canvas per frame for every sign in a level is not free, and nothing about a sign
+   needs to be frame-exact. 4 Hz, and only signs whose text carries a brace are looked at at all. */
+let _signTickN = 0;
+function _signTick(){
+  if((++_signTickN % 15) !== 0) return;
+  for(let i = 0; i < propModels.length; i++){
+    const o = propModels[i];
+    if(!o || !o.userData || !o.userData.sign) continue;
+    if(String(o.userData.sign.text || '').indexOf('{') < 0) continue;   // static: rendered once, never again
+    _signRender(o);
+  }
+}
 function buildBoxProp(){
   const geo = new THREE.BoxGeometry(1,1,1); geo.translate(0, 0.5, 0);  // base at y=0 so it sits on the floor
   const m = new THREE.Mesh(geo, primitiveMat());   // build 1139: one place builds the primitive material, so the detail set reaches the box too
@@ -15965,7 +16097,8 @@ const PRIMITIVE_BUILDERS = { box:buildBoxProp, sphere:buildSphereProp, cylinder:
   track_bank_l:()=>_buildTrackPiece('track_bank_l'), track_bank_r:()=>_buildTrackPiece('track_bank_r'),
   track_ramp_up:()=>_buildTrackPiece('track_ramp_up'), track_ramp_dn:()=>_buildTrackPiece('track_ramp_dn'),
   fx_ember:()=>buildFxEmitter('fx_ember'), fx_dust:()=>buildFxEmitter('fx_dust'), fx_smoke:()=>buildFxEmitter('fx_smoke'),   /* build 1250: emitters are props */
-  fx_steam:()=>buildFxEmitter('fx_steam'), fx_firefly:()=>buildFxEmitter('fx_firefly'), fx_fountain:()=>buildFxEmitter('fx_fountain') };
+  fx_steam:()=>buildFxEmitter('fx_steam'), fx_firefly:()=>buildFxEmitter('fx_firefly'), fx_fountain:()=>buildFxEmitter('fx_fountain'),
+  sign:buildSignProp };   /* build 1411: a readable label is a primitive, so every editor door serves it (1320) */
 function isPrimitive(src){ return PRIMITIVE_BUILDERS.hasOwnProperty(src); }
 // Cache loaded glTFs by URL so repeated/added props of the same model don't refetch.
 const gltfCache = {};
@@ -20085,7 +20218,8 @@ const SIG_KEYS = {
   etype:'et', n:'q', at:'a', pk:'pk', item:'it', once:'o1',             // spawn / pickup / give / take
   who:'wh', amt:'am', r:'rr', stat:'st', mul:'mu',                      // damage / heal / kill / stat
   ewho:'ew', cmd:'cm',                                                  // command
-  vmode:'vm', vtag:'vt', vtrack:'vk',                                   // view (build 1404)
+  vmode:'vm', vtag:'vt', vtrack:'vk', vdwell:'vd',                      // view (build 1404); the bank's dwell (1410)
+  mkmode:'mk', mcol:'mo',                                               // marker (build 1412); `at` and `text` are shared
   prefab:'pb', escope:'es', er:'er'                                     // build 1408: the command's own scope
 };
 const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
@@ -20111,7 +20245,7 @@ function _sigUnpack(x){
   return s;
 }
 function _applyPropEntry(obj, p){
-  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406: one derivation, or the world verbs' fields keep being dropped */ if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
+  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406: one derivation, or the world verbs' fields keep being dropped */ if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.sgn && obj.userData.sign){ obj.userData.sign=_signCfgSan(p.sgn); if(typeof _signRender==='function') _signRender(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
 }
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
@@ -27972,7 +28106,7 @@ function tpActive(){ return tpMode || chaseForced(); }
 //
 // `var`, not `let` — this file has lost boot to a temporal dead zone three times (1127, 1331, 1350) and a
 // `var` read before its line is `undefined` rather than a throw. `_viewNow` treats that as "no override".
-var _viewOv = null;   // { m:'fps'|'chase'|'top'|'side'|'fixed', tag:'', mount:<prop>, track:bool }
+var _viewOv = null;   // { m, tag, mounts:[prop], idx, dwell, t0, last, track }   (build 1410: mounts, not one mount)
 const VIEW_MODES = ['fps','chase','top','side','fixed'];
 // The effective view mode. ONE function, so the four things that used to read `gameCfg.view` — the mode
 // gate, the chase gate, the chase-cursor gate and the orbit-camera framing — cannot come to different
@@ -27982,14 +28116,31 @@ function _viewNow(){
   if(_viewOv && (typeof gameOn!=='undefined' && gameOn) && !(typeof editorOpen!=='undefined' && editorOpen)) return _viewOv.m;
   return (typeof gameCfg!=='undefined' && gameCfg && gameCfg.view) ? gameCfg.view : 'fps';
 }
-function _viewMountFor(tag){
-  if(!tag || typeof propModels==='undefined') return null;
-  for(const o of propModels){ if(o && o.userData && o.userData.tag===tag) return o; }   // the FIRST wins: a camera is ONE place (build 1394)
-  return null;
+/* build 1410: the BANK. Build 1404 took the FIRST prop carrying the tag and called a camera "ONE place" —
+   but a tag has named a SET since build 1299 (a level has thirty crates and one tag), and every other
+   tag-taking verb in the engine acts on all of them. So several props carrying the camera tag are a bank
+   of cameras, and the dwell cuts between them: the security-desk idiom, with no new authoring concept.
+   propModels order IS the level's own order — what the outliner shows and what the creator placed. */
+function _viewMountsFor(tag){
+  const out = [];
+  if(!tag || typeof propModels==='undefined') return out;
+  /* `o.parent` skips a prop that has been destroyed but not yet spliced out. Without it the bank would
+     cut TO a dead camera and sit on it for a whole dwell, and _viewFixedPose's own re-resolve — which
+     exists for exactly this — would keep handing back the corpse it was called to replace. */
+  for(const o of propModels){ if(o && o.parent && o.userData && o.userData.tag===tag) out.push(o); }
+  return out;
 }
+/* There is deliberately NO singular _viewMountFor beside this. Build 1404 had one and build 1410 left it
+   with no callers — a second resolver nothing uses is a trap, because the next build to want "the camera"
+   would reach for it and get camera 1 rather than the one the bank is currently on. Ask for the list. */
+/* 0 is OFF and stays byte-identical to build 1404 (one mount, no clock). A positive dwell is FLOORED
+   rather than honoured, because a level file is untrusted input (build 1325) and an authored 0.001 would
+   strobe the screen four hundred times a second; 0.25 is a fast cut, which is a legitimate thing to want. */
+const VIEW_DWELL_MIN = 0.25, VIEW_DWELL_MAX = 120;
+function _viewDwell(v){ const d = +v; if(!(d > 0)) return 0; return Math.max(VIEW_DWELL_MIN, Math.min(VIEW_DWELL_MAX, d)); }
 // Arming it. Returns false and REPORTS (build 1214's channel) rather than leaving the player looking at
 // nothing — a camera pointed nowhere is the worst possible failure for this verb.
-function _setViewOverride(mode, tag, track){
+function _setViewOverride(mode, tag, track, dwell){
   const m = String(mode==null?'':mode).trim();
   if(!m || m==='normal'){ _viewOv = null; return true; }
   if(VIEW_MODES.indexOf(m) < 0){
@@ -27998,13 +28149,17 @@ function _setViewOverride(mode, tag, track){
   }
   if(m==='fixed'){
     const t = String(tag==null?'':tag).trim();
-    const mount = _viewMountFor(t);
-    if(!mount){
+    const mounts = _viewMountsFor(t);
+    if(!mounts.length){
       if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "camera" action mounts on the tag "'+t+'", but no placed prop has that tag.');
       return false;   // nothing changes: whatever camera was running keeps running, never a camera nowhere
     }
-    _viewOv = { m:'fixed', tag:t, mount:mount, track: track!==false };
-  } else _viewOv = { m:m, tag:'', mount:null, track:true };
+    /* Each peer runs its OWN dwell clock from the moment it armed the bank. That is deliberate: the camera
+       is a local view (`who:'actor'` sends it to one player), so there is nothing to keep in step, and a
+       synchronised bank would need a clock in the message for no gain. */
+    const _n = (typeof performance!=='undefined' && performance.now) ? performance.now() : 0;
+    _viewOv = { m:'fixed', tag:t, mounts:mounts, idx:0, dwell:_viewDwell(dwell), t0:_n, last:_n, track: track!==false };
+  } else _viewOv = { m:m, tag:'', mounts:null, idx:0, dwell:0, t0:0, last:0, track:true };
   return true;
 }
 function activeViewMode(){
@@ -28398,6 +28553,27 @@ function updateOwnAvatar(dt){
 const _TPP={ x:0, y:0, z:0 }, _TPF={ x:0, y:0, z:0, fx:0, fy:0, fz:0, px:0, py:0, pz:0 };
 // The point the camera orbits. Pivoting on the model's real centre is what keeps ANY model (short, tall,
 // offset) on the crosshair while it rotates in place instead of swinging around the reticle.
+/* build 1413: the pivot's HEIGHT is bounded by the PLAYER's own body, not by the art.
+   `centerLocal.y` is half the drawn model's height (and a hardcoded 1.0 for the stock capsule), so the
+   chase camera's sight line was a property of whichever character was equipped: measured at build 1290,
+   a 0.5 m creature gives 0.25 and a 4 m mech gives 2.0, against an EYE that is 1.7 whatever the model.
+   The same level therefore played with the camera at ankle height or two metres up depending on the
+   costume — and the fallback three lines below has ALWAYS derived from the player (EYE - 0.3), so the
+   two halves of one function disagreed about what the pivot is for.
+
+   This is build 1289's rule one function along: A GAMEPLAY QUANTITY MUST NEVER BE DERIVED FROM SOMETHING
+   ONLY THE RENDERER KNOWS. That build fixed the ledge hang, which read the drawn body's bounding box for
+   the COLLIDER's reach.
+
+   The bounds are the player's own hip and the top of their own head. Every model between 1.7 m and 3.7 m
+   tall is BYTE-IDENTICAL — every humanoid, and the stock capsule; outside it the camera was looking
+   along the floor or down from above the character it was meant to be behind.
+
+   And clamping Y is safe for a reason this function's own comment obscured: x and z are ROTATED by yaw,
+   so an offset there swings the model around the reticle as the camera turns and must be honoured. y is
+   a plain ADD — a vertical difference between the pivot and the model's centre is a constant screen
+   offset and can never become a swing. `test-1413` measures that over 720 headings rather than saying it. */
+const TP_PIVOT_MIN = EYE * 0.5, TP_PIVOT_MAX = EYE + 0.15;
 function _tpPivot(obj, base, yaw, footFallback){
   const cy=Math.cos(yaw), sy=Math.sin(yaw);
   const cl = obj && obj.userData && obj.userData.centerLocal;
@@ -28405,7 +28581,7 @@ function _tpPivot(obj, base, yaw, footFallback){
     const fY = (obj.userData.footY!=null) ? obj.userData.footY : footFallback;
     _TPP.x = base.x + cl.x*cy + cl.z*sy;
     _TPP.z = base.z - cl.x*sy + cl.z*cy;
-    _TPP.y = fY + cl.y;
+    _TPP.y = fY + Math.max(TP_PIVOT_MIN, Math.min(TP_PIVOT_MAX, cl.y));
   } else { _TPP.x=base.x; _TPP.y=base.y-0.3; _TPP.z=base.z; }   // fallback pivot: upper chest
   return _TPP;
 }
@@ -28431,20 +28607,166 @@ function _tpFrame(pivot, yaw, pitch, blend){
   _TPF.z = pivot.z - fz*dist + rz*side;
   return _TPF;
 }
+/* ---- build 1412: the objective marker --------------------------------------------------------------
+   A level made of separate places — a fair with five booths, a hub with four doors, an objective across
+   the map — could TELL the player where to go (objective text, a toast, a sign at the door) and could
+   not POINT. The only marker in the engine was `mapWaypoint`, which a PLAYER drops on their own map; a
+   creator had nothing.
+
+   It is a world verb, so it inherits `who` from build 1232: the default reaches everyone, and `actor`
+   marks the objective for the one player who tripped the trigger — which is what a co-op level with a
+   split objective means. A client applies the identical payload through the identical function.
+
+   Deliberately a SET rather than one marker, capped: "the objective" and "here are the five booths" are
+   both real, and a creator switching between them should not need a different verb. Same tag twice is
+   the same marker (it updates), so an interval that re-marks does not fill the cap. */
+const MARKER_MAX = 8, MARKER_EDGE = 34;   // how far off the screen edge a clamped arrow sits
+const MARKER_DEF_COL = '#ffd166';
+let _markers = [], _mkHost = null;
+/* One place, not a random one. `_lgPlaceAt` picks at RANDOM among props sharing a tag so a spawned squad
+   scatters (build 1394 recorded the distinction) — an arrow that points at a different crate every frame
+   is not a marker. Resolving the PROP rather than a point is also what makes it TRACK: a marker on a lift
+   rides it, and one on a prop the graph moves follows. */
+function _markerProp(tag){
+  if(!tag || typeof propModels==='undefined') return null;
+  for(const o of propModels){ if(o && o.parent && o.userData && o.userData.tag===tag) return o; }
+  return null;
+}
+function _markerSet(tag, text, color){
+  const t = String(tag==null?'':tag).trim();
+  if(!t) return false;
+  const prop = _markerProp(t);
+  const pt = prop ? null : (typeof _lgPlaceAt==='function' ? _lgPlaceAt(t) : null);
+  if(!prop && !pt){
+    if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "marker" action points at "'+t+'", but nothing in the level answers to it.');
+    return false;   // an arrow pointing nowhere is worse than no arrow
+  }
+  let m = null; for(const x of _markers){ if(x.tag===t){ m=x; break; } }
+  if(!m){
+    if(_markers.length >= MARKER_MAX){
+      if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "marker" action was refused: a level can show '+MARKER_MAX+' at once, and that many are already up.');
+      return false;
+    }
+    m = { tag:t, el:null }; _markers.push(m);
+  }
+  m.prop = prop; m.pt = pt;
+  m.text = String(text==null?'':text).slice(0, 40);
+  m.color = (/^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(String(color||''))) ? color : MARKER_DEF_COL;   // it lands in a style (build 1325/1411)
+  return true;
+}
+function _markerDrop(tag){
+  const t = String(tag==null?'':tag).trim();
+  for(let i=_markers.length-1;i>=0;i--){ if(!t || _markers[i].tag===t){ if(_markers[i].el && _markers[i].el.parentNode) _markers[i].el.parentNode.removeChild(_markers[i].el); _markers.splice(i,1); } }
+}
+function _markersClear(){ _markerDrop(''); }
+/* ONE applier, so a client and the host cannot come to different answers about the same payload. */
+function _applyMarker(mode, tag, text, color){
+  if(mode==='clear'){ _markersClear(); return true; }
+  if(mode==='hide'){ _markerDrop(tag); return true; }
+  return _markerSet(tag, text, color);
+}
+/* Drawn as DOM in the HUD, not as a sprite: an objective marker has to read THROUGH geometry (that is
+   what it is for), stay crisp at any distance, and clamp to the screen edge when the target is behind
+   you — all three of which a world-space sprite fights. */
+const _mkV = new THREE.Vector3();
+function _markerTick(){
+  if(!_markers.length) return;
+  /* Play only. A marker in the editor is noise over the thing being edited, and it is play state — the
+     deploy clears it beside the camera override (build 1404's rule). */
+  if((typeof editorOpen!=='undefined' && editorOpen) || !(typeof gameOn!=='undefined' && gameOn)){
+    for(const m of _markers) if(m.el) m.el.style.display='none';
+    return;
+  }
+  if(!_mkHost || !_mkHost.parentNode){
+    _mkHost = document.createElement('div'); _mkHost.id='objMarkers';
+    _mkHost.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:5;overflow:hidden;';
+    hud.appendChild(_mkHost);
+  }
+  const cam = (typeof activeCam==='function') ? activeCam() : camera;
+  const W = innerWidth, H = innerHeight, cx = W/2, cy = H/2;
+  for(const m of _markers){
+    /* re-resolve a destroyed prop by tag, exactly as the camera mount does (1404/1410) — and if the tag
+       has gone entirely, the marker goes with it rather than freezing over a corpse */
+    if(m.prop && !m.prop.parent) m.prop = _markerProp(m.tag);
+    /* The guard has to sit OUTSIDE the re-resolve, not inside it. Written inside, it covered the frame
+       the prop died on and not the NEXT one — by then `m.prop` is already null, the re-resolve is
+       skipped, and the static-point branch reads `m.pt.x` off null and takes the frame loop down with
+       it. The probe found this on its second drive; nothing in the Node suite could have. */
+    if(!m.prop && !m.pt){ if(m.el) m.el.style.display='none'; continue; }
+    if(m.prop) m.prop.getWorldPosition(_mkV); else _mkV.set(m.pt.x, m.pt.y, m.pt.z);
+    const dist = Math.hypot(_mkV.x-player.pos.x, _mkV.z-player.pos.z);
+    _mkV.y += 1.6;   // aim at the top of the thing, not its feet
+    _mkV.project(cam);
+    let sx = (_mkV.x*0.5+0.5)*W, sy = (-_mkV.y*0.5+0.5)*H;
+    /* BEHIND the camera, project() mirrors x and y — so a target at your back would draw on the wrong
+       side of the screen, pointing the player exactly the wrong way. Flip it back, then clamp. */
+    const behind = _mkV.z > 1;
+    if(behind){ sx = W - sx; sy = H - sy; }
+    let edge = behind;
+    if(sx < MARKER_EDGE || sx > W-MARKER_EDGE || sy < MARKER_EDGE || sy > H-MARKER_EDGE) edge = true;
+    if(edge){
+      /* clamp along the ray from screen centre, so the arrow sits where the target actually is */
+      let dx = sx-cx, dy = sy-cy;
+      if(!dx && !dy) dy = 1;
+      const sxr = (W/2 - MARKER_EDGE) / Math.max(1e-3, Math.abs(dx)), syr = (H/2 - MARKER_EDGE) / Math.max(1e-3, Math.abs(dy));
+      const k = Math.min(sxr, syr);
+      sx = cx + dx*k; sy = cy + dy*k;
+    }
+    if(!m.el){
+      m.el = document.createElement('div');
+      m.el.style.cssText='position:absolute;transform:translate(-50%,-50%);text-align:center;font:600 12px/1.15 system-ui,sans-serif;text-shadow:0 1px 3px rgba(0,0,0,0.9);white-space:nowrap;';
+      _mkHost.appendChild(m.el);
+      m.el._gl = document.createElement('div'); m.el.appendChild(m.el._gl);
+      m.el._tx = document.createElement('div'); m.el.appendChild(m.el._tx);
+    }
+    const label = (typeof _hwInterp==='function') ? _hwInterp(m.text) : String(m.text||'');
+    const glyph = edge ? '\u25b2' : '\u25c6';
+    /* textContent, never innerHTML: the label is level data and interpolates a variable (1325/1411) */
+    if(m.el._glW !== glyph+'|'+m.color){ m.el._gl.textContent = glyph; m.el._gl.style.cssText='font-size:15px;line-height:1;color:'+m.color+';'; m.el._glW = glyph+'|'+m.color; }
+    if(edge){
+      /* point the triangle AT the target. The glyph faces UP, so 0 rad is straight up and the angle is
+         measured from -Y — atan2(dx, -dy), not the usual atan2(dy, dx). */
+      m.el._gl.style.transform = 'rotate(' + Math.atan2(sx-cx, -(sy-cy)) + 'rad)';
+    } else if(m.el._gl.style.transform) m.el._gl.style.transform = '';
+    const line = label ? (label + '  ' + Math.round(dist) + 'm') : (Math.round(dist) + 'm');
+    if(m.el._txW !== line+'|'+m.color){ m.el._tx.textContent = line; m.el._tx.style.color = m.color; m.el._txW = line+'|'+m.color; }
+    m.el.style.display = '';
+    m.el.style.left = sx.toFixed(1)+'px';
+    m.el.style.top  = sy.toFixed(1)+'px';
+  }
+}
 // build 1404: the mounted camera. Reused scratch vectors, because this runs every frame (build 1168).
 const _vfP = new THREE.Vector3(), _vfQ = new THREE.Quaternion(), _vfD = new THREE.Vector3();
 function _viewCamYaw(){ camera.getWorldDirection(_vfD); return Math.atan2(-_vfD.x, -_vfD.z); }   // the engine's forward is (-sin yaw, -cos yaw)
 function _viewFixedPose(cam){
-  let m = _viewOv && _viewOv.mount;
-  /* the mount can be destroyed mid-round. Re-resolve by tag rather than holding a dead object — and if the
-     tag is gone entirely, drop the override so the player returns to the level's own camera instead of
+  const ov = _viewOv;
+  if(!ov) return;
+  /* build 1410: advance the bank. The clock is wall time, like the chase camera's own damping (build 894),
+     because a security camera cycles on seconds and not on frames — but a gap longer than a second is a
+     pause, a tab-back or a level load, NOT elapsed dwell, so it RE-BASES instead of cutting through the
+     backlog. Without that, unpausing after thirty seconds would flick through the whole bank in one frame. */
+  const _n = performance.now();
+  if(ov.dwell > 0){
+    if(_n - ov.last > 1000) ov.t0 = _n;
+    ov.last = _n;
+    /* Membership is re-resolved ON THE CUT and never per frame: this is an O(propModels) walk, and a cut is
+       exactly the moment a camera destroyed or spawned since the last one should join or leave the bank. */
+    if(_n - ov.t0 >= ov.dwell*1000){ ov.t0 = _n; ov.idx++; ov.mounts = null; }
+  }
+  let list = ov.mounts || (ov.mounts = _viewMountsFor(ov.tag));
+  let m = list.length ? list[((ov.idx % list.length) + list.length) % list.length] : null;
+  /* the mount can be destroyed mid-DWELL too. Re-resolve by tag rather than holding a dead object — and if
+     the tag is gone entirely, drop the override so the player returns to the level's own camera instead of
      staring at wherever the last frame left them. */
-  if(m && !m.parent) m = _viewOv.mount = _viewMountFor(_viewOv.tag);
+  if(m && !m.parent){
+    list = ov.mounts = _viewMountsFor(ov.tag);
+    m = list.length ? list[((ov.idx % list.length) + list.length) % list.length] : null;
+  }
   if(!m){ _viewOv = null; return; }
   /* WORLD position, so a camera mounted on a lift or a parented prop (build 1309) rides it */
   m.getWorldPosition(_vfP);
   cam.position.copy(_vfP);
-  if(_viewOv.track){ cam.lookAt(player.pos.x, player.pos.y - 0.2, player.pos.z); }
+  if(ov.track){ cam.lookAt(player.pos.x, player.pos.y - 0.2, player.pos.z); }
   else { m.getWorldQuaternion(_vfQ); cam.quaternion.copy(_vfQ); }   /* the prop's own facing IS the camera's — both are -Z forward (build 1394) */
   cam.updateMatrixWorld(true);
 }
@@ -29678,7 +30000,8 @@ function handleHostMsg(msg){
     if(msg.tp && typeof _lgPlacePlayer==='function') _lgPlacePlayer({ x:+msg.tp[0]||0, y:+msg.tp[1]||0, z:+msg.tp[2]||0 });
     if(msg.k) try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){}
     else if(msg.d>0) try{ applyEnemyDamageToSelf(+msg.d||0, null, null); }catch(e){}
-    if(msg.vw && typeof _setViewOverride==='function') try{ _setViewOverride(String(msg.vw[0]||''), String(msg.vw[1]||''), !!msg.vw[2]); }catch(e){}   // build 1404: the host's camera change lands here
+    if(msg.vw && typeof _setViewOverride==='function') try{ _setViewOverride(String(msg.vw[0]||''), String(msg.vw[1]||''), !!msg.vw[2], +msg.vw[3]||0); }catch(e){}
+    if(msg.mk && typeof _applyMarker==='function') try{ _applyMarker(String(msg.mk[0]||'show'), String(msg.mk[1]||''), String(msg.mk[2]||''), String(msg.mk[3]||'')); }catch(e){}   // build 1412   // build 1404: the host's camera change lands here (1410: the dwell rides along; a pre-1410 host sends none and the bank holds)
     if(msg.h>0){ player.hp=Math.min(player.maxHp, player.hp+(+msg.h||0)); if(typeof updateHUD==='function') updateHUD(); }
     if(msg.gi && typeof giveItem==='function') try{ giveItem(String(msg.gi[0]), +msg.gi[1]||1); }catch(e){}      // build 1074
     if(msg.ti && typeof takeItem==='function') try{ takeItem(String(msg.ti[0]), +msg.ti[1]||1); }catch(e){}
@@ -33496,7 +33819,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1409 · 2026-08-06';
+const BUILD_VERSION = 'build 1413 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34970,6 +35293,7 @@ const PRIM_SHAPES = [
   ['dome',     'Dome',     '\u25e0', 0],
   ['tube',     'Tube',     '\u25ce', 0],
   ['torus',    'Ring',     '\u25cb', 0],
+  ['sign',     'Sign',     '\u25a4', 1],   /* build 1411: common, because every room a creator builds wants a label */
 ];
 // build 1250 made the ambient emitters primitives; they were placeable from the Object panel and from
 // nowhere else. Same table treatment.
@@ -39220,7 +39544,7 @@ function loop(){
   }
   if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _lodTick==='function') _lodTick(); if(typeof _edPlayerPreviewTick==='function') _edPlayerPreviewTick(); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _signTick==='function') _signTick(); if(typeof _markerTick==='function') _markerTick(); if(typeof _lodTick==='function') _lodTick(); if(typeof _edPlayerPreviewTick==='function') _edPlayerPreviewTick(); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
@@ -41132,6 +41456,7 @@ const PRIM_ICON = {
   dome:     _svgIcon('<path d="M3 18a9 9 0 0 1 18 0"/><path d="M2 18h20"/>'),
   tube:     _svgIcon('<ellipse cx="12" cy="5.5" rx="6.5" ry="2.4"/><path d="M5.5 5.5v13M18.5 5.5v13"/><path d="M5.5 18.5a6.5 2.4 0 0 0 13 0"/><ellipse cx="12" cy="5.5" rx="3" ry="1.1"/>'),
   torus:    _svgIcon('<ellipse cx="12" cy="12" rx="9" ry="5"/><ellipse cx="12" cy="12" rx="3.6" ry="1.8"/>'),
+  sign:     _svgIcon('<rect x="3" y="5" width="18" height="11" rx="1.5"/><path d="M7 9.5h10M7 12.5h6"/><path d="M12 16v4"/>'),
 };
 const MODE_SECTIONS = {
   build:   ['gizmo','object','material','transform','prefabs'],
@@ -42472,6 +42797,7 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406 */
     if(p.snd>1) obj.userData.sigNeed=+p.snd;
     if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); }
+    if(p.sgn && obj.userData.sign){ obj.userData.sign=_signCfgSan(p.sgn); if(typeof _signRender==='function') _signRender(obj); }   /* build 1411: or duplicate/prefab/paste hands back a blank board (1162's defect) */
     if(p.xa) xaApply(obj, p.xa);
     if(p.j) jointApply(obj, p.j);
     if(p.veh) vehicleApply(obj, p.veh);
@@ -42773,6 +43099,7 @@ function propEntry(o){
   if(o.userData.lockId){ e.lk=o.userData.lockId; if(o.userData.lockConsume) e.lkc=1; }
   if(o.userData.tag) e.tg=o.userData.tag;
   if(o.userData.fx && o.userData.fx.cfg) e.fxc=_fxCfgSan(o.userData.fx.cfg);   /* build 1252: emitter overrides ride every path propEntry serves */
+  if(o.userData.sign) e.sgn=_signCfgSan(o.userData.sign);                      /* build 1411: what the sign SAYS is the whole prop */
   if(o.userData.groupId) e.gid=o.userData.groupId;   // build 798: prop group link
   if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,120).map(s=>String(s).slice(0,200));   // build 695 / 1076: NPC dialogue script
   if(o.userData.npcName) e.npc=String(o.userData.npcName).slice(0,40);
@@ -45625,6 +45952,23 @@ function _sigWorldRow(s, rerender){
     if(s.vmode==='fixed'){
       lab('tag'); txt('camera prop tag', s.vtag, v=>{ if(v) s.vtag=v; else delete s.vtag; }, 110, 'lgTagList');
       chk('follows the player', s.vtrack, v=>{ if(v) s.vtrack=1; else delete s.vtrack; });
+      /* build 1410: several props under one tag are a BANK. Blank holds on the first — the 1404 behaviour. */
+      lab('cut every'); txt('0 = hold', s.vdwell, v=>{ if(v) s.vdwell=v; else delete s.vdwell; }, 46);
+      /* build 1348's rule: a capability nobody can find is, for most creators, a capability that does
+         not exist. Nothing else in the product says that tagging a SECOND prop makes a camera bank. */
+      lab('s \u2014 tag several props to cut between them');
+    }
+    sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
+  } else if(s.do==='marker'){
+    /* build 1412: the arrow. `at` takes the same place vocabulary every other verb does, so a tag, `me`,
+       `start` or `#here` all work — and it INTERPOLATES (1402), so `booth{n}` points at the live one. */
+    sel([['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']], s.mkmode||'show', v=>{ s.mkmode=v; });
+    if((s.mkmode||'show')!=='clear'){
+      txt('place or tag', s.at, v=>{ if(v) s.at=v; else delete s.at; }, 110, 'lgPlaceList');
+      if((s.mkmode||'show')==='show'){
+        txt('label ({var} ok)', s.text, v=>{ if(v) s.text=v; else delete s.text; }, 130);
+        txt('#ffd166', s.mcol, v=>{ if(v) s.mcol=v; else delete s.mcol; }, 70);
+      }
     }
     sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
   } else if(s.do==='command'){
@@ -48843,6 +49187,58 @@ function renderEditorFields(){
             const rst=document.createElement('button'); rst.textContent='Reset'; rst.className='secBtn'; rst.style.cssText='font-size:11px;padding:2px 8px;';
             rst.onclick=()=>{ pushUndoSnapshot(); delete tagObj.userData.fx.cfg; if(typeof _fxReset==='function') _fxReset(tagObj); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
             cr.appendChild(cs); cr.appendChild(ci); cr.appendChild(rst); th.appendChild(cr);
+          }
+          /* build 1411: a sign says something, so the panel is the whole feature — a text prop with no
+             text field is a blank board. It sits here beside the emitter's controls for the same reason:
+             this is the fold that already knows which prop is selected. */
+          if(tagObj.userData.sign){
+            const sg=()=> tagObj.userData.sign;
+            const _sgDirty=()=>{ if(typeof _signRender==='function') _signRender(tagObj); if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+            const sh=document.createElement('div'); sh.className='hint'; sh.style.margin='4px 0 3px';
+            sh.innerHTML='<b>Sign</b>';
+            th.appendChild(sh);
+            const ta=document.createElement('textarea');
+            ta.value=String(sg().text||''); ta.rows=2; ta.maxLength=SIGN_TEXT_MAX;
+            ta.placeholder='SHOOTING RANGE\nHits: {score}';
+            ta.style.cssText='width:100%;box-sizing:border-box;resize:vertical;font:12px/1.35 system-ui,sans-serif;background:#05080b;color:#eafff7;border:1px solid #2a3a42;border-radius:4px;padding:4px 6px;';
+            ta.addEventListener('focus', ()=>pushUndoSnapshot());
+            /* `oninput`, not `onchange`: the panel is torn down and rebuilt constantly (build 1322), and
+               a creator typing wants to watch the board fill in. _signRender's own key check makes a
+               keystroke that changes nothing free. Group-wide, per build 1299 — thirty booth signs
+               reading the same thing is a real authoring move, and the banner above says which rule
+               this fold follows. */
+            ta.oninput=()=>{ _selApply(o=>{ if(o.userData.sign){ o.userData.sign.text=ta.value.slice(0,SIGN_TEXT_MAX); if(typeof _signRender==='function') _signRender(o); } }); };
+            th.appendChild(ta);
+            const sr=document.createElement('div'); sr.style.cssText='display:flex;gap:6px;align-items:center;margin:3px 0;flex-wrap:wrap;';
+            const _lab=(t,tip)=>{ const s=document.createElement('span'); s.textContent=t; if(tip) s.title=tip; s.style.cssText='font-size:11px;color:#9fe6cf;'; return s; };
+            const szi=document.createElement('input'); szi.type='number'; szi.min=8; szi.max=200; szi.step=2; szi.value=sg().size;
+            szi.style.cssText='width:52px;background:#05080b;color:#eafff7;border:1px solid #2a3a42;border-radius:4px;padding:2px 4px;font-size:11px;';
+            szi.title='Text size on the board. It is shrunk to fit rather than overflowing, so a long line stays readable.';
+            szi.addEventListener('focus', ()=>pushUndoSnapshot());
+            szi.onchange=()=>{ const v=Math.max(8,Math.min(200,+szi.value||64)); szi.value=v; _selApply(o=>{ if(o.userData.sign){ o.userData.sign.size=v; if(typeof _signRender==='function') _signRender(o); } }); };
+            const fci=document.createElement('input'); fci.type='color'; fci.value=_signColor(sg().color, SIGN_DEF.color);
+            fci.title='Text colour'; fci.style.cssText='width:38px;height:22px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#05080b;cursor:pointer;';
+            fci.addEventListener('mousedown', ()=>pushUndoSnapshot());
+            fci.oninput=()=>{ _selApply(o=>{ if(o.userData.sign){ o.userData.sign.color=fci.value; if(typeof _signRender==='function') _signRender(o); } }); };
+            const bci=document.createElement('input'); bci.type='color'; bci.value=_signColor(sg().bg, SIGN_DEF.bg);
+            bci.title='Board colour'; bci.style.cssText='width:38px;height:22px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#05080b;cursor:pointer;';
+            bci.addEventListener('mousedown', ()=>pushUndoSnapshot());
+            bci.oninput=()=>{ _selApply(o=>{ if(o.userData.sign){ o.userData.sign.bg=bci.value; if(typeof _signRender==='function') _signRender(o); } }); };
+            const bai=document.createElement('input'); bai.type='range'; bai.min=0; bai.max=1; bai.step=0.05; bai.value=sg().bga;
+            bai.title='Board opacity \u2014 0 leaves floating text with no board behind it'; bai.style.cssText='width:70px;';
+            bai.addEventListener('mousedown', ()=>pushUndoSnapshot());
+            bai.oninput=()=>{ _selApply(o=>{ if(o.userData.sign){ o.userData.sign.bga=+bai.value; if(typeof _signRender==='function') _signRender(o); } }); };
+            const ali=document.createElement('select'); ali.style.cssText='background:#05080b;color:#eafff7;border:1px solid #2a3a42;border-radius:4px;padding:2px 4px;font-size:11px;';
+            for(const a of SIGN_ALIGNS){ const op=document.createElement('option'); op.value=a; op.textContent=a; if(sg().align===a) op.selected=true; ali.appendChild(op); }
+            ali.onchange=()=>{ pushUndoSnapshot(); _selApply(o=>{ if(o.userData.sign){ o.userData.sign.align=ali.value; if(typeof _signRender==='function') _signRender(o); } }); };
+            sr.appendChild(_lab('Size')); sr.appendChild(szi);
+            sr.appendChild(_lab('Text')); sr.appendChild(fci);
+            sr.appendChild(_lab('Board')); sr.appendChild(bci); sr.appendChild(bai);
+            sr.appendChild(ali);
+            th.appendChild(sr);
+            const sn=document.createElement('div'); sn.className='hint'; sn.style.cssText='margin:0 0 6px;font-size:11px;';
+            sn.textContent='{name} shows a live logic variable \u2014 "Hits: {score}" is a scoreboard. The board reads mirrored from behind; place two back to back if both sides matter.';
+            th.appendChild(sn);
           }
 
         }
