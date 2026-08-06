@@ -12609,8 +12609,24 @@ function _persistResume(skipPos){
     if(typeof toast==='function') toast('Resumed at your checkpoint');
   }
 }
-function _persistSeed(){   // a match begins: the carried values become live variables again
-  for(const k of persistVars){ if(campaignVars[k]!=null) logicVars[k]=campaignVars[k]; }
+/* A match begins: the carried values become live variables again.
+
+   Build 1416 seeds from the CARRIED SET rather than from this level's own tick list, and the difference
+   only shows in a campaign whose rooms disagree. `persistVars` is level DATA — ticked in the Rules tab and
+   saved into that one file — so a gauntlet split one file per booth needed the same names ticked in every
+   room, and a room that forgot silently ended the run at its own door. Measured on three rooms where only
+   the first ticked `score` (tools/probe/campaign-carry.mjs): 12 -> null -> null, against a control where
+   every room ticked it and carried 12 -> 12 -> 12.
+
+   So the TICK now means "this room contributes its value forward" and the carried set is campaign-scoped.
+   `_persistCommit` already had the matching half — it writes only the ticked names and never deletes the
+   rest — so this is one line rather than a redesign.
+
+   It does NOT become "carry everything": `campaignVars` only ever contains names some room ticked, which
+   the probe checks with a variable no room ticked (it stays scratch). And a single-level game, or a
+   campaign whose rooms all tick the same names, is byte-identical — the two sets are the same set there. */
+function _persistSeed(){
+  for(const k in campaignVars){ if(campaignVars[k]!=null) logicVars[k]=campaignVars[k]; }
 }
 /* THIS LEVEL IS OVER: carry the live values forward. A retry never reaches here.
 
@@ -13952,10 +13968,13 @@ function _renderPersistUI(host){
   const h=document.createElement('div'); h.style.cssText='font-size:11px;color:#bfe4ff;font-weight:700;letter-spacing:0.4px;margin-bottom:3px;'; h.textContent='Values that carry over';
   wrap.appendChild(h);
   const hint=document.createElement('div'); hint.className='hint'; hint.style.cssText='font-size:10px;margin:0 0 6px;';
-  hint.innerHTML='Normally every variable resets when a level starts. Tick one here and it <b>survives into the next level</b> of the campaign — a running coin total, a quest stage, a shortcut you unlocked. It is saved when a level is <b>cleared</b>, so dying and retrying rewinds it to what it was when you walked in.';
+  /* build 1415 made a DOORWAY carry the run too, and build 1416 made the carried set campaign-scoped, so
+     this text says what the tick means now: it is what THIS room contributes, not a gate on what arrives. */
+  hint.innerHTML='Normally every variable resets when a level starts. Tick one here and this level <b>passes its value on</b> — a running coin total, a quest stage, a shortcut you unlocked. It is passed on when the level is <b>cleared</b> or when a <b>Go to level</b> door is taken, so dying and retrying rewinds it to what it was when you walked in. Anything the campaign is already carrying arrives here whether or not it is ticked, so a room you forgot to tick cannot end a run.';
   wrap.appendChild(hint);
   const names=(typeof _lgVarOptions==='function') ? _lgVarOptions() : [];
   for(const nm of persistVars) if(names.indexOf(nm)<0) names.push(nm);   // a name whose node was deleted still shows, so it can be un-ticked
+  for(const nm in campaignVars) if(names.indexOf(nm)<0) names.push(nm);   // build 1416: ...and one another ROOM ticked, which arrives here regardless — listing it unticked is the honest state, and the status line below says what it holds
   if(!names.length){
     const n=document.createElement('div'); n.className='hint'; n.style.fontSize='10px';
     n.textContent='No variables yet — add a Set variable node in the graph and its name appears here.';
@@ -33900,7 +33919,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1415 · 2026-08-06';
+const BUILD_VERSION = 'build 1416 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

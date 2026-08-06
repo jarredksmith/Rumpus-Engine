@@ -525,7 +525,8 @@ Opened from the editor's **Logic** tab → "Open logic graph". A full-screen nod
 
 ### Variables that carry over (persistence)
 In the Logic panel, every variable is listed with a checkbox:
-- **Ticked = survives into the next campaign level.** Saved when a level is CLEARED — dying and retrying rewinds to entry values.
+- **Ticked = this level passes its value on.** Passed on when the level is CLEARED *or* when a **Go to level** door is taken (build 1415) — dying and retrying rewinds to entry values.
+- **Anything the campaign is already carrying arrives here whether or not it is ticked** (build 1416), so a room you forgot to tick in cannot silently end a run. A name no room ever ticked stays per-level scratch.
 - **Also keep them between sessions** — browser-persisted so a returning player resumes.
   - **Carry the inventory too** (solo): keys/quest items/consumables come back; using an item saves.
   - **Resume at the last checkpoint** (solo): returning players continue; completing the game clears it.

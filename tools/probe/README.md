@@ -37,6 +37,7 @@ once by accident and removed in build 1293's follow-up.
 | `point-shadow-cost.mjs` | what a point-light shadow costs, in DRAW CALLS — the measurement build 1348 could not get to close (1414) |
 | `point-shadow-blocks.mjs` | that a wall actually blocks the lamp, on pixels, with shadow-off as the control (1414) |
 | `doorway-state.mjs` | whether a level-to-level DOORWAY carries the run — score, inventory, checkpoint (1415) |
+| `campaign-carry.mjs` | whether a carried value survives a room that never declared it (1416) |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.

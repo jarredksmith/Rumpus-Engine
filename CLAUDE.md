@@ -3318,6 +3318,47 @@ frame"* — and two supporting findings. Where each of them went:
 | the 1145/1379 procedural normal noise aliases with no AA to suppress it once MSAA sheds | **build 1383.** `_syncOdBump` indexes `_OD_BUMP_STEP` by `_prStepI`, so the relief fades down the adaptive ladder exactly as the critic suggested — by reference through one shared uniform (1181), so a rung change is one CPU write and recompiles nothing |
 | point lights still cannot cast shadows (29 of them around the stock spawn) | **build 1414**, after 1348 parked it on a broken instrument. See below |
 
+## The carried set belongs to the campaign, not to the file you ticked (build 1416)
+
+Build 1415's own probe hit this on its first run and reported a defect that did not exist, which is the
+strongest possible evidence a creator will hit it too.
+
+`persistVars` — the list of what carries between levels — is level DATA: ticked in the Rules tab, saved
+into that one file. A gauntlet is one file per booth, so the same names had to be ticked in **every room**,
+and a room that forgot ended the run at its own door with nothing said anywhere. Measured on three rooms
+where only the first ticks `score`, against a control where every room does
+(`tools/probe/campaign-carry.mjs`):
+
+```
+only room 1 ticks it     12  ->  null  ->  null
+every room ticks it      12  ->   12   ->   12      <- the control, i.e. build 1415 working
+```
+
+So the TICK now means *"this room passes its value on"* and the seed takes whatever the campaign is
+carrying. **`_persistCommit` already had the matching half** — it writes only the ticked names and never
+deletes the rest — which is why this is one line in `_persistSeed` rather than a redesign, and why the
+accumulate-across-rooms property is asserted by executing the commit rather than by reading it.
+
+Three things it is deliberately not:
+- **Not "carry everything".** `campaignVars` only ever contains names some room COMMITTED, so a scratch
+  variable stays scratch — checked both in the probe and by ticking a name that was never committed.
+- **Not a format change.** A single-level game, and a campaign whose rooms all tick the same names, are
+  byte-identical: the two sets are the same set there.
+- **Not silent.** The panel now LISTS a name another room ticked, unticked, beside the "carrying now:"
+  line that says what it holds — the honest state, since it arrives either way.
+
+**And build 1415 had left the panel's own text stale**, which is worth catching in the build that notices
+rather than the audit that eventually would: it still said the value *"is saved when a level is cleared"*,
+a sentence that stopped being the whole truth the moment a doorway started committing.
+
+### An instrument fault worth the line
+
+The probe's first run reported all three rooms declaring the carry in BOTH conditions — no trap, nothing
+measured. `serializeLevel()` reads the LIVE persist list, so a base captured after a previous run carries
+it into every clone. The fix is `delete r.persistVars` rather than merely not setting it. *A fixture cloned
+from live state inherits the thing you are trying to vary* — the same shape as build 1400's first probe,
+which restored the same level and proved nothing because nothing had cleared it.
+
 ## The doorway carried the gear and lost the run (build 1415)
 
 Found by asking what the gauntlet the user described actually needs — *"break out large rooms or levels

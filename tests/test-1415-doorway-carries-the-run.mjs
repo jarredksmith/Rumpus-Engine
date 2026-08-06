@@ -97,7 +97,9 @@ const src = gameSource();
 // real switch. These pin that the ends still exist to be wired.
 {
   const seed = extractFunction('_persistSeed');
-  assert(/for\(const k of persistVars\)\{ if\(campaignVars\[k\]!=null\) logicVars\[k\]=campaignVars\[k\]; \}/.test(seed),
+  // build 1416 widened WHICH names are seeded (the carried set, not this room's tick list). What 1415
+  // asserts here is unchanged and is the weaker half of it: the destination reads campaignVars at all.
+  assert(/campaignVars\[k\]!=null\) logicVars\[k\]=campaignVars\[k\]/.test(seed),
     'the destination seeds its variables from the carried set');
   const start = extractFunction('logicStart');
   const cl = start.indexOf('logicVars={}'), sd = start.indexOf('_persistSeed');
