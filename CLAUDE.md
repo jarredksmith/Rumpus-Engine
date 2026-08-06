@@ -3472,6 +3472,58 @@ which is precisely when the assertion becomes worth having. This file already re
 prose and pins *defeated* by prose; this is the third kind, where the message and the regex simply describe
 different things.
 
+## What a gauntlet-scale level costs, and one number nobody has explained (probe, after build 1420)
+
+959 varied props — eight shapes at varied scales and rotations, which is what a showcase level is made of
+and what defeats batching by colour. Draw calls and triangles, because wall-clock frame time under
+SwiftShader has a noise floor bigger than anything being measured (build 1348 lost a feature to that).
+Every row has a control that returns exactly. `tools/probe/gauntlet-scale.mjs`.
+
+```
+level              props   calls      tris  lights  colliders
+stock                 59     174      6694      35         61
++100                 159     418     44758      47        161
++500                 559     881    120562      97        561
++900                 959    1327    195010     147        961
+
+deployed (batched)   959     844    524582     147        961   <- what a PLAYER gets
+lodPx 2              959     574    466806     147        961
+lodPx 0 (control)    959     844    524582     147        961   <- returns exactly
+```
+
+Three things worth having:
+
+- **Cost is linear, at 1.14 draw calls per added prop.** Nothing is superlinear; the collider grid, the
+  spatial hash and the light budget all hold. A gauntlet-scale level is a big level, not a broken one.
+- **Instancing runs at DEPLOY, not while authoring.** Every un-deployed row above is the EDITOR's cost, not
+  the player's — measuring only that would have reported a price the shipped game never pays. Worth knowing
+  before judging any prop-count number in this engine.
+- **Screen-size culling is worth 57% of the draw calls on this level and is OFF by default** (build 1273
+  set `lodPx` to 0 after an unreproducible report). A creator building at this scale has a large lever they
+  have not been told about. `lodReport()` exists (1274) but says nothing when culling is off.
+
+### And the number I could not explain
+
+**Instancing cuts draw calls 36% and TRIPLES the triangles — 195,010 → 524,582.** Reproducible, with the
+control returning byte-exact.
+
+The obvious mechanism is build 1192's `frustumCulled = false` on every batch. That build set it
+deliberately and recorded the reason: three derives a mesh's bounding sphere from its ORIGINAL geometry,
+which for a batch is a unit box at the origin, so culling it would use the wrong bounds. The consequence,
+which 1192 did not measure, is that a batch spread across the map is never culled AT ALL — while the
+per-object props it replaced were frustum-culled individually.
+
+**I could not confirm it.** r149's `InstancedMesh` has `computeBoundingSphere()`, which accounts for the
+instance matrices, so the test was to compute it and enable culling. Every batch reported a bounding radius
+of **-1** — the method gave back nothing usable — and the triangle count did not move. So the run proves
+only that setting `frustumCulled = true` with no valid bounds changes nothing, which is not the question.
+
+Stated rather than guessed, because this file's worst builds are the ones that shipped a plausible
+mechanism instead of a measured one. What the next attempt needs is to find out WHY the bounding sphere
+comes back empty before touching the flag. And note the likely ceiling on the win: eight batches each
+spanning the whole field have spheres that cover everything, so correct bounds may cull nothing here —
+spatially local batches would be a different and much larger change.
+
 ## Two questions asked and answered NO (probe pass after build 1420)
 
 Both were pointed at the path a shipped gauntlet actually takes. Neither found a defect, and that is worth

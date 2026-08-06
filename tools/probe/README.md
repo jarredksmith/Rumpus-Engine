@@ -43,6 +43,7 @@ once by accident and removed in build 1293's follow-up.
 | `local-model-draco.mjs` | a dragged-in .glb gets Draco/KTX2/meshopt, and a codec failure retries (1419) |
 | `share-link-size.mjs` | how big a share link gets as a level grows — the codec is lossless, so size is the question |
 | `saved-level-boot.mjs` | does a saved level containing EVERY primitive boot? build 1331's rule, checked |
+| `gauntlet-scale.mjs` | what a 959-prop level costs in draw calls and triangles, batched and culled |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.
@@ -63,6 +64,10 @@ TOTAL — the counts climb monotonically through a sweep and keep climbing on th
 **Run the lint AFTER the last edit, not before the first.** A backtick inside a probe's page-code template
 closes the literal and Node reports it at an innocent line. It has now cost nine cycles, and build 1415's
 was in a comment added *after* a clean lint run.
+
+**Instancing runs at DEPLOY.** Any prop-count measurement taken without calling `buildInstancing()` is the
+EDITOR's cost, not the player's — 959 props read 1,327 draw calls un-deployed and 844 deployed. Measure the
+state the question is about.
 
 **A slice is only as good as BOTH of its ends.** Extracting the primitive table by running to a function
 name thousands of lines below it swept up 43 identifiers from unrelated objects. If a probe derives its own
