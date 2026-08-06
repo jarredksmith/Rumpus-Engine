@@ -32,6 +32,7 @@ once by accident and removed in build 1293's follow-up.
 | `sign-prop.mjs` | that a world sign actually DRAWS, and that a live one repaints (build 1411) |
 | `sign-boot-tdz.mjs` | that a SAVED level with a live sign still boots — `withGame(..., {savedLevel})` (1411) |
 | `objective-marker.mjs` | where an on-screen marker actually lands, including behind you (build 1412) |
+| `chase-pivot.mjs` | the third-person camera's height through the whole boom, per character (1413) |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.
@@ -50,6 +51,11 @@ so a `THREE.Object3D` either serialises to megabytes or throws.
 - **Read WHO before attributing anything to a surface.** A region picked by eye off a screenshot is a guess
   about geometry; raycast and print the mesh, its material and its `src` first.
 - **The first read after a state change can be stale.** Take several and look at whether they agree.
+- **`lint.mjs` was passing vacuously until build 1413.** Its opener required the page code's `(` to sit
+  immediately after the backtick, and every `DRIVE_RIG` probe puts it on the next line — so those files
+  were reported clean without being examined. Fixed both ways (whitespace tolerated; a literal it cannot
+  parse is now reported as NOT CHECKED rather than counted clean). If you change the shape a probe opens
+  its page code with, check the lint still finds it.
 - **`__drive` VIRTUALISES `performance.now()`.** drive.mjs installs a pure counter for the duration of a
   drive and restores the real clock on the way out, so anything the engine times off that clock — the
   camera bank's dwell, the chase camera's damping — only advances inside a drive. Sleeping in Node

@@ -28553,6 +28553,27 @@ function updateOwnAvatar(dt){
 const _TPP={ x:0, y:0, z:0 }, _TPF={ x:0, y:0, z:0, fx:0, fy:0, fz:0, px:0, py:0, pz:0 };
 // The point the camera orbits. Pivoting on the model's real centre is what keeps ANY model (short, tall,
 // offset) on the crosshair while it rotates in place instead of swinging around the reticle.
+/* build 1413: the pivot's HEIGHT is bounded by the PLAYER's own body, not by the art.
+   `centerLocal.y` is half the drawn model's height (and a hardcoded 1.0 for the stock capsule), so the
+   chase camera's sight line was a property of whichever character was equipped: measured at build 1290,
+   a 0.5 m creature gives 0.25 and a 4 m mech gives 2.0, against an EYE that is 1.7 whatever the model.
+   The same level therefore played with the camera at ankle height or two metres up depending on the
+   costume — and the fallback three lines below has ALWAYS derived from the player (EYE - 0.3), so the
+   two halves of one function disagreed about what the pivot is for.
+
+   This is build 1289's rule one function along: A GAMEPLAY QUANTITY MUST NEVER BE DERIVED FROM SOMETHING
+   ONLY THE RENDERER KNOWS. That build fixed the ledge hang, which read the drawn body's bounding box for
+   the COLLIDER's reach.
+
+   The bounds are the player's own hip and the top of their own head. Every model between 1.7 m and 3.7 m
+   tall is BYTE-IDENTICAL — every humanoid, and the stock capsule; outside it the camera was looking
+   along the floor or down from above the character it was meant to be behind.
+
+   And clamping Y is safe for a reason this function's own comment obscured: x and z are ROTATED by yaw,
+   so an offset there swings the model around the reticle as the camera turns and must be honoured. y is
+   a plain ADD — a vertical difference between the pivot and the model's centre is a constant screen
+   offset and can never become a swing. `test-1413` measures that over 720 headings rather than saying it. */
+const TP_PIVOT_MIN = EYE * 0.5, TP_PIVOT_MAX = EYE + 0.15;
 function _tpPivot(obj, base, yaw, footFallback){
   const cy=Math.cos(yaw), sy=Math.sin(yaw);
   const cl = obj && obj.userData && obj.userData.centerLocal;
@@ -28560,7 +28581,7 @@ function _tpPivot(obj, base, yaw, footFallback){
     const fY = (obj.userData.footY!=null) ? obj.userData.footY : footFallback;
     _TPP.x = base.x + cl.x*cy + cl.z*sy;
     _TPP.z = base.z - cl.x*sy + cl.z*cy;
-    _TPP.y = fY + cl.y;
+    _TPP.y = fY + Math.max(TP_PIVOT_MIN, Math.min(TP_PIVOT_MAX, cl.y));
   } else { _TPP.x=base.x; _TPP.y=base.y-0.3; _TPP.z=base.z; }   // fallback pivot: upper chest
   return _TPP;
 }
@@ -33798,7 +33819,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1412 · 2026-08-06';
+const BUILD_VERSION = 'build 1413 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

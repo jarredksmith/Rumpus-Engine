@@ -2909,6 +2909,97 @@ page-code template literal closes it, and Node reports "missing ) after argument
 It skips escaped backticks and nested `${...}` interpolation, and is controlled both ways: 123 probes clean,
 one injected backtick caught at the right line. **Run it before running a probe.**
 
+## The chase camera frames the player, not the costume (build 1413)
+
+Recorded with numbers at build 1290 and deferred there: `centerLocal.y` is **half the drawn model's
+height** (a hardcoded 1.0 for the stock capsule), and it is the third-person pivot — so the camera's
+height, and everything the player can see over, was a property of whichever character was equipped. A
+0.5 m creature gives 0.25 and a 4 m mech gives 2.0, against an `EYE` that is 1.7 whatever the model.
+
+This is **build 1289's rule one function along**: *a gameplay quantity must never be derived from
+something only the renderer knows.* That build fixed the ledge hang, which read the drawn body's bounding
+box for the COLLIDER's reach. And this function already knew better in its other half — the no-model
+fallback has always been `EYE - 0.3`, player-derived. The two halves disagreed about what the pivot is for.
+
+`TP_PIVOT_MIN = EYE * 0.5` and `TP_PIVOT_MAX = EYE + 0.15` — the player's own hip and the top of their
+own head. **Every model between 1.7 m and 3.7 m tall is byte-identical**, which is every humanoid and the
+stock capsule; outside it the camera was looking along the floor, or down at a character it was supposed
+to be behind.
+
+### Why clamping Y is safe and clamping X/Z would not be
+
+`_tpPivot`'s own comment says pivoting on the model's real centre *"keeps ANY model on the crosshair while
+it rotates in place instead of swinging around the reticle"* — and that is what stopped this being
+clamped for 120 builds. It is **true of x and z, which are ROTATED by yaw**, and **false of y, which is a
+plain add**: a vertical difference between the pivot and the model's centre is a constant screen offset
+and can never become a swing. `test-1413` measures it over 720 headings rather than restating it — x and
+z sweep the full diameter of the model's own horizontal offset, y is identical at every one.
+
+### Measured through the whole boom (`tools/probe/chase-pivot.mjs`, 12/12)
+
+`test-1413` drives `_tpPivot` in isolation; the probe drives `tpCameraPushback` — damping, tilt, collide —
+and reads `camera.position.y` off the real camera, which is the number a player experiences. The stock
+capsule is the control.
+
+```
+pivot above the avatar's own feet    humanoid 0.90 (untouched) · creature 0.25 -> 0.85 · mech 2.00 -> 1.85
+camera height, full boom             humanoid 0.98 vs stock 1.08 (within 15 cm)
+                                     creature 0.93 — no longer at ankle height
+                                     mech 1.93 vs a tall humanoid's 1.18 — bounded, not a stop above
+ordering                             0.93 < 0.98 < 1.93 — a bigger character still frames higher
+in frame                             the character's own centre projects inside the frame at all three
+```
+
+**The first probe run read every pivot 0.0801 too high, and the engine was right.** The pivot is
+`footY + clamped(cl.y)`, and `footY` is the avatar's own foot height — not zero, and not
+`player.pos.y - EYE`. Comparing a pivot to a bare bound compares two different origins. The tell was that
+all three readings were out by *exactly* the same amount.
+
+### What this does NOT close, stated rather than implied
+
+Build 1290 recorded two things: the pivot is derived from the art, and *"there is no authored control over
+it"*. This closes the first. The second is now much smaller and deliberately left: with the pivot bounded
+to the player's own body the spread across every humanoid a creator would equip is ~0.25 m, and `tpHeight`
+is a **parallel** camera offset (`tpCameraPushback` looks along the frame's own forward, not back at the
+pivot — asserted), so it absorbs that. A fifth framing slider would be a fifth value in `_sanitizeView` /
+`_snapshotView` / `_applyView` / `_loadPersonalView`, which is the hand-kept-list defect this file records
+more than any other, for a quarter of a metre a creator can already dial out.
+
+**Three pins moved, and one of them CRASHED rather than failing** — `test-1086` evaluates `_tpPivot` in an
+isolated scope, so a new module-level constant is genuinely missing there. It printed no PASS/FAIL line at
+all, so the summary said `1149/1151, 2 FAILED` with only ONE `FAIL` visible; `run-all` reports a crashed
+harness on a `stderr:` line, which is the thing to grep for when those two numbers disagree. Its rig lifts
+the bounds from source rather than restating them — and `extractConst` cannot read them, because both live
+on one `const` statement, so the whole declaration comes out by regex.
+
+**And half of another pin had been asserting the defect.** `test-214`'s quoted
+`_TPP.x = … && _TPP.z = … && _TPP.y = fY + cl.y` in one assertion called *"pivot rotates the local centre
+by yaw + sits at model-centre height"*. The first clause is byte-identical and still the thing that stops
+the model swinging around the reticle; the second was a pin ON the bug. They are two assertions now.
+
+## The probe lint had been passing vacuously (build 1413)
+
+`tools/probe/lint.mjs` exists because a backtick inside a probe's page-code template closes the literal and
+Node reports it at an innocent line — a trap recorded against builds 1328, 1342 and 1357. It has been run
+before every probe this session and **it was checking nothing.**
+
+Its opener required the page code's `(` to follow the backtick IMMEDIATELY. Every probe written against
+`DRIVE_RIG` opens `probe(DRIVE_RIG + \`` and puts `(function(){` on the **next line**, so the opener matched
+nothing, the walk never ran, and those files were reported CLEAN without being looked inside. It was found
+the only way it could be: by writing a probe with the fault in it, watching Node's parse error, and running
+the lint that had just called that file clean.
+
+**A checker that cannot find the thing it checks reports success, which is worse than not running it at
+all — because it is believed.** So the fix is two parts: the opener tolerates whitespace, and a file that
+hands a template literal to `probe()` whose page code the lint *cannot* find is now reported as
+**NOT CHECKED** rather than counted clean. Silence about a file it did not examine was the defect.
+
+Widening the opener then produced **four false positives** — probes that store their page code in a const
+and put the closing backtick on its own line, where `indexOf('})()\`')` misses and the walk runs past the
+real end and flags the CLOSING backtick. That is the other way for a checker to be useless, so the close is
+a regex over `})()` plus whitespace plus the backtick. Controlled both directions: a deliberately broken
+file still fires, and 136 real probes are clean.
+
 ## The level can point at where to go (build 1412)
 
 A level made of separate places — a fair with five booths, a hub with four doors, an objective across the
