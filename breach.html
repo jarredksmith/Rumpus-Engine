@@ -7015,7 +7015,6 @@ let _propSndAt = -1e9;
 function _propSndFresh(){ return performance.now() - _propSndAt < 80; }
 function playPropHitSound(obj, pt){
   if(!obj || !obj.userData || !obj.userData.hitSnd) return false;
-  if(obj.userData.breakable===false) return false;   // it takes no damage, so nothing landed on it
   const now = performance.now();
   /* An SMG fires every ~90 ms and a shotgun lands 8 pellets in ONE frame, so without a per-prop gap a
      single trigger pull starts eight copies of the same buffer at the same instant — which is not eight
@@ -31117,18 +31116,21 @@ function explodeAt(pos, R, dmg, byId){
      damage site here uses (`if(!damageProp(...)) pushDynamic(...)`), because a shattered prop's body is
      gone and its debris is its own system.
      `breakable:false` no longer skips the prop entirely: it means "cannot be damaged", not "is not made of
-     matter", so an unbreakable crate beside a grenade still goes flying. */
+     matter", so an unbreakable crate beside a grenade still goes flying.
+     Build 1421 narrowed it once more — to "cannot be DESTROYED" — so the ternary that used to route
+     around `damageProp` is gone: the blast registers on an unbreakable prop (flash, sound, `damaged`) and
+     `damageProp` itself is the one place that decides it does not break. */
   for(const o of dynamicProps.slice()){
     if(!o.userData || o.userData._shattered || !o.userData.phys) continue;
     const d=o.position.distanceTo(pos); if(!(d>0.01 && d<R)) continue;
     const f=1-d/R;
-    const broke = (o.userData.breakable===false) ? false : damageProp(o, dmg*f, null, null, 6, byId);
+    const broke = damageProp(o, dmg*f, null, null, 6, byId);
     if(!broke) _blastShoveProp(o, pos, R, f);
   }
   /* build 1390: static TARGETS are not in `dynamicProps`, so a grenade at the range would have left every
      plate standing while the crates beside them broke. Opt-in, so a level with none pays one flag test. */
   for(const o of propModels){ if(!o || !o.userData || !o.userData.shootable || o.userData.phys) continue;
-    if(o.userData._shattered || o.userData._destroyed || o.userData.breakable===false) continue;
+    if(o.userData._shattered || o.userData._destroyed) continue;
     const d=o.position.distanceTo(pos); if(d>0.01 && d<R) damageProp(o, dmg*(1-d/R), null, null, 6, byId); }
 }
 // ---------- Camera shake ----------
@@ -34003,7 +34005,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1420 · 2026-08-06';
+const BUILD_VERSION = 'build 1423 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36067,19 +36069,35 @@ function damageableProps(){          // reused array (build 1168): a swing must 
 // have made every wall in every level ever saved shootable. `shootable` defaults to undefined, so nothing
 // that exists today changes by one byte.
 function damageProp(obj, dmg, point, dir, power, byId){
-  if(obj.userData.breakable===false) return false;
   if(!obj.userData.phys && !obj.userData.shootable) return false;
+  /* build 1421: `breakable:false` means it never BREAKS — not that nothing lands on it.
+     Reported from play, one message after the range loop first worked: "if you don’t also have Breakable
+     toggled on, it doesn’t work." The first line here used to be `if(breakable===false) return false;`, so
+     unticking the box did not stop the plate SHATTERING, it stopped the plate REGISTERING: no impact flash,
+     no hit sound, and — the reported symptom — no `damaged` signal, which is build 1397’s whole
+     feature. And the checkbox beside it says "shatters when shot", so a creator who wants the one thing a
+     shooting range is made of (score every hit, the plate never disappears) switches the target off by
+     asking for it.
+
+     This is build 1405’s narrowing taken one step further, and the label has meant it all along: that
+     build moved `breakable:false` from "skip the prop entirely" to "cannot be damaged"; it now means
+     "cannot be DESTROYED". Damage LANDS — flash, sound, `damaged` — and the health simply never drops,
+     which is the truthful reading of invulnerable and keeps `#hpf` at 1 rather than counting down to a
+     death that can never arrive. Nothing that works today regresses: a `brk:false` prop could never fire
+     `damaged`, so no level can be relying on it, and the flash and the sound are feedback on a prop that
+     used to eat shots in silence. */
+  const _brk = obj.userData.breakable !== false;
   if(obj.userData.hp==null) obj.userData.hp = defaultHpFor(obj);
   // build 629: a fused explosive that isn't lit yet — the FIRST shot LIGHTS it (then it blows on its own fuse)
   // instead of taking the killing damage, so "shoot the barrel, watch it catch, and run" works even when the shot
   // would otherwise have destroyed it outright. Once lit, further shots fall through below and can pop it early.
-  if(obj.userData.explosive && (+obj.userData.fireFuse||0)>0 && !obj.userData._fireIgnited && obj.userData.hp>0 && typeof igniteProp==='function'){
+  if(_brk && obj.userData.explosive && (+obj.userData.fireFuse||0)>0 && !obj.userData._fireIgnited && obj.userData.hp>0 && typeof igniteProp==='function'){
     igniteProp(obj);
     obj.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive){ o.material.emissive.setHex(0x661a00); o.material.emissiveIntensity = Math.max(o.material.emissiveIntensity||0, 0.8); } });
     obj.userData._flash = performance.now();
     return false;
   }
-  obj.userData.hp -= dmg;
+  if(_brk) obj.userData.hp -= dmg;   /* build 1421: an unbreakable prop takes the hit and keeps its health */
   playPropHitSound(obj, point);   /* build 1305: damageProp is the one place a bullet, a swing, an explosion and a client's relayed propHit all pass through */
   // brief impact flash on the prop
   obj.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive){ o.material.emissive.setHex(0x661a00); o.material.emissiveIntensity = Math.max(o.material.emissiveIntensity||0, 0.8); } });
@@ -36095,7 +36113,7 @@ function damageProp(obj, dmg, point, dir, power, byId){
   if(typeof NET==='undefined' || NET.mode!=='client'){
     try{ _lgPropEvent(obj, 'damaged', _propCtx(obj)); }catch(e){}
   }
-  if(obj.userData.hp <= 0){ shatterProp(obj, point, dir, power, byId); return true; }
+  if(_brk && obj.userData.hp <= 0){ shatterProp(obj, point, dir, power, byId); return true; }
   return false;
 }
 // Step the simulation (fixed timestep) and sync dynamic meshes from their bodies. Host/solo only.
@@ -37745,9 +37763,20 @@ function placeExtraction(){
   extractZone.visible = true;
 }
 function _clearDestroyMarkers(){ for(const m of _destroyMarkers){ scene.remove(m); } _destroyMarkers.length=0; _destroyTotal=0; _destroyRemain=0; }
+/* build 1422: this walked `dynamicProps`, and build 1390’s static shootable target is not in that list.
+   So a plate a creator marked — in the editor, which offers the checkbox on it, and which build 1398 taught
+   the loader to restore — was authored, saved, reloaded, and INVISIBLE to the mission that consumes it. A
+   range whose targets are all bolted-down plates reads "NO TARGETS SET" and can never be won.
+   That is build 1392’s defect for the fifth time (the bullet walk, the turret walk, the melee block, then
+   1395’s flash decay), and it is exactly why `damageableProps()` is a function rather than an inline list:
+   the fix is to ask the thing that already answers "which props can be hurt".
+
+   The `breakable` term is NOT symmetry. An objective that can never be destroyed makes the mission
+   UNWINNABLE, which is a worse failure than not counting it — and build 1421 made an unbreakable prop take
+   hits forever, so without this a creator who unticks Breakable on a marked target locks the level. */
 function _setupDestroyTargets(){
   _clearDestroyMarkers();
-  for(const o of dynamicProps){ if(o && o.userData && o.userData.objective && !o.userData._shattered){
+  for(const o of damageableProps()){ if(o && o.userData && o.userData.objective && o.userData.breakable!==false && !o.userData._shattered){
     const m=new THREE.Mesh(new THREE.OctahedronGeometry(0.34), new THREE.MeshBasicMaterial({ color:0xff5b6b, transparent:true, opacity:0.92, depthWrite:false }));
     m.userData.prop=o; m.raycast=()=>{}; scene.add(m); _destroyMarkers.push(m);
   } }
@@ -45859,6 +45888,51 @@ function _edGoToIssue(resolve){
   if(typeof renderEditorFields==='function') renderEditorFields();
   return true;
 }
+/* build 1423: CAN THE OBJECTIVE ACTUALLY BE COMPLETED?
+   Level Check has told creators about lights, textures, missing models, third-party hosts, locks without
+   keys and the graph’s own last-run failures for a long time, and said NOTHING about the one setting that
+   decides whether the level can be finished at all. Three of the eight modes are silently unwinnable when
+   they are under-authored, and every one of them LOOKS fine in the editor:
+
+     destroy  `_destroyTotal>0 && remain<=0` is the win test, so with no usable target the HUD reads
+              "NO TARGETS SET" and the run has no ending. Runtime `spawnprop` cannot rescue it either —
+              `_setupDestroyTargets` runs once at deploy, so a level that starts with none stays at zero.
+     puzzle   nothing spawns and `objectiveTick` has no puzzle branch: the ONLY way to finish is a win
+              action a creator wired themselves. With none, the room is a walking simulator.
+     race     without a Start-line track piece `_raceStartO` is null, the lap counter never arms and the
+              race HUD hides itself.
+
+   These are reported, never refused (build 1282’s rule): the check is a heuristic and a creator may be
+   mid-build. What it must not do is stay quiet, because none of the three announces itself in play. */
+function _objectiveTargets(){   // the props a Destroy mission can actually finish on
+  const usable = [], marked = [];
+  for(const o of propModels){
+    if(!o || !o.userData || !o.userData.objective) continue;
+    marked.push(o);
+    if((o.userData.phys || o.userData.shootable) && o.userData.breakable !== false) usable.push(o);
+  }
+  return { usable, marked };
+}
+function _hasWinPath(){
+  /* Any authored way to END the room. `goto` counts: a campaign level whose exit is a doorway (build 1394)
+     is finished by loading the next one, and calling that "no win path" would false-positive on every
+     room of a multi-room game — which is exactly the shape this engine now encourages. */
+  try{
+    for(const n of (logicGraph.nodes||[])){
+      if(n.type==='win' || n.type==='goto') return true;
+      if(n.type==='do' && n.p && (n.p.verb==='win')) return true;
+    }
+  }catch(e){}
+  for(const o of propModels){
+    const sg = o && o.userData && o.userData.signals; if(!sg) continue;
+    for(const s of sg){ if(s && s.do==='win') return true; }
+  }
+  return false;
+}
+function _raceHasStart(){
+  for(const o of propModels){ const d = o && o.userData && TRACK_PIECES[o.userData.src]; if(d && d.start) return true; }
+  return false;
+}
 function levelIssues(){
   const issues=[]; _issueFind.clear();   /* build 1300: locators belong to THIS run of the check */
   try{
@@ -45944,6 +46018,25 @@ function levelIssues(){
     for(const lk of locks) if(!keys.has(lk)) issues.push('Something is locked with the '+keyDisplayName(lk)+', but no matching key pad is placed.');
     for(const k of keys) if(!locks.has(k)) issues.push('A '+keyDisplayName(k)+' pad is placed, but nothing is locked with it.');
     if(!pickupsOn && pickupSpots.length) issues.push('Pickups are turned off, but '+pickupSpots.length+' pickup spot'+(pickupSpots.length>1?'s are':' is')+' placed.');
+    /* build 1423: the objective, which nothing here has ever looked at */
+    { const mode = (typeof objectiveActive==='function') ? objectiveActive() : 'eliminate';
+      if(mode==='destroy'){
+        const t = _objectiveTargets();
+        if(!t.usable.length)
+          issues.push('The objective is Destroy, but nothing in this level is a target it can finish on'
+            + (t.marked.length ? ' \u2014 '+t.marked.length+' prop'+(t.marked.length>1?'s are':' is')+' marked Objective target but cannot be destroyed (each needs Dynamic or \ud83c\udfaf Shootable target, with Breakable ON).' : '. Tick \ud83c\udfaf Objective target on the props that must be destroyed \u2014 they need Dynamic or \ud83c\udfaf Shootable target first.')
+            + ' The run has no way to end: the HUD will read NO TARGETS SET.');
+        else if(t.marked.length > t.usable.length){
+          const n = t.marked.length - t.usable.length;
+          issues.push(_issueAt(n+' prop'+(n>1?'s are':' is')+' marked Objective target but cannot be destroyed, so '+(n>1?'they do':'it does')+' not count toward the Destroy objective (needs Dynamic or \ud83c\udfaf Shootable target, with Breakable ON).',
+            ()=>_objectiveTargets().marked.filter(o=>!((o.userData.phys||o.userData.shootable) && o.userData.breakable!==false))));
+        }
+      }
+      else if(mode==='puzzle' && !_hasWinPath())
+        issues.push('The objective is Puzzle, which spawns no enemies and ends only when you say so \u2014 and nothing in this level ends it. Add a Win level action (a prop signal, or a node in the logic graph), or a Go to level node if this room leads to another.');
+      else if(mode==='race' && !_raceHasStart())
+        issues.push('The objective is Race, but no Start line track piece is placed \u2014 the lap counter never arms and the race HUD stays hidden. Place one from the track builder.');
+    }
     audioZones.forEach((z,i)=>{ if(!(z.url||'').trim()) issues.push('Audio zone '+(i+1)+' has no sound URL.'); });
     { const _ccs=[cineCfg, ...((cineCfg&&Array.isArray(cineCfg.others))?cineCfg.others:[])];
       _ccs.forEach((cc,ci)=>{ if(!cc) return; const used = (ci===0) ? !!cc.on : true;   // #1 matters when it plays on deploy; extras exist to be played
@@ -48479,6 +48572,13 @@ function renderEditorFields(){
           brkcb.onchange=()=>{ pushUndoSnapshot(); sel.userData.breakable=brkcb.checked; renderEditorFields(); };
           const brksp=document.createElement('span'); brksp.innerHTML='<b>Breakable</b> — shatters when shot';
           brk.appendChild(brkcb); brk.appendChild(brksp); pdBody.appendChild(brk);
+          /* build 1421: the UNTICK was the trap. It reads as "does not shatter" and used to mean "takes no
+             damage at all", which silently switched off the On-hit signal on the one prop a range is made
+             of. It says what it does now, because a control whose consequence is invisible is one nobody
+             can use on purpose. */
+          const brkh=document.createElement('div'); brkh.className='hint'; brkh.style.marginTop='3px';
+          brkh.textContent = 'Untick it and shots still land \u2014 the impact, the hit sound and the On hit signal all fire \u2014 it just never breaks. That is the range-target setting: score every hit, the plate never disappears.';
+          pdBody.appendChild(brkh);
           if(sel.userData.breakable!==false){
             const objl=document.createElement('label'); objl.style.cssText='display:flex;align-items:center;gap:7px;color:#ff9bb0;font-size:12px;margin-top:8px;cursor:pointer;';
             const objcb=document.createElement('input'); objcb.type='checkbox'; objcb.checked=!!sel.userData.objective; objcb.style.accentColor='#ff5b6b';

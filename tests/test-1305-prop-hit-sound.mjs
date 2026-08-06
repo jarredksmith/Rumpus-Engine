@@ -50,11 +50,16 @@ const crate = (url) => ({ userData: url === undefined ? {} : { hitSnd: url }, po
   eq(fn({}, null), false, '...or one with no userData');
   eq(st.played.length, 0);
 }
-{ // an unbreakable prop takes no damage, so nothing landed on it
+{ // build 1421 INVERTED this one, and it was asserting the defect.
+  // It read "an unbreakable prop takes no damage, so nothing landed on it" — which was true of the
+  // engine and false of the label beside the checkbox. `breakable:false` now means "never BREAKS", so a
+  // shot does land on it and it sounds like the thing it is made of. What 1305 is actually about — the
+  // creator's own url, played once per hit at the contact point — is untouched, and is now reachable
+  // on the one prop a shooting range is made of.
   const { fn, st } = rig();
   const c = crate('wood.mp3'); c.userData.breakable = false;
-  eq(fn(c, null), false, 'an unbreakable prop is silent — damageProp returns before it takes a point of damage');
-  eq(st.played.length, 0);
+  eq(fn(c, null), true, 'an UNBREAKABLE prop sounds when it is hit (build 1421)');
+  eq(st.played.length, 1, '...exactly once');
 }
 { // AN EXPLOSION PASSES NO CONTACT POINT
   const { fn, st } = rig();

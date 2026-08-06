@@ -9,7 +9,12 @@ const ap = extractFunction('applyPropDynState');
 assert(/if\(p\.obj\) obj\.userData\.objective=true;/.test(ap), 'objective flag restored');
 // setup builds a beacon per target; startObjective hooks it
 const setup = extractFunction('_setupDestroyTargets');
-assert(/o\.userData\.objective && !o\.userData\._shattered/.test(setup) && /_destroyMarkers\.push\(m\)/.test(setup), 'beacon per live target');
+// build 1422 put `breakable!==false` between the two terms this used to quote adjacently (an objective
+// that can never be destroyed would make the mission unwinnable). The intent — a beacon per LIVE target
+// — is unchanged, and is asserted as the three conditions rather than as one contiguous string.
+assert(/o\.userData\.objective/.test(setup) && /!o\.userData\._shattered/.test(setup) &&
+       /o\.userData\.breakable!==false/.test(setup) && /_destroyMarkers\.push\(m\)/.test(setup),
+  'beacon per live target');
 const so = extractFunction('startObjective');
 assert(/objectiveActive\(\)==='destroy'\) _setupDestroyTargets\(\); else _clearDestroyMarkers\(\);/.test(so), 'startObjective sets up/tears down targets');
 // tick wins when all targets are gone

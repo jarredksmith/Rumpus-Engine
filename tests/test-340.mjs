@@ -20,7 +20,7 @@ const ig = extractFunction('igniteProp');
 assert(/o\.userData\._fireIgnited=true/.test(ig), 'igniteProp marks the prop lit');
 assert(/o\.userData\.explosive && \(\+o\.userData\.fireFuse\|\|0\)>0 && o\.userData\._fireFuseT==null\) o\.userData\._fireFuseT=\+o\.userData\.fireFuse/.test(ig), 'a fused explosive arms its fuse on ignition');
 const dp = extractFunction('damageProp');
-assert(/obj\.userData\.explosive && \(\+obj\.userData\.fireFuse\|\|0\)>0 && !obj\.userData\._fireIgnited && obj\.userData\.hp>0 && typeof igniteProp==='function'\)\{\s*igniteProp\(obj\);[\s\S]*?return false;\s*\}\s*obj\.userData\.hp -= dmg;/.test(dp), 'shooting a fused explosive LIGHTS it and it survives (the fuse becomes the timer) instead of taking the killing damage');
+assert(/obj\.userData\.explosive && \(\+obj\.userData\.fireFuse\|\|0\)>0 && !obj\.userData\._fireIgnited && obj\.userData\.hp>0 && typeof igniteProp==='function'\)\{\s*igniteProp\(obj\);[\s\S]*?return false;\s*\}\s*if\(_brk\) obj\.userData\.hp -= dmg;/.test(dp), 'shooting a fused explosive LIGHTS it and it survives (the fuse becomes the timer) instead of taking the killing damage — build 1421 gated that line on _brk, so an unbreakable one never lights at all');
 const rd = extractFunction('resetDynamicProps');
 assert(/resetPropFires\(\)/.test(rd), 'authored fires re-light on each deploy');
 const sp = extractFunction('shatterProp');

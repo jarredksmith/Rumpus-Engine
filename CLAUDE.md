@@ -1712,6 +1712,185 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The level check never asked whether the level could be won (build 1423)
+
+Level Check has reported lights, texture memory, missing models, third-party hosts, locks without keys and
+the graph's own last-run failures for a long time. It said **nothing about the one setting that decides
+whether the level can be finished at all** — and three of the eight objective modes are silently unwinnable
+when under-authored. None of the three announces itself in play:
+
+| mode | why it cannot be won | what the player sees |
+|---|---|---|
+| **destroy** | the win test is `_destroyTotal>0 && remain<=0` | the HUD reads `NO TARGETS SET` and the run has no ending |
+| **puzzle** | nothing spawns and `objectiveTick` has **no puzzle branch** — an authored win action is the only exit | a walking simulator |
+| **race** | with no Start-line piece `_raceStartO` is null | the lap never arms and the race HUD hides itself |
+
+**Runtime spawning cannot rescue the Destroy case, which is why it is a hard statement rather than a
+guess:** `_setupDestroyTargets` runs once at deploy, so a level that starts with zero usable targets stays
+at zero however many the graph spawns later.
+
+### `goto` counts as a win path, and that decision is load-bearing
+
+A campaign room whose exit is a doorway (build 1394) is finished by loading the next one. Treating only
+`win` as an ending would have fired this row on **every room of a multi-room game** — which is exactly the
+shape this engine now encourages, and exactly what the gauntlet being built against it is made of. A false
+positive on the commonest structure would have trained the panel out of being read.
+
+The Destroy check also reports the *mixed* case — targets marked but unusable while others work — as a
+**clickable** row (build 1300), because there is a specific prop to go and fix. The level-wide cases have
+nothing to point at and stay plain, which is 1300's own rule.
+
+**Five modes are deliberately never mentioned.** `eliminate`, `survival`, `extraction`, `defend` and
+`escort` all provision themselves, and a panel that always complains is not read (1274). The test asserts
+their ABSENCE rather than trusting it.
+
+### The first draft wrote markup into a text node
+
+The rows were written with `<b>` around every control name — and `renderLevelIssues` sets `d.textContent =
+msg`. It would have printed literal `<b>` tags in the panel. `textContent` is not an oversight there and
+must not be "fixed": other rows interpolate level-authored strings (key names, audio-zone names, hostnames
+— builds 1325 and 1335), so markup in a message is a stored-XSS shaped hole. Caught by reading the renderer
+before believing the writer, and `test-1423` now pins both halves — the renderer sets text, and these rows
+carry no markup.
+
+**And the probe measured the PANEL, not just the check.** `levelIssues()` returning the right string and
+the creator being able to read it are two different claims; the first draft's markup bug lives entirely in
+the gap between them. The panel row needed the editor opened and switched to the Save tab first, because
+build 1293 does not build a section that is not on screen.
+
+Measured (`tools/probe/objective-check.mjs`, 13/13), with a correctly authored level of the same mode as
+the control at every step:
+
+```
+destroy, nothing marked    reported, naming NO TARGETS SET
+destroy, one real target   SILENT                                  <- the control
+destroy, unbreakable only  reported as unusable (build 1421)
+destroy, one good one bad  the unusable one only, and clickable
+puzzle, no win path        reported · a win node / goto / signal each silence it
+race, no start line        reported
+eliminate/survival/extraction/defend/escort   silent on a bare level
+rendered panel             1 row, as prose, no literal tags
+```
+
+One pin moved (1300), which counts how many rows are CLICKABLE — seven to eight. That count is worth
+keeping exactly rather than loosening: it is what stops a future build making every row clickable, and this
+build's own rule is that a level-wide issue with nowhere to send you stays a plain row.
+
+## The Destroy mission could not see the targets (build 1422)
+
+Found by sweeping for siblings of 1421 rather than waiting for a report, and it is the **fifth** arrival of
+build 1392's defect. `_setupDestroyTargets` walked `dynamicProps` — and build 1390's static shootable target
+is not in that list.
+
+Every other part of the chain was already right, which is exactly what made it invisible: the editor offers
+the **Objective target** checkbox on a static target, `propEntry` writes `obj:1` for it, and build 1398
+taught the loader to restore it in the damageable tier. So the flag was authored, saved, reloaded — and the
+one function that consumes it never looked. **A range whose targets are all bolted-down plates reads
+`NO TARGETS SET` and can never be won.**
+
+```
+                       before          after
+props carrying `objective`   3               3
+tracked by the mission       1 (crate)       2 (crate, plate)
+an UNBREAKABLE objective     not tracked     not tracked
+```
+
+The fix is `damageableProps()`, and that is the whole point of 1392 making it a function rather than three
+inline conditions: the repair is to ask the thing that already answers *"which props can be hurt"*.
+
+**The `breakable` term is not symmetry.** An objective that can never be destroyed makes the mission
+**unwinnable**, which is a worse failure than not counting it — and build 1421 had just made an unbreakable
+prop take hits forever, so a creator unticking Breakable on a marked target would have locked the level. One
+build creating the hazard the next must close, two hours apart, for the second time this stretch (1390/1391).
+
+### A passing check that passed for the wrong reason
+
+The probe's *"an unbreakable objective is NOT tracked"* row was **green before the fix** — because the wall
+was static, so the `dynamicProps` walk excluded it for a reason that had nothing to do with `breakable`. It
+is green after the fix for the intended reason. That is the vacuous-pass family this file records under
+builds 1316 and 1390 (*before believing a null, prove the instrument can produce a positive*), in its
+quieter form: **a green check on a fixture the code rejects for an unrelated reason is not evidence.** The
+only thing that distinguished them was the control beside it moving.
+
+`test-1422` executes the real set-up loop over props of both kinds with `damageableProps` supplied as the
+real predicate, so it tests the ROUTING rather than a copy of it — build 1277's rule. One pin moved (218), which quoted the two terms ADJACENTLY and broke when the new one landed between them, with every part of what it meant still true — the same neighbourhood-quoting trap this file records for character budgets and whole-list literals, in its narrowest form yet: two conditions with an `&&` between them.
+
+### And I did it to this file, with a `sed`
+
+The one-line note above was appended with an unanchored `sed 's|Zero pins moved\.|...|'` — a phrase that
+appears in **more than one entry**, so it also rewrote build 1367's. Caught by `grep -c` returning 2 for a
+replacement that should have been unique, and reverted by line number. The scripted-edit convention this
+file prescribes for source (assert the match count, write atomically) exists for exactly this and I did not
+apply it to prose. **A bare-phrase replacement is only as safe as that phrase is unique — including in
+documentation, where boilerplate sentences repeat by design.**
+
+## The checkbox that turned the target off by asking for it (build 1421)
+
+Reported from play, one message after the shooting-range loop first worked end to end: *"if you don't also
+have Breakable toggled on, it doesn't work."*
+
+`damageProp` opened `if(obj.userData.breakable===false) return false;`. So unticking **Breakable** did not
+stop the plate SHATTERING — it stopped the plate REGISTERING: no health change, no impact flash, no hit
+sound, and no `damaged` signal, which is build 1397's entire feature. And the label beside it reads
+*"shatters when shot"*, so **a creator who wants the one thing a shooting range is made of — score every
+hit, the plate never disappears — switches their target off by asking for it.**
+
+**Five call sites read the flag and all five treated it as immunity**: `damageProp`, `playPropHitSound`,
+both `explodeAt` sweeps, and the restore. It is now ONE rule — *never BREAKS* — read once into a local and
+gating exactly three things: the health, the shatter, and the fuse.
+
+### It is build 1405's narrowing taken one step further
+
+That build moved `breakable:false` from *"skip the prop entirely"* to *"cannot be damaged"* so an
+unbreakable crate beside a grenade still goes flying. This moves it to *"cannot be DESTROYED"*, which is
+what the label has said all along. The health **never drops** rather than draining to a death that can
+never arrive — the truthful reading of invulnerable, and it keeps `#hpf` at 1 for a graph that reads it.
+
+**Nothing that works today regresses, and that is checkable rather than hopeful:** a `brk:false` prop could
+never fire `damaged`, so no level can be relying on it; the flash and the hit sound are feedback on a prop
+that used to eat shots in silence. The serializer is untouched (`brk:false` is still written only when off).
+
+**The fuse is gated too, and that one is not symmetry.** Igniting is how a fused explosive destroys itself,
+so an unbreakable one must never light — otherwise "cannot be destroyed" would be defeated by the one
+branch that returns before the damage.
+
+### Measured, with the same plate as its own control
+
+`tools/probe/unbreakable-target.mjs` — two plates identical but for the one flag, each wired the way a
+creator wires one: prop signal `On hit` → `→ Logic event` → `On event` → `Change variable score +1`.
+
+```
+                    unbreakable                       breakable (control)
+before   3 hits     score 0   hp 100  no flash        score 3   hp 70   flash
+         +30 hits   score 0   hp 100  standing        score 33  shattered
+         a grenade  score 0                           —
+after    3 hits     score 3   hp 100  flash           score 3   hp 70   flash        <- control byte-identical
+         +30 hits   score 33  hp 100  STILL STANDING  score 33  shattered
+         a grenade  score 1   not destroyed
+```
+
+The control is what makes it a finding rather than a broken instrument: a run where neither plate scores is
+the rig, and a run where only the unbreakable one fails is the defect.
+
+### The untick now says what it does
+
+The trap was never the checkbox, it was its **absence of a stated consequence** — it reads as "does not
+shatter" and meant "takes no damage at all". A hint under it names all three things that still fire and the
+case it is for. A control whose consequence is invisible is one nobody can use on purpose (1348's rule).
+
+### A pin defeated by prose THREE TIMES in one build
+
+Once in my own new test (`!/breakable/` matched `playPropHitSound`'s own comment about *"every breakable
+prop in its radius"*), and once in the moved `test-1390` pin (`!/breakable===false\) return false;/` matched
+this build's comment **quoting the line it had just deleted**). Builds 164, 1393, 1395, 1411 and 1412 all
+record this in one direction or the other, and it is now unambiguous: **a pin must match a real STATEMENT —
+`obj.userData.breakable===false`, not the bare phrase — because the most likely thing to collide with a
+source pin is the build's own documentation of what it removed.**
+
+Six pins moved (1305, 1390 ×4, 1405, 482, 340, and my own). Two of them had their assertions **inverted**
+rather than restated, because both were pinning a consequence of the defect: test-1305's *"an unbreakable
+prop is silent"* and test-1390's *"an explicit `breakable:false` still refuses everything"*.
+
 ## The feature shipped switched on and inert (build 1392)
 
 Reported from play, against build 1390, with a screenshot of the panel filled in correctly: *"This isn't
