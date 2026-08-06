@@ -34005,7 +34005,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1421 · 2026-08-06';
+const BUILD_VERSION = 'build 1422 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37763,9 +37763,20 @@ function placeExtraction(){
   extractZone.visible = true;
 }
 function _clearDestroyMarkers(){ for(const m of _destroyMarkers){ scene.remove(m); } _destroyMarkers.length=0; _destroyTotal=0; _destroyRemain=0; }
+/* build 1422: this walked `dynamicProps`, and build 1390’s static shootable target is not in that list.
+   So a plate a creator marked — in the editor, which offers the checkbox on it, and which build 1398 taught
+   the loader to restore — was authored, saved, reloaded, and INVISIBLE to the mission that consumes it. A
+   range whose targets are all bolted-down plates reads "NO TARGETS SET" and can never be won.
+   That is build 1392’s defect for the fifth time (the bullet walk, the turret walk, the melee block, then
+   1395’s flash decay), and it is exactly why `damageableProps()` is a function rather than an inline list:
+   the fix is to ask the thing that already answers "which props can be hurt".
+
+   The `breakable` term is NOT symmetry. An objective that can never be destroyed makes the mission
+   UNWINNABLE, which is a worse failure than not counting it — and build 1421 made an unbreakable prop take
+   hits forever, so without this a creator who unticks Breakable on a marked target locks the level. */
 function _setupDestroyTargets(){
   _clearDestroyMarkers();
-  for(const o of dynamicProps){ if(o && o.userData && o.userData.objective && !o.userData._shattered){
+  for(const o of damageableProps()){ if(o && o.userData && o.userData.objective && o.userData.breakable!==false && !o.userData._shattered){
     const m=new THREE.Mesh(new THREE.OctahedronGeometry(0.34), new THREE.MeshBasicMaterial({ color:0xff5b6b, transparent:true, opacity:0.92, depthWrite:false }));
     m.userData.prop=o; m.raycast=()=>{}; scene.add(m); _destroyMarkers.push(m);
   } }

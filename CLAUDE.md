@@ -1712,6 +1712,54 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The Destroy mission could not see the targets (build 1422)
+
+Found by sweeping for siblings of 1421 rather than waiting for a report, and it is the **fifth** arrival of
+build 1392's defect. `_setupDestroyTargets` walked `dynamicProps` — and build 1390's static shootable target
+is not in that list.
+
+Every other part of the chain was already right, which is exactly what made it invisible: the editor offers
+the **Objective target** checkbox on a static target, `propEntry` writes `obj:1` for it, and build 1398
+taught the loader to restore it in the damageable tier. So the flag was authored, saved, reloaded — and the
+one function that consumes it never looked. **A range whose targets are all bolted-down plates reads
+`NO TARGETS SET` and can never be won.**
+
+```
+                       before          after
+props carrying `objective`   3               3
+tracked by the mission       1 (crate)       2 (crate, plate)
+an UNBREAKABLE objective     not tracked     not tracked
+```
+
+The fix is `damageableProps()`, and that is the whole point of 1392 making it a function rather than three
+inline conditions: the repair is to ask the thing that already answers *"which props can be hurt"*.
+
+**The `breakable` term is not symmetry.** An objective that can never be destroyed makes the mission
+**unwinnable**, which is a worse failure than not counting it — and build 1421 had just made an unbreakable
+prop take hits forever, so a creator unticking Breakable on a marked target would have locked the level. One
+build creating the hazard the next must close, two hours apart, for the second time this stretch (1390/1391).
+
+### A passing check that passed for the wrong reason
+
+The probe's *"an unbreakable objective is NOT tracked"* row was **green before the fix** — because the wall
+was static, so the `dynamicProps` walk excluded it for a reason that had nothing to do with `breakable`. It
+is green after the fix for the intended reason. That is the vacuous-pass family this file records under
+builds 1316 and 1390 (*before believing a null, prove the instrument can produce a positive*), in its
+quieter form: **a green check on a fixture the code rejects for an unrelated reason is not evidence.** The
+only thing that distinguished them was the control beside it moving.
+
+`test-1422` executes the real set-up loop over props of both kinds with `damageableProps` supplied as the
+real predicate, so it tests the ROUTING rather than a copy of it — build 1277's rule. One pin moved (218), which quoted the two terms ADJACENTLY and broke when the new one landed between them, with every part of what it meant still true — the same neighbourhood-quoting trap this file records for character budgets and whole-list literals, in its narrowest form yet: two conditions with an `&&` between them.
+
+### And I did it to this file, with a `sed`
+
+The one-line note above was appended with an unanchored `sed 's|Zero pins moved\.|...|'` — a phrase that
+appears in **more than one entry**, so it also rewrote build 1367's. Caught by `grep -c` returning 2 for a
+replacement that should have been unique, and reverted by line number. The scripted-edit convention this
+file prescribes for source (assert the match count, write atomically) exists for exactly this and I did not
+apply it to prose. **A bare-phrase replacement is only as safe as that phrase is unique — including in
+documentation, where boilerplate sentences repeat by design.**
+
 ## The checkbox that turned the target off by asking for it (build 1421)
 
 Reported from play, one message after the shooting-range loop first worked end to end: *"if you don't also
