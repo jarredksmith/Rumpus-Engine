@@ -1712,6 +1712,75 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## Half a million triangles, and the one tool that could fix it was broken (build 1424)
+
+Reported from play with two screenshots and a .glb: *"the FPS is all over the place and almost unplayable.
+If you jump over, or land on, or come in contact with one of these props, the game basically freezes."*
+
+**The model is 497,912 triangles.** A wooden ramp. Draco-compressed to 1.72 MB, which is the entire trap:
+the file looks like nothing and decompresses to half a million triangles. The reporter's own perf HUD had
+already ruled out the renderer and nobody had read it that way:
+
+```
+FPS 68 (14.6 ms)   render 1.5   phys 0.1   other 13.0   draws  61   tris 15,386k   rung 3 fxOff 66% of native
+FPS 60 (16.7 ms)   render 1.3   phys 0.1   other 15.3   draws 102   tris 29,993k   rung 0 MSAA x4
+```
+
+**Thirty million triangles a frame, at 102 draw calls** — ~294,000 triangles per call, which is the
+signature of a scene built from half-million-triangle props. `other` is total frame time minus render,
+phys, net and minimap, and `render` is the CPU time to QUEUE the draws; the GPU work is asynchronous, so
+the wait lands in `other`. 13-15 ms of a 14.6-16.7 ms frame was the CPU waiting on the GPU. And the two
+shots sit on opposite ends of the adaptive ladder (rung 3 at 15M, rung 0 at 30M), which is exactly what
+*"all over the place"* means: the ladder oscillating as the camera turns and different props enter frame.
+
+**This inverts the general ranking, and that is worth stating plainly** because I had just given the
+opposite advice: draw calls dominate for sanely-built content, and 61-102 draws is nothing. At 30M
+triangles the triangle count IS the frame. Both are true; they live in different regimes, and the file size
+gives no warning about which one you are in.
+
+### The costs that scale with triangles, measured
+
+`tools/probe/heavy-model.mjs`. The reported .glb cannot be loaded here (Draco needs a decoder from a CDN
+this sandbox blocks), so the mesh is SYNTHESIZED at three triangle counts — which is the right measurand
+anyway: the question is what the engine does with half a million triangles.
+
+```
+triangles      refreshPropCollider     Rapier static trimesh
+   497,912           163.9 ms                 625.7 ms
+    40,000            21.8 ms                  60.6 ms
+     2,000             0.9 ms                   2.7 ms
+```
+
+Both linear. **625 ms to build ONE static physics body** is the number that best matches "touching it
+freezes the game", though the CONTACT cost itself was not isolated — the synthesized slab merged into a
+single collider box, so the near-vs-far query comparison it produced is meaningless and is not quoted.
+Recorded as an unproven mechanism rather than dressed up as a finding.
+
+### And the built-in fix could not run on exactly these models
+
+The same session produced `[KHR_draco_mesh_compression] Please install extension dependency,
+"draco3d.encoder"`. Build 988 loaded the draco DECODER so the optimizer could READ a Draco input and
+stopped there — gltf-transform keeps the extension attached to the document it read and its `write()` then
+demands the ENCODER. So the bake read the model, simplified it, shrank its textures, and **threw at the
+last step**. The worst possible place to fail: the models that most need the optimizer are exactly the
+heavy ones people ship Draco-compressed, and `MOBILE_TRI_BUDGET` is 40,000 — a 92% cut on this ramp.
+
+`_dropDracoForWrite(doc)` disposes the extension after the read, at both repack sites (the mobile bake and
+the part editor). **Dropping it rather than loading a second wasm is a decision, not a shortcut:** this
+optimizer's output format is MESHOPT, which the game has decoded everywhere since build 918. Re-encoding
+Draco on the way out would spend another megabyte of decoder on a compression the engine would rather not
+receive, and would leave the failure one CDN outage away from returning. Geometry is not lost — the read
+already decoded every Draco primitive into plain accessors; what is disposed is the write-time instruction.
+
+Only Draco is dropped. `KHR_materials_unlit` and `EXT_texture_webp` are the model's own and dropping them
+would change what it LOOKS like rather than how it is packed; `EXT_meshopt_compression` is what this bake
+writes. All three asserted by execution.
+
+**NOT VERIFIED IN THIS SANDBOX, and stated rather than implied.** gltf-transform exists only behind a CDN
+here, so `test-1424` executes the helper against a fake document and pins the wiring, and the end-to-end
+repack needs a browser. The mechanism is the documented one and the failure mode of a wrong guess is the
+same error the creator already has.
+
 ## The booth survives a save (probe pass, after build 1423)
 
 `range-booth.mjs` has built the gauntlet's shooting range in memory and driven it with shots since build
