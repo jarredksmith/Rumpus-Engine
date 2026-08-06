@@ -60,6 +60,10 @@ export async function withGame(fn, opts = {}) {
     // build 1335: the third-party block is read at PARSE time from localStorage, so it can only be set
     // before the document loads — an init script is the only place a probe can turn it on.
     if (opts.initBlock != null) await page.addInitScript((v) => { try { localStorage.setItem('breach_tpblock', v ? '1' : '0'); } catch (e) {} }, opts.initBlock);
+    /* build 1411: seed a SAVED LEVEL before the game script evaluates. `loadHostedProps()` runs at
+       module level and builds those props during boot, so this is the only way to probe what a saved
+       level does to the boot path (build 1331's whole subject). */
+    if (opts.savedLevel != null) await page.addInitScript((v) => { try { localStorage.setItem('breach_level_v1', v); } catch (e) {} }, JSON.stringify(opts.savedLevel));
     page.on('pageerror', e => console.log('[ERR]', e.message));
     if (opts.console) page.on('console', m => console.log('[c]', m.type(), m.text()));
     await new Promise(r => setTimeout(r, 1200));

@@ -2909,6 +2909,140 @@ page-code template literal closes it, and Node reports "missing ) after argument
 It skips escaped backticks and nested `${...}` interpolation, and is controlled both ways: 123 probes clean,
 one injected backtick caught at the right line. **Run it before running a probe.**
 
+## A sign in the world, and a scoreboard on it (build 1411)
+
+The engine could draw text in the world for **damage numbers** and **player name tags**, and nowhere else.
+A creator labelling a room, a booth or a door had to leave the engine, make an image, host it and import it
+as a textured plane — and could never show a NUMBER that changes. Every other authoring tool ships a text
+object; this one had two hardcoded ones and no way to author either.
+
+**It is a PRIMITIVE, which is the whole reason it is small.** The gizmo, snapping, duplication, the
+clipboard, prefabs, tags, serialization, undo, multiplayer prop sync, the outliner and the LOD all arrive
+for free — build 1250 made exactly this argument for the ambient emitters, and build 1320 made the shape
+tables one table, so the + menu, the palette, the radial and the Object panel all serve it with no wiring.
+
+**And the two tables it is deliberately NOT in are behaviour, bought for nothing.** `SHAPE_PRIMS` gates
+instancing: a sign carries its own canvas texture and could never share a batch material (1139's `_instKey`
+lesson), so excluding it is correct AND free. `MAT_PRIMS` gates the colour/texture panel, which would
+otherwise fight the sign panel for the same material.
+
+### It interpolates, which is the half no imported image can do
+
+`Hits {score}` is a live scoreboard on a wall. Three decisions:
+
+- **It shares `_hwInterp` with the HUD.** Build 1287 established that a HUD widget resolves `name@` through
+  `_hwVarKey` (`NET.myId`) and NOT through `_lgVarKey` (the event's pid), because it draws **every frame,
+  outside any event**. A world sign is the identical case. So the function was lifted out of `_hwText`
+  rather than the regex copied — two implementations of one syntax is how the two drift (1402's rule, and
+  1287 was the bug).
+- **A sign with no brace is rendered once and never touched again.** `_signTick` runs at 4 Hz, skips every
+  sign whose text carries no `{`, and `_signRender` returns immediately when the resolved text and the
+  geometry are unchanged. A level with a hundred labels pays for one boolean each.
+- **The canvas follows the prop's SCALE**, quantised to 64 px, so a 4×1 banner is not the same text
+  stretched and a gizmo nudge does not reallocate a canvas every frame.
+
+### Four decisions that are each a defect the other way
+
+- **Unlit (`MeshBasicMaterial`).** A label has to be readable in an unlit corner — and an unlit material
+  also keeps the sign out of every shader patch (1139/1384/1388) that assumes a Standard material.
+- **Double-sided.** A sign that is invisible from one side is the "nothing happened" failure. The honest
+  cost is that the back reads mirrored; the panel says so, and two signs back to back fix it.
+- **`noCol` ON by default** (build 1324's flag). A label is not a pane of glass: defaulting it solid would
+  put an invisible wall in front of a booth that stops bullets and makes enemies path around it. A creator
+  who wants a solid board unticks it — and the builder deliberately does **not** stamp the raycast itself,
+  so `refreshPropCollider` stays the one writer and unticking gives the board its hits back cleanly.
+- **The colours are VALIDATED, not escaped.** They go into a canvas `fillStyle`, and a bad value there does
+  not throw — it silently keeps the PREVIOUS `fillStyle`. So one hostile string would paint the text in the
+  board colour and the sign would read **blank with nothing failing**. `_signColor` accepts a hex or hands
+  back the default.
+
+`_pfSpawnEntry` needed the apply too, not just `_applyPropEntry` — build 1280 keeps that near-copy separate
+on purpose, and without the line a duplicated sign comes back blank, which is build 1162's defect exactly.
+`test-1411` counts the apply sites at exactly two.
+
+### Measured live (`tools/probe/sign-prop.mjs`, 21/21)
+
+A canvas is the one thing a Node harness structurally cannot check — it can prove the maths and the wiring,
+and only a real 2D context can say whether anything was DRAWN. So the probe reads the canvas back and counts
+text pixels, **with an empty sign as the control** so the count is provably measuring text:
+
+```
+'SHOOTING RANGE'   14,386 ink pixels        ''   0
+4x2 prop           canvas 2.00:1            1x4 prop   0.50:1
+'Hits {hits}' at hits=0   byte-identical ink to the literal 'Hits 0'
+hits 0 -> 7        the live board repaints within the tick
+                   the STATIC sign beside it does not move a pixel
+                   and 40 more frames change nothing — it stops working when the variable does
+{coins@}           resolves through the HUD's per-player key, not the graph event's
+noCol on           0 collider boxes, raycast neutralised
+noCol off          1 box, raycast back — both from the one writer
+round trip         {text, size:90, align:'left'} out and back, already drawn on arrival
+```
+
+**The static sign beside the live one is what makes the repaint mean anything.** Without it, "the ink
+changed" is equally consistent with the tick repainting everything every frame, which is the thing this
+design exists not to do.
+
+### Two pin-writing notes, both mine, both the same trap from opposite ends
+
+`!/raycast/.test(buildSignProp)` failed against correct code — it matched the builder's own COMMENT
+explaining that it leaves the raycast alone. Builds 164, 1393 and 1395 record a pin being **satisfied** by
+prose; this is a pin being **defeated** by it, and the fix is the same: assert the ASSIGNMENT
+(`/\braycast\s*=/`), never the bare name.
+
+And `bga: 0` must survive the sanitizer — "floating text with no board behind it" is a real thing to author,
+and the `+c.bga || 0` shape that would silently swallow it is build 1329's recorded trap.
+
+`docs/REFERENCE.md` gained the sign in the same pass, and **`+ Pillar`** with it — the docs' shape list was
+still the pre-1320 nine, which is that build's own finding surviving in the one place it did not look.
+
+### And it did not boot — the TDZ, for the fifth time
+
+A saved level containing ONE live sign stopped the game starting: **`Cannot access 'NET' before
+initialization`**. `loadHostedProps()` is called bare at module level and builds the saved level's props
+during boot (1331's whole subject), so a saved sign is applied there, rendered there, and therefore
+resolves its variables there — through `_hwVarKey`, which reads `NET`. **`const NET` is declared ~5,700
+lines below that call.**
+
+`_hwVarKey` had guarded with `typeof NET!=='undefined'` since build 1287, and that guard was correct for
+124 builds because its only caller was the HUD, which draws long after boot. **`typeof` does not guard a
+temporal dead zone — it THROWS for an uninitialised `const`** (1127, 1331, 1350, 1383, and now this). A
+`try/catch` is what actually guards one.
+
+**The whole Node suite passed at 1149/1149 while the game did not boot**, because nothing in it evaluates
+a saved level with a sign in it. What found it was reading the declaration order and then *reproducing it*:
+`tools/probe/sign-boot-tdz.mjs` seeds a saved level into localStorage through an init script — a driver
+capability this build added, and the only way to probe what a saved level does to the boot path — with a
+STATIC sign beside the live one as the control, since a static sign never reaches the interpolator.
+
+```
+before   [ERR] Cannot access 'NET' before initialization   ...then a 90 s boot timeout
+after    2 signs in the scene, both DRAWN during the load, the live one resolved to "Score 0"
+```
+
+`test-1411` turns it into a standing guard three ways: the `try/catch` is pinned, the ORDERING that makes
+it necessary is asserted (so moving either end is visible), and `_hwVarKey` is **executed inside a real
+dead zone** — the pre-fix form throws there.
+
+### Six pins moved, and one of them was testing nothing
+
+1058 and 1287 EXECUTE `_hwText`, so a lifted-out dependency is genuinely missing in those rigs; both are
+handed `_hwInterp` **from source**, never restated, and 1287's two regex pins moved to its new address with
+their intent untouched. 1250's anchored on `buildFxEmitter('fx_fountain') };` being the END of the builder
+table; it asserts the six entries as a property instead.
+
+**1320's was the interesting one.** It sliced the builder table from its declaration to that same
+`fx_fountain` literal — and when the sign landed after it, `indexOf` returned **−1**, the slice ran to the
+wrong place, and **every key check failed against correct code**. That is build 1392's recorded hazard (an
+`indexOf` that misses is not an error, it is a wrong answer) and the same class as a character-budget
+window. It ends on the named declaration that follows the table now, and **asserts both anchors were
+found**, so the next move fails loudly instead of quietly testing an empty string.
+
+519 and 928 are the other kind: both asserted the shape set as a **quoted join** of all ten keys, so they
+broke the day the list grew with every part of what they meant still true. Both assert MEMBERSHIP now (928
+keeps `box` first, which is its slot picker's actual default). *A pin that quotes a whole list is a pin
+against the list, not against what it says* — the character-budget trap in its other costume.
+
 ## Several props under one tag are a camera BANK (build 1410)
 
 Build 1404 resolved the camera tag to the **first** prop carrying it and wrote *"a camera is ONE place"*.

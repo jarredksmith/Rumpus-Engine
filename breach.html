@@ -13229,15 +13229,28 @@ function _hwFmtTimer(sec){ sec=Math.max(0, Math.ceil(+sec||0)); return Math.floo
 // per connection instead of becoming a routing problem.
 function _hwVarKey(k){
   if(!k || k.charAt(k.length-1)!=='@') return k;
-  return k + ((typeof NET!=='undefined' && NET.myId!=null) ? (NET.myId|0) : 0);
+  /* build 1411: `typeof` does NOT guard a temporal dead zone — it THROWS for an uninitialised `const`,
+     which is this file's most repeated trap (1127, 1331, 1350, 1383). `const NET` is declared ~5,700
+     lines below `loadHostedProps()`, and that call builds the saved level's props at BOOT — so the
+     moment a WORLD SIGN could carry `{coins@}`, a saved level containing one stopped the game booting
+     at all. The build-1287 caller (the HUD) only ever ran long after NET existed, so the guard read as
+     correct for 124 builds. A try/catch is what actually guards a TDZ. */
+  let id = 0;
+  try{ if(typeof NET!=='undefined' && NET && NET.myId!=null) id = NET.myId|0; }catch(e){}
+  return k + id;
 }
 function _hwText(w){
   // build 1287: the `@` class the toast node has accepted since 1231, resolved through _hwVarKey (above).
   // Without it a widget bound to `coins@` matched nothing and rendered the literal text; with the mirror
   // below fixed too, it now shows THIS player's value. A co-op shop or scoreboard needed both halves.
-  const interp=(t)=>String(t).replace(/\{([\w#@]+)\}/g, (m,k)=>String(Math.round((+logicVars[_hwVarKey(k)]||0)*100)/100));
-  if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (interp(w.label)+' '+t) : t; }
-  return interp(w.label);
+  if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (_hwInterp(w.label)+' '+t) : t; }
+  return _hwInterp(w.label);
+}
+/* build 1411: lifted out of _hwText so the world SIGN can share it. A sign renders outside any event,
+   exactly like a widget, so `coins@` must mean THIS player's coins there too — and one function is what
+   stops the HUD and the sign coming to different answers about the same text (1287's lesson, 1402's rule). */
+function _hwInterp(t){
+  return String(t==null?'':t).replace(/\{([\w#@]+)\}/g, (m,k)=>String(Math.round((+logicVars[_hwVarKey(k)]||0)*100)/100));
 }
 // build 1255: THE HUD BECOMES AN INTERFACE. Widgets could show numbers and never take a click, so
 // no creator could author a shop, a quest log, an upgrade menu or a tycoon panel — the audit's #1
@@ -15295,6 +15308,115 @@ function refreshPropCollider(obj, mover){
   if(typeof _pcCacheBuild==='function') _pcCacheBuild(obj, finalBoxes, !isModelSrc(obj.userData.src));
 }
 // A built-in box primitive (used when src === 'box'): a 1×1×1 crate you scale via the transform.
+/* ---- build 1411: a sign ------------------------------------------------------------------------
+   The engine could draw text in the world for damage numbers and name tags and nowhere else, so a
+   creator labelling a room, a booth or a door had to leave the engine, make an image, host it and
+   import it. Every other authoring tool ships a text object.
+
+   It is a PRIMITIVE, which is what makes it small: the gizmo, snapping, duplication, the clipboard,
+   prefabs, tags, serialization, undo, multiplayer sync, the outliner and the LOD all arrive for free
+   (build 1250 made the same argument for emitters). It is deliberately NOT in SHAPE_PRIMS or
+   MAT_PRIMS, so instancing and the colour/texture panel exclude it with no code at all — each sign
+   carries its own canvas and could never share a batch material.
+
+   And it INTERPOLATES, which is the half no imported image can do: `Score {hits}` is a live scoreboard
+   on a wall. A sign whose text carries no braces is rendered once and never touched again. */
+const SIGN_DEF = { text:'Sign', size:64, color:'#eafff7', bg:'#0b1418', bga:0.85, align:'center' };
+const SIGN_TEXT_MAX = 240, SIGN_LINES_MAX = 8;
+const SIGN_ALIGNS = ['left','center','right'];
+function _signCfgSan(c){
+  c = c || {};
+  const out = {};
+  out.text  = String(c.text==null ? SIGN_DEF.text : c.text).slice(0, SIGN_TEXT_MAX);
+  out.size  = Math.max(8, Math.min(200, +c.size || SIGN_DEF.size));
+  out.color = _signColor(c.color, SIGN_DEF.color);
+  out.bg    = _signColor(c.bg, SIGN_DEF.bg);
+  out.bga   = Math.max(0, Math.min(1, c.bga==null ? SIGN_DEF.bga : +c.bga || 0));
+  out.align = (SIGN_ALIGNS.indexOf(c.align) >= 0) ? c.align : SIGN_DEF.align;
+  return out;
+}
+/* A level file is untrusted input (build 1325) and these two strings go into a canvas fillStyle. A bad
+   colour there does not throw — it silently keeps the PREVIOUS fillStyle, so one hostile value would
+   paint the text in the background colour and the sign would read blank. Validate, never pass through. */
+function _signColor(v, dflt){
+  const s = String(v==null ? '' : v).trim();
+  return /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(s) ? s : dflt;
+}
+function buildSignProp(){
+  const geo = new THREE.PlaneGeometry(1, 1); geo.translate(0, 0.5, 0);   // base at y=0, like every primitive (build 871)
+  /* MeshBasicMaterial, not Standard: a label has to be READABLE in an unlit corner, and an unlit
+     material also keeps the sign out of every shader patch (1139/1384/1388) that assumes Standard.
+     DoubleSide so a sign can never be invisible from one side — the "nothing happened" failure. The
+     honest cost is that the back reads mirrored; the panel says so, and two signs back to back fix it. */
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent:true, side:THREE.DoubleSide, depthWrite:false }));
+  m.userData.sign = Object.assign({}, SIGN_DEF);
+  /* A sign is a LABEL. Defaulting it solid would put an invisible pane in front of a booth that stops
+     bullets and makes enemies path around it — build 1324's noCol is exactly the control for this, and
+     a creator who wants a solid board unticks it. */
+  m.userData.noCol = true;   /* refreshPropCollider does the rest, including neutralising the raycast —
+                                one writer, so unticking the box gives the sign its hits back cleanly */
+  return m;
+}
+/* The canvas is sized from the prop's own SCALE, so text on a 4x1 banner is not the same text stretched.
+   Quantised to 64 px so nudging the gizmo does not re-render every frame. */
+function _signCanvasSize(o){
+  const sx = Math.abs(o.scale.x) || 1, sy = Math.abs(o.scale.y) || 1;
+  const asp = Math.max(0.25, Math.min(8, sx / sy));
+  const W = 768, H = Math.max(128, Math.min(1536, Math.round((W / asp) / 64) * 64));
+  return [W, H];
+}
+function _signRender(o){
+  const c = o && o.userData && o.userData.sign;
+  if(!c || !o.material) return;
+  const txt = (typeof _hwInterp==='function') ? _hwInterp(c.text) : String(c.text||'');
+  const [W, H] = _signCanvasSize(o);
+  /* Nothing changed -> nothing to do. This is what lets the tick below run over every sign in the level
+     at no cost: a sign whose text carries no braces resolves to the same string forever. */
+  if(o.userData._signKey === txt+'|'+W+'|'+H+'|'+c.size+'|'+c.color+'|'+c.bg+'|'+c.bga+'|'+c.align) return;
+  o.userData._signKey = txt+'|'+W+'|'+H+'|'+c.size+'|'+c.color+'|'+c.bg+'|'+c.bga+'|'+c.align;
+  let cv = o.userData._signCv;
+  if(!cv || cv.width!==W || cv.height!==H){
+    cv = o.userData._signCv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    if(o.material.map && o.material.map.dispose) o.material.map.dispose();
+    o.material.map = null;   // a new canvas needs a new texture; the old one is this sign's own
+  }
+  const x = cv.getContext('2d');
+  x.clearRect(0, 0, W, H);
+  if(c.bga > 0){ x.globalAlpha = c.bga; x.fillStyle = c.bg; x.fillRect(0, 0, W, H); x.globalAlpha = 1; }
+  const lines = String(txt).split('\n').slice(0, SIGN_LINES_MAX);
+  /* The authored size is in CANVAS pixels against a 768-wide board, so it means the same thing whatever
+     the sign is scaled to — and it is then shrunk to fit rather than overflowing, because a creator who
+     types a long line wants to read it, not to lose the ends of it. */
+  let fs = Math.max(8, Math.min(200, +c.size || 64));
+  fs = Math.min(fs, (H * 0.86) / Math.max(1, lines.length));
+  x.font = 'bold ' + fs + 'px system-ui, sans-serif';
+  let widest = 0; for(const ln of lines) widest = Math.max(widest, x.measureText(ln).width);
+  if(widest > W * 0.92){ fs = Math.max(6, fs * (W * 0.92) / widest); x.font = 'bold ' + fs + 'px system-ui, sans-serif'; }
+  x.textBaseline = 'middle';
+  x.textAlign = c.align;
+  const px = (c.align === 'left') ? W * 0.05 : (c.align === 'right' ? W * 0.95 : W / 2);
+  x.fillStyle = c.color;
+  const lh = fs * 1.18, y0 = H / 2 - (lines.length - 1) * lh / 2;
+  for(let i = 0; i < lines.length; i++) x.fillText(lines[i], px, y0 + i * lh);
+  if(!o.material.map){
+    const t = new THREE.CanvasTexture(cv);
+    t.minFilter = THREE.LinearFilter; t.anisotropy = (typeof MAX_ANISO === 'number') ? MAX_ANISO : 1;
+    o.material.map = t; o.material.needsUpdate = true;   // first map on this material -> compile USE_MAP once
+  } else o.material.map.needsUpdate = true;
+}
+/* Live signs. A scoreboard has to follow the variable it names, and a variable can change on any pulse —
+   but re-rendering a canvas per frame for every sign in a level is not free, and nothing about a sign
+   needs to be frame-exact. 4 Hz, and only signs whose text carries a brace are looked at at all. */
+let _signTickN = 0;
+function _signTick(){
+  if((++_signTickN % 15) !== 0) return;
+  for(let i = 0; i < propModels.length; i++){
+    const o = propModels[i];
+    if(!o || !o.userData || !o.userData.sign) continue;
+    if(String(o.userData.sign.text || '').indexOf('{') < 0) continue;   // static: rendered once, never again
+    _signRender(o);
+  }
+}
 function buildBoxProp(){
   const geo = new THREE.BoxGeometry(1,1,1); geo.translate(0, 0.5, 0);  // base at y=0 so it sits on the floor
   const m = new THREE.Mesh(geo, primitiveMat());   // build 1139: one place builds the primitive material, so the detail set reaches the box too
@@ -15966,7 +16088,8 @@ const PRIMITIVE_BUILDERS = { box:buildBoxProp, sphere:buildSphereProp, cylinder:
   track_bank_l:()=>_buildTrackPiece('track_bank_l'), track_bank_r:()=>_buildTrackPiece('track_bank_r'),
   track_ramp_up:()=>_buildTrackPiece('track_ramp_up'), track_ramp_dn:()=>_buildTrackPiece('track_ramp_dn'),
   fx_ember:()=>buildFxEmitter('fx_ember'), fx_dust:()=>buildFxEmitter('fx_dust'), fx_smoke:()=>buildFxEmitter('fx_smoke'),   /* build 1250: emitters are props */
-  fx_steam:()=>buildFxEmitter('fx_steam'), fx_firefly:()=>buildFxEmitter('fx_firefly'), fx_fountain:()=>buildFxEmitter('fx_fountain') };
+  fx_steam:()=>buildFxEmitter('fx_steam'), fx_firefly:()=>buildFxEmitter('fx_firefly'), fx_fountain:()=>buildFxEmitter('fx_fountain'),
+  sign:buildSignProp };   /* build 1411: a readable label is a primitive, so every editor door serves it (1320) */
 function isPrimitive(src){ return PRIMITIVE_BUILDERS.hasOwnProperty(src); }
 // Cache loaded glTFs by URL so repeated/added props of the same model don't refetch.
 const gltfCache = {};
@@ -20112,7 +20235,7 @@ function _sigUnpack(x){
   return s;
 }
 function _applyPropEntry(obj, p){
-  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406: one derivation, or the world verbs' fields keep being dropped */ if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
+  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406: one derivation, or the world verbs' fields keep being dropped */ if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.sgn && obj.userData.sign){ obj.userData.sign=_signCfgSan(p.sgn); if(typeof _signRender==='function') _signRender(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
 }
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
@@ -33536,7 +33659,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1410 · 2026-08-06';
+const BUILD_VERSION = 'build 1411 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35010,6 +35133,7 @@ const PRIM_SHAPES = [
   ['dome',     'Dome',     '\u25e0', 0],
   ['tube',     'Tube',     '\u25ce', 0],
   ['torus',    'Ring',     '\u25cb', 0],
+  ['sign',     'Sign',     '\u25a4', 1],   /* build 1411: common, because every room a creator builds wants a label */
 ];
 // build 1250 made the ambient emitters primitives; they were placeable from the Object panel and from
 // nowhere else. Same table treatment.
@@ -39260,7 +39384,7 @@ function loop(){
   }
   if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _lodTick==='function') _lodTick(); if(typeof _edPlayerPreviewTick==='function') _edPlayerPreviewTick(); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _signTick==='function') _signTick(); if(typeof _lodTick==='function') _lodTick(); if(typeof _edPlayerPreviewTick==='function') _edPlayerPreviewTick(); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
@@ -41172,6 +41296,7 @@ const PRIM_ICON = {
   dome:     _svgIcon('<path d="M3 18a9 9 0 0 1 18 0"/><path d="M2 18h20"/>'),
   tube:     _svgIcon('<ellipse cx="12" cy="5.5" rx="6.5" ry="2.4"/><path d="M5.5 5.5v13M18.5 5.5v13"/><path d="M5.5 18.5a6.5 2.4 0 0 0 13 0"/><ellipse cx="12" cy="5.5" rx="3" ry="1.1"/>'),
   torus:    _svgIcon('<ellipse cx="12" cy="12" rx="9" ry="5"/><ellipse cx="12" cy="12" rx="3.6" ry="1.8"/>'),
+  sign:     _svgIcon('<rect x="3" y="5" width="18" height="11" rx="1.5"/><path d="M7 9.5h10M7 12.5h6"/><path d="M12 16v4"/>'),
 };
 const MODE_SECTIONS = {
   build:   ['gizmo','object','material','transform','prefabs'],
@@ -42512,6 +42637,7 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406 */
     if(p.snd>1) obj.userData.sigNeed=+p.snd;
     if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); }
+    if(p.sgn && obj.userData.sign){ obj.userData.sign=_signCfgSan(p.sgn); if(typeof _signRender==='function') _signRender(obj); }   /* build 1411: or duplicate/prefab/paste hands back a blank board (1162's defect) */
     if(p.xa) xaApply(obj, p.xa);
     if(p.j) jointApply(obj, p.j);
     if(p.veh) vehicleApply(obj, p.veh);
@@ -42813,6 +42939,7 @@ function propEntry(o){
   if(o.userData.lockId){ e.lk=o.userData.lockId; if(o.userData.lockConsume) e.lkc=1; }
   if(o.userData.tag) e.tg=o.userData.tag;
   if(o.userData.fx && o.userData.fx.cfg) e.fxc=_fxCfgSan(o.userData.fx.cfg);   /* build 1252: emitter overrides ride every path propEntry serves */
+  if(o.userData.sign) e.sgn=_signCfgSan(o.userData.sign);                      /* build 1411: what the sign SAYS is the whole prop */
   if(o.userData.groupId) e.gid=o.userData.groupId;   // build 798: prop group link
   if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,120).map(s=>String(s).slice(0,200));   // build 695 / 1076: NPC dialogue script
   if(o.userData.npcName) e.npc=String(o.userData.npcName).slice(0,40);
@@ -48888,6 +49015,58 @@ function renderEditorFields(){
             const rst=document.createElement('button'); rst.textContent='Reset'; rst.className='secBtn'; rst.style.cssText='font-size:11px;padding:2px 8px;';
             rst.onclick=()=>{ pushUndoSnapshot(); delete tagObj.userData.fx.cfg; if(typeof _fxReset==='function') _fxReset(tagObj); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
             cr.appendChild(cs); cr.appendChild(ci); cr.appendChild(rst); th.appendChild(cr);
+          }
+          /* build 1411: a sign says something, so the panel is the whole feature — a text prop with no
+             text field is a blank board. It sits here beside the emitter's controls for the same reason:
+             this is the fold that already knows which prop is selected. */
+          if(tagObj.userData.sign){
+            const sg=()=> tagObj.userData.sign;
+            const _sgDirty=()=>{ if(typeof _signRender==='function') _signRender(tagObj); if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+            const sh=document.createElement('div'); sh.className='hint'; sh.style.margin='4px 0 3px';
+            sh.innerHTML='<b>Sign</b>';
+            th.appendChild(sh);
+            const ta=document.createElement('textarea');
+            ta.value=String(sg().text||''); ta.rows=2; ta.maxLength=SIGN_TEXT_MAX;
+            ta.placeholder='SHOOTING RANGE\nHits: {score}';
+            ta.style.cssText='width:100%;box-sizing:border-box;resize:vertical;font:12px/1.35 system-ui,sans-serif;background:#05080b;color:#eafff7;border:1px solid #2a3a42;border-radius:4px;padding:4px 6px;';
+            ta.addEventListener('focus', ()=>pushUndoSnapshot());
+            /* `oninput`, not `onchange`: the panel is torn down and rebuilt constantly (build 1322), and
+               a creator typing wants to watch the board fill in. _signRender's own key check makes a
+               keystroke that changes nothing free. Group-wide, per build 1299 — thirty booth signs
+               reading the same thing is a real authoring move, and the banner above says which rule
+               this fold follows. */
+            ta.oninput=()=>{ _selApply(o=>{ if(o.userData.sign){ o.userData.sign.text=ta.value.slice(0,SIGN_TEXT_MAX); if(typeof _signRender==='function') _signRender(o); } }); };
+            th.appendChild(ta);
+            const sr=document.createElement('div'); sr.style.cssText='display:flex;gap:6px;align-items:center;margin:3px 0;flex-wrap:wrap;';
+            const _lab=(t,tip)=>{ const s=document.createElement('span'); s.textContent=t; if(tip) s.title=tip; s.style.cssText='font-size:11px;color:#9fe6cf;'; return s; };
+            const szi=document.createElement('input'); szi.type='number'; szi.min=8; szi.max=200; szi.step=2; szi.value=sg().size;
+            szi.style.cssText='width:52px;background:#05080b;color:#eafff7;border:1px solid #2a3a42;border-radius:4px;padding:2px 4px;font-size:11px;';
+            szi.title='Text size on the board. It is shrunk to fit rather than overflowing, so a long line stays readable.';
+            szi.addEventListener('focus', ()=>pushUndoSnapshot());
+            szi.onchange=()=>{ const v=Math.max(8,Math.min(200,+szi.value||64)); szi.value=v; _selApply(o=>{ if(o.userData.sign){ o.userData.sign.size=v; if(typeof _signRender==='function') _signRender(o); } }); };
+            const fci=document.createElement('input'); fci.type='color'; fci.value=_signColor(sg().color, SIGN_DEF.color);
+            fci.title='Text colour'; fci.style.cssText='width:38px;height:22px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#05080b;cursor:pointer;';
+            fci.addEventListener('mousedown', ()=>pushUndoSnapshot());
+            fci.oninput=()=>{ _selApply(o=>{ if(o.userData.sign){ o.userData.sign.color=fci.value; if(typeof _signRender==='function') _signRender(o); } }); };
+            const bci=document.createElement('input'); bci.type='color'; bci.value=_signColor(sg().bg, SIGN_DEF.bg);
+            bci.title='Board colour'; bci.style.cssText='width:38px;height:22px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#05080b;cursor:pointer;';
+            bci.addEventListener('mousedown', ()=>pushUndoSnapshot());
+            bci.oninput=()=>{ _selApply(o=>{ if(o.userData.sign){ o.userData.sign.bg=bci.value; if(typeof _signRender==='function') _signRender(o); } }); };
+            const bai=document.createElement('input'); bai.type='range'; bai.min=0; bai.max=1; bai.step=0.05; bai.value=sg().bga;
+            bai.title='Board opacity \u2014 0 leaves floating text with no board behind it'; bai.style.cssText='width:70px;';
+            bai.addEventListener('mousedown', ()=>pushUndoSnapshot());
+            bai.oninput=()=>{ _selApply(o=>{ if(o.userData.sign){ o.userData.sign.bga=+bai.value; if(typeof _signRender==='function') _signRender(o); } }); };
+            const ali=document.createElement('select'); ali.style.cssText='background:#05080b;color:#eafff7;border:1px solid #2a3a42;border-radius:4px;padding:2px 4px;font-size:11px;';
+            for(const a of SIGN_ALIGNS){ const op=document.createElement('option'); op.value=a; op.textContent=a; if(sg().align===a) op.selected=true; ali.appendChild(op); }
+            ali.onchange=()=>{ pushUndoSnapshot(); _selApply(o=>{ if(o.userData.sign){ o.userData.sign.align=ali.value; if(typeof _signRender==='function') _signRender(o); } }); };
+            sr.appendChild(_lab('Size')); sr.appendChild(szi);
+            sr.appendChild(_lab('Text')); sr.appendChild(fci);
+            sr.appendChild(_lab('Board')); sr.appendChild(bci); sr.appendChild(bai);
+            sr.appendChild(ali);
+            th.appendChild(sr);
+            const sn=document.createElement('div'); sn.className='hint'; sn.style.cssText='margin:0 0 6px;font-size:11px;';
+            sn.textContent='{name} shows a live logic variable \u2014 "Hits: {score}" is a scoreboard. The board reads mirrored from behind; place two back to back if both sides matter.';
+            th.appendChild(sn);
           }
 
         }

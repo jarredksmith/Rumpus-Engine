@@ -302,7 +302,9 @@ Sliders are multipliers over the preset; **Reset** returns to it.
 | **⧉ Array** + **N, dx, dy, dz** | N 1–24 (≈100 props/gesture cap); dx prefilled with the selection's own width | Duplicates the selection N times stepped by (dx,dy,dz). Full config copies; each copy its own group; one Ctrl+Z removes the lot. |
 
 ### Add a shape
-**+ Box, + Sphere, + Cylinder, + Cone, + Ramp, + Stairs, + Dome, + Tube, + Ring** — each drops in front of you, then move/scale it.
+**+ Box, + Sphere, + Cylinder, + Cone, + Pillar, + Ramp, + Stairs, + Dome, + Tube, + Ring** — each drops in front of you, then move/scale it. (Pillar was reachable from one surface only until build 1320.)
+
+**+ Sign** (build 1411) — a readable board in the world. Type the text in the Object panel; **{name}** shows a live logic variable, so `Hits: {score}` is a scoreboard on a wall. Text size, text colour, board colour, board opacity (0 = floating text, no board) and alignment. The canvas follows the prop's own scale, so a wide banner is not stretched text. It carries **No collision** by default — a label should not stop bullets or make enemies path around it; untick it for a solid board. Readable from both sides, mirrored from behind: place two back to back if both sides matter.
 
 **Effects** (build 1250): **+ Embers, + Dust, + Smoke, + Steam, + Fireflies, + Fountain** — ambient particle emitters placed, moved, scaled and tagged like any prop; Logic *hide/show props* switches them at runtime.
 
@@ -365,7 +367,7 @@ Top speed 5–200 · Acceleration 1–80 · Turn rate 20–400°/s · Reverse 2�
 
 ## Material (built-in shapes only)
 
-Box / Sphere / Cylinder / Cone / Ramp / Stairs / Dome / Tube / Ring. Imported models keep their own materials. Multi-selection: "Editing N selected props — changes apply to all."
+Box / Sphere / Cylinder / Cone / Ramp / Stairs / Dome / Tube / Ring. (A Sign carries its own board and text colours in the Object panel instead.) Imported models keep their own materials. Multi-selection: "Editing N selected props — changes apply to all."
 **Color** · **Texture** (URL + Apply/Clear, upload, search; needs CORS) · **Tile** U×V (≥0.001, 1×1) · **Rotate°** · **Light emitter** (color + intensity 0–10, default 4 — "use sparingly") · **Shininess** 0–1 · **Metalness** 0–1 · **Opacity** 0–1 (glass = low opacity + high shininess; stays solid).
 
 ## Transform

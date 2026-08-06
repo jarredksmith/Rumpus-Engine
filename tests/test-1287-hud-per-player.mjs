@@ -22,14 +22,17 @@ const key = new Function('NET', extractFunction('_hwVarKey') + '; return _hwVarK
 { // DELIBERATELY NOT _lgVarKey. That keys on _lgCtx.pid — "the player this event is about" — which is
   // right inside a pulse and wrong for a HUD that draws every frame outside any event, where the pid is
   // whatever the last pulse left behind.
-  const t = extractFunction('_hwText');
+  // build 1411: the interpolation moved into `_hwInterp` so a world SIGN could share it — same
+  // property, one address along, and now shared rather than copied.
+  const t = extractFunction('_hwInterp');
   assert(/_hwVarKey\(k\)/.test(t), 'the widget resolver is used');
   assert(!/_lgVarKey/.test(t), '...and the graph one is not');
+  assert(!/_lgVarKey/.test(extractFunction('_hwText')), '...at either address');
   assert(/NET\.myId/.test(extractFunction('_hwVarKey')), 'because it asks MY id, not the event context');
   assert(/deliberately NOT through _lgVarKey/.test(src), 'and the distinction is recorded, not left to be rediscovered');
 }
 { // the regex admits `@`, matching the toast node it should always have matched
-  const t = extractFunction('_hwText');
+  const t = extractFunction('_hwInterp');   // build 1411: lifted out of _hwText, shared with the sign
   assert(/\\\{\(\[\\w#@\]\+\)\\\}/.test(t) || /\[\\w#@\]\+/.test(t), 'the HUD interpolation accepts a trailing @');
   // build 1402: the toast's own interpolation moved into `_lgName`, which every field that names something
   // shares. The class this asserts is the same one, at its new address.
@@ -38,7 +41,7 @@ const key = new Function('NET', extractFunction('_hwVarKey') + '; return _hwVarK
 }
 { // EXECUTED: interpolation end to end
   const run = (label, vars, myId) => new Function('logicVars', 'NET', 'w', '_hwFmtTimer', '_lgNum',
-    extractFunction('_hwVarKey') + '\n' + extractFunction('_hwText') + '; return _hwText(w);')(
+    extractFunction('_hwVarKey') + '\n' + extractFunction('_hwInterp') + '\n' + extractFunction('_hwText') + '; return _hwText(w);')(
     vars, { myId }, { kind: 'text', label }, () => '', () => 0);
   eq(run('Coins: {coins@}', { 'coins@0': 12, 'coins@3': 99 }, 0), 'Coins: 12', 'the host sees its own');
   eq(run('Coins: {coins@}', { 'coins@0': 12, 'coins@3': 99 }, 3), 'Coins: 99',

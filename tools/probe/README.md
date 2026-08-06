@@ -29,6 +29,8 @@ once by accident and removed in build 1293's follow-up.
 | `editor-panel.mjs` | panel DOM nodes and render cost per editor mode (build 1293) |
 | `editor-timing.mjs` | the play/edit round trip, and what it is made of |
 | `camera-bank.mjs` | the fixed-camera bank cutting between mounts on its dwell (build 1410) |
+| `sign-prop.mjs` | that a world sign actually DRAWS, and that a live one repaints (build 1411) |
+| `sign-boot-tdz.mjs` | that a SAVED level with a live sign still boots — `withGame(..., {savedLevel})` (1411) |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.
