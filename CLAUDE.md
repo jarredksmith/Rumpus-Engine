@@ -2909,6 +2909,83 @@ page-code template literal closes it, and Node reports "missing ) after argument
 It skips escaped backticks and nested `${...}` interpolation, and is controlled both ways: 123 probes clean,
 one injected backtick caught at the right line. **Run it before running a probe.**
 
+## Several props under one tag are a camera BANK (build 1410)
+
+Build 1404 resolved the camera tag to the **first** prop carrying it and wrote *"a camera is ONE place"*.
+That is the one place in the engine where a tag means one thing: a tag has named a **set** since build 1299
+— a level has thirty crates and one tag — and every other tag-taking verb acts on all of them. So the
+second, third and fourth props a creator tagged `seccam` were placed, serialized, tagged and **unreachable**,
+and the security-desk idiom the verb was asked for needed a graph counter plus one `view` node per angle.
+
+`_viewMountsFor(tag)` returns them all in `propModels` order — the level's own order, which is what the
+outliner shows — and `vdwell` cuts between them. **The singular `_viewMountFor` is GONE**, not rewritten in
+terms of the list: after this build nothing called it, and a second resolver with no callers is a trap —
+the next build that wants "the camera" reaches for it and gets camera 1 rather than the one the bank is
+currently showing. `test-1410` pins its absence.
+
+Four decisions:
+
+- **0 is OFF and byte-identical to 1404.** No clock is read at all (`if(ov.dwell > 0)` guards the whole
+  block), so every level authored before this build pays nothing and behaves exactly as it did. That is
+  also what a pre-1410 host sends: the `vw` payload gained a fourth element, and a missing one reads 0.
+- **A positive dwell is FLOORED, not honoured.** A level file is untrusted input (1325) and an authored
+  0.001 would strobe the screen. `VIEW_DWELL_MIN` is 0.25 — a fast cut, which is a legitimate thing to
+  author — rather than a refusal.
+- **A gap over a second RE-BASES the clock instead of cutting.** It is a pause, a tab-back or a level
+  load, not elapsed dwell; without it, unpausing after thirty seconds flicks through ten cuts in the frame
+  the player comes back on. Same rule, same reason, as the chase camera's `_tpPrevT` (build 894).
+- **Membership is re-resolved ON THE CUT**, never per frame — `_viewMountsFor` is an O(propModels) walk,
+  and a cut is exactly the moment a camera spawned or destroyed since the last one should join or leave.
+  A mount destroyed mid-*dwell* still re-resolves on the spot, because the alternative is a player staring
+  at a corpse for a whole dwell.
+
+**`_viewMountsFor` skips a prop with no `parent`, and that is not tidiness.** Build 1404's re-resolve —
+*"the mount can be destroyed mid-round, re-resolve by tag rather than holding a dead object"* — only works
+if the resolver refuses the dead one; otherwise it hands back the very object it was called to replace.
+The probe found this by killing a camera mid-cycle and watching the bank sit on it.
+
+**And the row says so.** Nothing else in the product tells a creator that tagging a SECOND prop makes a
+bank — the field reads *"cut every [ ] s — tag several props to cut between them"*, because a capability
+nobody can find is one that does not exist (build 1348).
+
+**Each peer runs its own dwell clock from the moment it armed the bank.** The camera is a local view
+(`who:'actor'` sends it to one player), so there is nothing to keep in step and a synchronised bank would
+need a clock in the message for no gain.
+
+### Two kills, recorded so they are not rediscovered as gaps
+
+- **BLEND between mounts.** A security camera cuts; a survival-horror fixed camera cuts at the doorway.
+  Sliding the viewpoint from one mount to another is a CINEMATIC move and this engine already has
+  cinematics for it (`cineCfg`, shots carrying `path` / `lensFrom-To` / `focusOn` / `ease`). A second,
+  weaker path to the same thing inside a gameplay camera would duplicate that system and would read as a
+  drifting camera rather than as a camera bank.
+- **GEOMETRY AVOIDANCE.** `tpCameraPushback` collides for a reason that does not apply here: the player
+  DRAGS that camera through the level and it legitimately ends up inside a wall. A mount is **authored** —
+  the creator chose where it goes, and pulling it toward the player would move it off the spot they picked.
+  The case that looks like a defect (the player walks behind a pillar and the camera shows a pillar) is
+  the fixed-camera idiom working, not failing. `test-1410` pins the absence of `_cameraCollide`.
+
+### Three instrument failures, and the last one is a standing trap
+
+Measured live (`tools/probe/camera-bank.mjs`, 16/16): three real props, armed through the real
+`_applySignalAction`, sampled off the real frame loop — every sample lands EXACTLY on a mount, all three
+are visited and the cycle wraps, a destroyed camera is never shown again while the surviving two keep
+cutting. Getting there cost three wrong readings:
+
+| # | it reported | why |
+|---|---|---|
+| 1 | 2 of 3 cameras | the sample stride (500 ms) DIVIDED the dwell (2 s), so every cut landed on the exact boundary frame and float drift in `__vnow += (1/60)*1000` decided whether the last one fired |
+| 2 | 1 of 3 — "the bank never cuts" | rewritten to sleep in Node. **`__drive` VIRTUALISES `performance.now()`** (drive.mjs installs a counter and restores the real clock on the way out), so sleeping advances a clock the engine is not reading |
+| 3 | — | and the drives must be ONE eval: between `probe()` calls the real clock is back, ~1e5 ms behind the virtual one, so the next drive's first frame looks like a 100-second gap and trips the pause re-base, throwing the cycle's progress away every sample |
+
+**#1 is the general one: a sampling stride that divides the period under test measures the boundary, not
+the behaviour.** Both #2 and #3 are the same root — a probe rig that virtualises a clock has to be the
+only thing driving anything that reads it.
+
+Three pins moved (1404 ×3), each keeping its intent: the override holds a LIST whose head is what a
+bank with no dwell shows, the re-resolve covers the whole bank, and the `vw` payload carries the dwell.
+1404's own stubs gained a `parent`, which is what the engine reads to mean live.
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its
