@@ -2618,6 +2618,58 @@ a station exists — is asserted directly now, beside the url landing as data ei
 from `restoreLevel`, so inserting it first makes every one of those anchors ambiguous. The count assert
 caught it on the first run and nothing was written, which is what they are for.
 
+## An order reaches the enemies at ONE booth (build 1408)
+
+The gap the AI booth surfaced while it was being written, and the first thing a multi-room level hits.
+`command` resolved its audience with `s.ewho==='nearest' ? 'nearest' : 'enemies'` — all of them, or the
+single nearest one to the PLAYER. So *hold position* fired at the AI booth froze every enemy in the level,
+including the ones down range at the shooting gallery. **`_lgEnemyTargets` has taken a radius around a named
+place since build 1288** and damage/heal/kill have used it since; the command verb could not reach it.
+
+**The scope is its own field, not `at`.** For `alert` and `post`, `at` is the DESTINATION — *alert them to
+the vault*, *move their post to the gate*. Overloading it would have read naturally in the common case and
+quietly made *"post the guards near the gate at the vault"* unsayable, which is the one arrangement a
+creator reaches for. `escope` + `er` sit beside it, shown only when the audience is scoped.
+
+Measured on two booths 70 m apart, three enemies each, **with the other booth as the control** — a scoped
+order that reaches nobody and one that reaches everybody are indistinguishable without it:
+
+```
+control  "all enemies patrol"          range patrol/patrol/patrol   pit patrol/patrol/patrol
+scoped   "hold near range, r 12"       range hold/hold/hold         pit hunt/hunt/hunt
+r 0.5    reaches neither booth         range hunt/hunt/hunt         pit hunt/hunt/hunt
+bad tag  commands nobody, reported     range hunt/hunt/hunt         pit hunt/hunt/hunt
+post     scope range, destination pit  all three range enemies posted at the pit
+```
+
+Both fail-closed rules come from `_lgEnemyTargets` unchanged and are what make a scoped order safe to
+author: **a place that does not exist commands nobody, never everybody**, and **a radius of 0 is nowhere,
+never everywhere.** A scope nothing answers to is reported through build 1214's channel rather than doing
+nothing silently.
+
+### Build 1407 is why this was four small edits
+
+Declaring the two params in the node's table **is** wiring them — the dispatch names neither field, and
+`test-1408` asserts that absence. Before 1407 this would have needed the table AND the hand-written
+forwarding literal, and the second half is the one that got forgotten eight times running. Build 1406 is why
+a scoped order on a prop signal survives a reload: `escope` was already in `SIG_KEYS` with room reserved,
+and `er` is one entry beside it. Three builds compounding is the return on doing them in that order.
+
+Two pins moved (1077, 1407), both re-expressed as the property rather than the count: 1077's *"this field
+names ENEMIES and not the player"* is asserted directly instead of by quoting a two-option list, and 1407's
+name-field count became **every member of the set interpolates**, executed — a count would only ever have
+been a number to bump.
+
+## The prefab pair is clean (verified after build 1407, not a build)
+
+`_pfEntryOf` / `_pfSpawnEntry` were the next place to ask build 1406's question, since build 1280 keeps the
+spawn side deliberately separate from `_applyPropEntry`. Measured (`tools/probe/prefab-roundtrip.mjs`): a
+prop configured with every field the serializer writes — tag, name, folder, interact, NPC + dialogue, lock,
+`sigNeed`, attribution, editor hide/lock, hit sound, four world-verb signals, and the whole dynamic tier
+(mass, HP, break style, explosive, fire, shootable) — is copied through the real pair and its entry diffed
+against the original's. **28 fields, all present, none changed**; only the identity differs, which is the
+designed divergence. No build needed. Recorded so the next person does not re-derive it.
+
 ## The Do node dropped two of its own fields (build 1407)
 
 Build 1406's shape, one layer up, found by asking the same question of the next hand-kept list. The graph's

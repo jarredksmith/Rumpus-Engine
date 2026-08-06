@@ -12842,7 +12842,7 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
      rendered the box UNCHECKED while the runtime treated it as on — the table is now the one place that
      says so and the renderer reads it too;
    - everything else passes through, with the four fields that NAME something interpolated (build 1402).  */
-const _LG_NAME_FIELDS = new Set(['target','prefab','item','text','at','vtag']);
+const _LG_NAME_FIELDS = new Set(['target','prefab','item','text','at','vtag','escope']);
 function _lgDoArgs(p){
   const out = { do: p.verb || 'toggle' };
   const params = (typeof LG_DEFS!=='undefined' && LG_DEFS.do && LG_DEFS.do.params) || [];
@@ -13395,7 +13395,7 @@ const LG_DEFS = {
        vocabulary (tags, `me`, `start`), which is exactly what _lgPlaceAt accepts. */
     {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist']],listId:'lgPlaceList'},
     {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -14273,7 +14273,18 @@ function _applyWorldAction(s){
     if(who==='actor'){ if(_wactToActor({ vw:[vm, vt, tr?1:0] })) return; }
     _setViewOverride(vm, vt, tr); _wactSend({ vw:[vm, vt, tr?1:0] }); return; }
   if(s.do==='command'){
-    const list=_lgEnemyTargets(s.ewho==='nearest'?'nearest':'enemies'); if(!list.length) return;   // 'the player' is meaningless here
+    /* build 1408: an order can be given to the enemies at ONE PLACE. This resolved to all of them or to the
+       single nearest one to the PLAYER, so in a level with more than one room "hold position" froze every
+       enemy in it — including the ones two booths away, which is most of what a multi-room level is.
+       _lgEnemyTargets has taken a radius around a named place since build 1288; the verb could not reach it.
+
+       THE SCOPE IS ITS OWN FIELD, not `at`. For alert and post, `at` is the DESTINATION ("alert them to the
+       vault", "move their post to the gate"), and overloading it would quietly make "post the guards near
+       the gate to the vault" unsayable — the one arrangement a creator reaches for. */
+    const ewho=(s.ewho==='nearest'||s.ewho==='near') ? s.ewho : 'enemies';
+    const scope=(ewho==='near') ? _lgPlaceAt(s.escope) : null;
+    if(ewho==='near' && !scope){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "command" action is aimed at the enemies near "'+String(s.escope||'')+'", but no such place exists.'); return; }
+    const list=_lgEnemyTargets(ewho, scope, +s.er||0); if(!list.length) return;   // 'the player' is meaningless here
     const cmd=LG_CMDS[s.cmd]?s.cmd:'hunt';
     const at=(cmd==='alert'||cmd==='post') ? _lgPlaceAt(s.at) : null;
     if((cmd==='alert'||cmd==='post') && !at) return;                    // a place that does not exist: do nothing
@@ -20048,7 +20059,7 @@ const SIG_KEYS = {
   who:'wh', amt:'am', r:'rr', stat:'st', mul:'mu',                      // damage / heal / kill / stat
   ewho:'ew', cmd:'cm',                                                  // command
   vmode:'vm', vtag:'vt', vtrack:'vk',                                   // view (build 1404)
-  prefab:'pb', escope:'es'                                              // room to grow without a fourth list
+  prefab:'pb', escope:'es', er:'er'                                     // build 1408: the command's own scope
 };
 const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
 const SIG_STR_MAX = 300;   // a signal can carry a sound URL; the consumers keep their own tighter caps
@@ -33458,7 +33469,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1407 · 2026-08-06';
+const BUILD_VERSION = 'build 1408 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45583,7 +45594,11 @@ function _sigWorldRow(s, rerender){
     }
     sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
   } else if(s.do==='command'){
-    sel([['enemies','All enemies'],['nearest','Nearest enemy']], s.ewho||'enemies', v=>{ s.ewho=v; });
+    sel([['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']], s.ewho||'enemies', v=>{ s.ewho=v; });
+    if(s.ewho==='near'){   /* build 1408: WHICH enemies, kept apart from WHERE the order sends them */
+      txt('place', s.escope, v=>{ if(v) s.escope=v; else delete s.escope; }, 96, 'lgPlaceList');
+      lab('within'); txt('12', s.er, v=>{ if(v) s.er=v; else delete s.er; }, 40);
+    }
     sel(Object.keys(LG_CMDS).map(k=>[k, LG_CMDS[k]]), s.cmd||'hunt', v=>{ s.cmd=v; });
     if((s.cmd||'hunt')==='alert' || s.cmd==='post'){ txt('place', s.at, v=>{ if(v) s.at=v; else delete s.at; }, 120, 'lgPlaceList'); }
   }

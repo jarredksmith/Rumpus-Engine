@@ -113,8 +113,17 @@ const mk = () => new Function('_lgName',
     eq(got[k], 'NAMED', 'build 1402: ' + k + ' names something, so it interpolates');
   eq(got.sound, 'http://x/y.mp3', 'a URL does not');
   eq(got.clip, 'Open', '...and neither does a clip name, which is matched rather than computed');
-  eq((extractConst('_LG_NAME_FIELDS').match(/'/g) || []).length / 2, 6,
-    'six name fields, stated once — build 1402 listed them in a comment and applied them by hand');
+  /* build 1408 added the command's scope as the seventh, and that it cost ONE list entry rather than a
+     second edit in the dispatch is the whole return on this build. Counting the set's members would just
+     be a number to bump; what matters is that every one of them goes through the interpolator. */
+  {
+    const fields = extractConst('_LG_NAME_FIELDS').match(/'([^']+)'/g).map(x => x.slice(1, -1));
+    assert(fields.length >= 6 && fields.includes('target') && fields.includes('at'),
+      'the name fields are stated once — build 1402 listed them in a comment and applied them by hand');
+    const probe = {}; for (const f of fields) probe[f] = 'x';
+    const out = scope(Object.assign({ verb: 'spawnprop' }, probe));
+    for (const f of fields) eq(out[f], 'NAMED', 'every member of the set interpolates: ' + f);
+  }
 }
 
 // ------------------------------------------------------- the editor stops contradicting the runtime ----
