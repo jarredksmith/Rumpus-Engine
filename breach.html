@@ -19773,6 +19773,21 @@ function releaseModelLights(obj){
   const ls = obj && obj.userData && obj.userData.modelLights; if(!ls) return;
   for(const L of ls){ if(typeof unregisterEmitterLight==='function') unregisterEmitterLight(L); }
 }
+/* build 1409: DECLARED HERE, above finalizeProp, and that placement is the fix's own bug report.
+   `loadHostedProps()` is called bare at module level and builds the saved level's props at BOOT, so it
+   reaches finalizeProp — which now schedules a physics body for every static prop rather than only for a
+   model. With these two ~15,000 lines below, the first saved level threw
+   "Cannot access '_physRebuildT' before initialization" on the very first prop. Build 1331 recorded this
+   exact class and its rule: anything the boot loader can reach must be declared above it. The gltf guard
+   is what hid it before — a boot-time primitive never called this, and a model loads asynchronously, long
+   after module evaluation.
+
+   The long wait exists to coalesce a LOAD BURST — a joiner's models arriving over seconds. A primitive is
+   built synchronously and has no burst to wait for, so when nothing is loading the window is short: a
+   platform the graph spawns under a player is solid in ~4 frames instead of ~21. The tick re-arms itself
+   on _glbPending, so a burst that starts later is still coalesced. */
+let _physRebuildT = 0;
+const PHYS_DEBOUNCE_MS = 350, PHYS_DEBOUNCE_FAST_MS = 60, PHYS_WAIT_MAX = 20;   // 20 x 300 ms = 6 s, then go ahead regardless
 function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   obj.position.set(t[0], t[1], t[2]);   // provisional; the terrain lift is applied below once the footprint is known
   obj.rotation.set(t[3], t[4], t[5]);
@@ -19836,7 +19851,19 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   else propModels.push(obj);
   if(gltf){ obj.userData.animClip = animClip || ''; playModelAnimations(obj, gltf, obj.userData.animMode, true); }   // build 1064: props accept custom-clip-only rigs (static models become animatable)
   if(mat && isMatPrimitive(src)) applyStoredMaterial(obj, mat);   // color / texture / emissive
-  if(gltf && !obj.userData.phys && typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();   // build 643: a model loaded late (e.g. on a joiner) -> rebuild physics so it's solid (you can't walk through it)
+  /* build 1409: EVERY static prop, not just a model. Build 643 wrote this for a late-loading GLB on a
+     joiner and gated it on `gltf`; a primitive has none, so a prop spawned during play never got a Rapier
+     body and the player walked straight through it. Measured on a box and a wedge, with a physics rebuild
+     as the control: no body -> the player falls from 3.00 to 0.08 and walks through the ramp; rebuilt ->
+     stands at 3.00 and climbs the ramp to 2.34. That is build 1216's spawnprop verb ("buy -> building
+     appears") building scenery you fall through, and a co-op joiner's primitives arriving intangible.
+
+     THE DEBOUNCED SCHEDULER IS THE RIGHT HOOK RATHER THAN AN IMMEDIATE addStaticColliderFor, and the
+     reason is ordering: finalizeProp runs BEFORE the entry's dynamic state is applied, and
+     setPropDynamic() does not remove a static body it finds — it only splices the prop out of `colliders`.
+     An immediate static body on a prop about to become dynamic would strand an invisible solid box at the
+     spawn point. The tick walks `colliders`, which a dynamic prop has already left, so it cannot happen. */
+  if(!obj.userData.phys && typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();
   return obj;
 }
 // Physics state (declared here, before spawnProp, because restoring a saved/synced dynamic prop calls
@@ -33469,7 +33496,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1408 · 2026-08-06';
+const BUILD_VERSION = 'build 1409 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34515,13 +34542,20 @@ function buildJoints(){
 // arrive over the network well after the world was built at match start) — so they had no Rapier collider and
 // you could walk straight through them. Whenever a model finishes loading, rebuild the world once the load burst
 // settles, so every static prop becomes solid for the character controller. Debounced; waits out _glbPending.
-let _physRebuildT=0;
 function _schedulePhysRebuild(){
   if(typeof buildPhysWorld!=='function') return;
   if(_physRebuildT) clearTimeout(_physRebuildT);
+  const _wait = (typeof _glbPending!=='undefined' && _glbPending>0) ? PHYS_DEBOUNCE_MS : PHYS_DEBOUNCE_FAST_MS;
+  let _waited = 0;
   _physRebuildT=setTimeout(function tick(){
     _physRebuildT=0;
-    if(typeof _glbPending!=='undefined' && _glbPending>0){ _physRebuildT=setTimeout(tick, 300); return; }   // still loading models — wait for the burst to finish
+    /* build 1409: THE WAIT IS BOUNDED. This re-armed itself for as long as _glbPending was non-zero, so a
+       single model that never settles — a host that accepts the connection and then hangs, which is not the
+       404 the error path already counts — left every prop after it intangible for the rest of the session.
+       Found because this sandbox is exactly that case: _glbPending sat at 4 and a platform the graph had
+       just built stayed walk-through indefinitely. Past the cap it goes ahead: addStaticColliderFor is
+       idempotent and a later burst schedules again, so the worst case is one extra pass over `colliders`. */
+    if(typeof _glbPending!=='undefined' && _glbPending>0 && ++_waited <= PHYS_WAIT_MAX){ _physRebuildT=setTimeout(tick, 300); return; }   // still loading models — wait for the burst to finish
     // build 1194: INCREMENTAL. A late-loading GLB is a new STATIC — nothing about the terrain, the other
     // statics, the dynamics or the joints changed, so rebuilding all of it (the multi-second trimesh
     // stall, once per load burst) bought nothing. Add the missing statics to the live world; fall back to
@@ -34532,7 +34566,7 @@ function _schedulePhysRebuild(){
       if(_needFull) buildPhysWorld();
       else { for(const c of colliders) addStaticColliderFor(c); }   /* stamped ones return immediately */
     } }catch(e){}
-  }, 350);
+  }, _wait);
 }
 function destroyPhysWorld(){
   if(typeof clearFragments==='function') clearFragments();   // drop transient debris first, so its bodies aren't left dangling after free()

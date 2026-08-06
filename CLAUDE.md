@@ -2618,6 +2618,94 @@ a station exists — is asserted directly now, beside the url landing as data ei
 from `restoreLevel`, so inserting it first makes every one of those anchors ambiguous. The count assert
 caught it on the first run and nothing was written, which is what they are for.
 
+## A prop spawned during play was intangible (build 1409)
+
+Found by the MOVEMENT booth, which is the fourth of the gauntlet's scoped sections and had never been swept:
+the player walked straight through a ramp while `groundHeightAt` reported its surface climbing under them.
+
+`finalizeProp` scheduled a physics body only `if(gltf && ...)`. Build 643 wrote that line for a late-loading
+MODEL on a joiner — *"you could walk straight through them"* — and a PRIMITIVE has no gltf, so it never
+qualified. Measured with a physics rebuild as the control, so the null cannot be "nothing supports the
+player here":
+
+```
+                  body    stand on it    walk at it
+box,   no rebuild  false  fell to 0.08   walked through
+box,   rebuilt     true   3.00           blocked
+wedge, no rebuild  false  fell to 0.08   walked through
+wedge, rebuilt     true   1.20           climbed to 2.34
+```
+
+So **build 1216's `spawnprop` verb built scenery you fall through** — the verb whose own entry advertises "a
+tycoon's buy → building appears, a wave-defense buildable turret" — and a co-op joiner's primitives arrived
+intangible.
+
+**The DEBOUNCED scheduler is the right hook, not an immediate `addStaticColliderFor`, and the reason is
+ordering.** `finalizeProp` runs BEFORE the entry's dynamic state is applied, and `setPropDynamic` does not
+release a static body it finds — it only splices the prop out of `colliders`. An immediate static body on a
+prop about to become dynamic would strand an invisible solid box at the spawn point. The tick walks
+`colliders`, which a dynamic prop has already left, so it cannot happen.
+
+**Two things the fix had to add, and both are the same defect one layer along:**
+
+- **The wait is now BOUNDED.** It re-armed for as long as `_glbPending` was non-zero, so a single model that
+  never settles — a host that accepts the connection and then hangs, which is *not* the 404 the error path
+  already counts — left every prop after it intangible for the rest of the session. Found because the probe
+  sandbox is exactly that case: `_glbPending` sat at 4 and a platform the graph had just built stayed
+  walk-through indefinitely. Past `PHYS_WAIT_MAX` it goes ahead; `addStaticColliderFor` is idempotent and a
+  later burst schedules again, so the worst case is one extra pass over `colliders`.
+- **With nothing loading the window is 60 ms rather than 350.** The long wait exists to coalesce a load
+  BURST; a primitive is built synchronously and has no burst to wait for, so a platform spawned under a
+  player is solid in ~4 frames instead of ~21.
+
+### The TDZ the fix created, which is build 1331 arriving on schedule
+
+`loadHostedProps()` is called bare at module level and builds the saved level's props at BOOT, so it reaches
+`finalizeProp` — which now schedules for **every** static prop. With the declarations ~15,000 lines below,
+the first saved level threw **`Cannot access '_physRebuildT' before initialization`** on its very first
+prop. The `gltf` gate is what had hidden it: a boot-time primitive never called this, and a model loads
+asynchronously, long after module evaluation. `test-1409` pins the whole chain — declarations before
+`finalizeProp`, before `loadHostedProps`, before the module-level call.
+
+Two pins moved in `test-495` (build 643's own harness), both correctly: "a freshly LOADED model schedules a
+rebuild" became "a freshly built static prop — model OR primitive — schedules a rebuild", which is the
+widening; and "it waits for the burst" gained "for a bounded time".
+
+## The movement booth (probe, at build 1409) — 15/17, and the two open
+
+`tools/probe/movement-booth.mjs` sweeps the traversal verbs from the player's own inputs in a running frame
+loop: the held/tapped jump (1301), coyote time and the press buffer (1160), air control (1361), the slide
+(926), the ledge grab and pull-up (1244/1289/1290), jump pads (993), ladders, water, low-gravity and haste
+zones (1193), and the teleport verb. **Fifteen pass.** Two remain, stated rather than hidden:
+
+- **A ramp stalls the player partway up.** Feet climb 0 → 1.44 of a 2.4 m wedge and then stop dead at the
+  same z for the rest of the run. The same wedge is climbed to 2.39 by an ENEMY (the AI booth's own check),
+  and the KCC's `maxSlopeClimbAngle` is 55° against this slope's 16.7°, so neither the geometry nor the
+  slope limit explains it. Unexplained; the next thing to probe.
+- **A jump pad reads `kick 21.5` and `launched 0` inside the booth's sequence**, while the identical pad
+  measured standalone imparts 21.7 and lifts the player 0.22 → 4.55. So the pad works and something in the
+  booth's accumulated state defeats it. A physics rebuild mid-play was the obvious suspect and is
+  **eliminated by measurement**: a jump apexes at 2.71 before and after `buildPhysWorld()`, four times over.
+
+### Six instrument faults, and three of them read exactly as engine defects
+
+- **`_jPressed` is a per-frame `const`** derived inside `loop()` from the held key's rising edge, so setting
+  it from outside is overwritten before it is read. Three jump checks measured "the jump never fires".
+- **A diagnostic passed SIX numbers to `spawnProp`**, so the scale became the rotation and the "slab" was a
+  wildly rotated unit cube. The engine was right; the fixture was a different shape than I thought.
+- **The debounce runs on the WALL clock**, which a synchronous frame drive never reaches — 180 driven frames
+  looked like "the body never arrives" when no time had passed at all.
+- **`gameOver` does not stop the frame loop** but it stands down the jump pads and the zone updates, so a
+  sweep that cleared only the loop's own gates measured "a jump pad does nothing" with pad and player
+  exactly where they should be. It is in the shared rig's gate list now.
+- **A jump cooldown left by an earlier check** silently ate the next jump: the pad and the low-gravity
+  checks both read "never left the ground" purely from that.
+- **`__stand` settles for four frames, and standing on a pad IS the trigger** — so the pad fired during the
+  settle and the measurement then started from a player already several metres up.
+
+`tools/probe/drive.mjs` is the frame drive factored out of the AI booth so both sweeps share one
+implementation, with the gate list, the pure virtual clock and the positive control in one place.
+
 ## An order reaches the enemies at ONE booth (build 1408)
 
 The gap the AI booth surfaced while it was being written, and the first thing a multi-room level hits.
