@@ -3302,36 +3302,26 @@ Three pins moved (1404 ×3), each keeping its intent: the override holds a LIST 
 bank with no dwell shows, the re-resolve covers the whole bank, and the `vw` payload carries the dwell.
 1404's own stubs gained a `parent`, which is what the engine reads to mean live.
 
-## The next build, specified (critic pass after build 1381)
+## The post-1381 critic pass is CLOSED (recorded build 1414)
 
-A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its
-blind verdict names ONE tell: *"regular, unbroken texture tiling on the two largest surfaces in frame."*
-The finding is verified in source and is worth writing down precisely, because it is a real interaction
-between the two builds that came before it:
+This section used to be titled *"The next build, specified"* and it sat near the top of the file reading
+as the standing next task **after all three of its items had shipped**. A session picked it up, started
+re-implementing the macro layer, and found `applyMacroDetail` already in the tree. A stale "build this
+next" note is worse than no note: it is followed.
 
-**Builds 1378 and 1379 exclude each other from the surfaces that most need both.** `albedoDetailWanted`
-requires `!mat.map`, and 1378 gave `floorMat` and `wallMat` an authored map — so the ground plane and the
-boundary walls are the only surfaces in the engine that get NEITHER a break-up layer (1379 refuses them)
-NOR macro variation (the texture is a 4 m tile repeated ~35x across 140 m with nothing on top of it).
+The blind verdict named ONE tell — *"regular, unbroken texture tiling on the two largest surfaces in
+frame"* — and two supporting findings. Where each of them went:
 
-1379's gate was written for a real reason — *two detail systems on one surface is double grain* — and that
-reason does not cover this case. A MACRO layer is a different technique from a detail layer: at 2-3x the
-tile period it breaks the visible repeat rather than competing with the texture's own frequency.
+| finding | closed by |
+|---|---|
+| `floorMat`/`wallMat` get neither a break-up layer (1379 refuses a material with a map) nor macro variation | **build 1382.** `applyMacroDetail(floorMat, MACRO_PERIOD_M)` and the same for `wallMat`, at `MACRO_TILE_MUL = 2.75` — deliberately not an integer multiple of `SURF_TILE_M`, or the layer lands on the repeat it exists to hide. The frequency is `1 / periodMetres`, because these two geometries are real metres and unscaled; the primitive path's `_albDetailFreq` would have been three orders of magnitude off and would have looked like nothing happening |
+| the 1145/1379 procedural normal noise aliases with no AA to suppress it once MSAA sheds | **build 1383.** `_syncOdBump` indexes `_OD_BUMP_STEP` by `_prStepI`, so the relief fades down the adaptive ladder exactly as the critic suggested — by reference through one shared uniform (1181), so a rung change is one CPU write and recompiles nothing |
+| point lights still cannot cast shadows (29 of them around the stock spawn) | **build 1348, deliberately parked with its reasons.** Flipping `castShadow` at runtime recompiles (measured: 54 → 65 programs in one frame), so a point shadow could never be a live toggle; and the frame-cost sweep **failed its own control** (a 0-caster baseline read 396 ms and the return to 0 read 554 ms), so there was no honest number to ship a cube shadow against. The panel names the consequence and the fix (use a Spot) instead |
 
-What the build has to get right, and neither is a free choice:
-- **The period must NOT be an integer multiple of `SURF_TILE_M`**, or it reinforces the repeat it exists to
-  hide. ~11 m against a 4 m tile is 2.75x.
-- **The frequency semantics differ from the primitive path.** `_albDetailFreq(span) = ALB_DETAIL_PER_M x
-  span` assumes a UNIT local box scaled by the object. `floorMat`'s geometry is a real
-  `PlaneGeometry(ARENA*2, ARENA*2)` and the boundary walls are `BoxGeometry(ARENA*2, H, 2)` — both
-  unscaled, in metres — so `vOdPos` spans 140, and the frequency there is `1 / periodMetres`, not
-  `perMetre x span`. Using the primitive derivation on them would put the macro layer three orders of
-  magnitude off, and it would look like nothing at all rather than like an error.
-
-The critic's other two findings, both verified: point lights still cannot cast shadows (build 1132, and
-build 1142 counts 29 of them around the stock spawn), and there is no temporal or specular AA, so the
-1145/1379 procedural normal noise aliases with nothing to suppress it once MSAA sheds — its suggestion is
-to fade `uOdBump` down with `_prStepI` so the noise never outruns the AA meant to cover it.
+**The third is the only one still open, and it is open on an INSTRUMENT, not on a decision.** What it
+needs is a cost measurement that survives a control — which this session's rig can now plausibly give
+(paused scene, `__drive` on a virtual clock, a control pair that returns). Anyone picking it up should
+start by reproducing 1348's failed sweep and getting the control to close, not by writing a cube shadow.
 
 ## The shadow patches are verified to land (build 1381)
 
