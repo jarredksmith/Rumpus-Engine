@@ -3318,6 +3318,63 @@ frame"* — and two supporting findings. Where each of them went:
 | the 1145/1379 procedural normal noise aliases with no AA to suppress it once MSAA sheds | **build 1383.** `_syncOdBump` indexes `_OD_BUMP_STEP` by `_prStepI`, so the relief fades down the adaptive ladder exactly as the critic suggested — by reference through one shared uniform (1181), so a rung change is one CPU write and recompiles nothing |
 | point lights still cannot cast shadows (29 of them around the stock spawn) | **build 1414**, after 1348 parked it on a broken instrument. See below |
 
+## The doorway carried the gear and lost the run (build 1415)
+
+Found by asking what the gauntlet the user described actually needs — *"break out large rooms or levels
+into separate json files ... a trigger that shows a loading message and then picks up the game with the
+newly loaded scene"* — and then building it rather than reasoning about it.
+
+Build 1394 made that door real for the PLAYER: weapons, ammo and HP cross it behind `keep`. **A gauntlet is
+not made of weapons.** It is made of score, of which booths are finished, of the key from room one — all of
+which live in `logicVars`, which `logicStart` clears on every level load. `_persistSeed` then puts back
+whatever `campaignVars` holds, and **nothing but the level-CLEAR path had ever written `campaignVars`.**
+
+Measured on a three-room campaign, with a clear as the control (`tools/probe/doorway-state.mjs`):
+
+```
+through a DOOR     score 12  ->  null     and the player arrived at room 1's checkpoint, (-55,-55)
+through a CLEAR    score 30  ->  30       arriving at the room's own spawn
+the INVENTORY      redKey    ->  redKey   <- the positive control
+```
+
+**The inventory surviving is what made both failures attributable.** Build 1227 writes items through on
+pickup, so they already ride the blob and cross the door — which proves the persistence machinery works
+across a transition and narrows the fault to the two things that waited for a commit.
+
+The second row is the worse one and nobody had reported it: a doorway with no arrival tag **materialised
+the player at the previous room's checkpoint coordinates**, which name a spot in a level that is no longer
+loaded. Losing a score is annoying; arriving inside a wall is not recoverable.
+
+### The fix is one call, because the function already did exactly the right two things
+
+`_persistCommit` clears the checkpoint and carries the live variables. Its NAME says *the level was
+CLEARED* and its comment said so too — but both behaviours are properties of **leaving**, and a doorway
+leaves. So `goto` calls it. No second implementation, which is the defect this file records more than any
+other; only the comment widened.
+
+Three decisions:
+- **Before the load.** `_campaignLoad` ends in `startGame`, which is where the clearing happens, so
+  committing after it would carry forward values that had already been wiped.
+- **After every refusal.** A `goto` that names a level outside the campaign must not clear a checkpoint on
+  its way to doing nothing.
+- **UNCONDITIONAL, deliberately not behind `keep`.** `persistVars` is *already* the creator's opt-in —
+  they ticked "carry this between levels" — and requiring a second one would lose a hub world whose author
+  ticked the box and used a plain `goto`. `keep` answers a different question (does the PLAYER arrive as
+  they left, or re-equipped), which is why that one is a flag and this is not.
+
+### The control failed first, and that was the instrument
+
+The probe's first run reported the doorway losing the score **and the clear losing it too**, which proves
+nothing at all. `persistVars` is level DATA, and the rooms had been serialized before it was set — so the
+first load blanked it and both paths were measuring an empty list. Ticking it in each room's file (which is
+what a creator does) made the control close and the finding appear. *A control that fails is the
+instrument, not the finding* — recorded for the fourth time in this file, and it cost one run rather than a
+published wrong conclusion.
+
+**Backticks inside a template literal, for the ninth time** (1328, 1342, 1357), in a comment I added to the
+probe *after* running the lint. The habit that actually fixes it: run `tools/probe/lint.mjs` after the last
+edit, not before the first.
+
 ## The point-light shadow was blocked by an instrument, not by a decision (build 1414)
 
 Builds 1132 and 1348 both refused a point-light shadow and both were right on the evidence they had. 1348

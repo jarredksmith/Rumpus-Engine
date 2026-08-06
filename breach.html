@@ -12612,7 +12612,16 @@ function _persistResume(skipPos){
 function _persistSeed(){   // a match begins: the carried values become live variables again
   for(const k of persistVars){ if(campaignVars[k]!=null) logicVars[k]=campaignVars[k]; }
 }
-function _persistCommit(){ // the level was CLEARED: carry the live values forward. A retry never reaches here.
+/* THIS LEVEL IS OVER: carry the live values forward. A retry never reaches here.
+
+   Build 1415 renamed nothing and moved nothing, but it did widen what this means. Until then the only
+   caller was the level-CLEAR path, so the two things it does were described as properties of clearing.
+   They are properties of LEAVING, and a build-1394 doorway leaves:
+     - the carried variables must take their current values, or the score the player just earned is
+       replaced by whatever the last CLEAR happened to write (measured: 12 in, null out);
+     - the checkpoint must go, because it names a spot in the room being left. Measured on a doorway
+       with no arrival tag, the player materialised in room 2 at room 1's checkpoint coordinates. */
+function _persistCommit(){
   _persistCpVal = null;   // build 1227: a completed game starts its next run at the start, not mid-way through
   if(!persistVars.length){ _persistStore(); return; }   // still write: the checkpoint clear (and inventory) must land even with no vars authored
   for(const k of persistVars) campaignVars[k]=+logicVars[k]||0;
@@ -13092,6 +13101,21 @@ function _lgPulse(id, pin){
       // goto verb never did, so walking through a door reset your weapons, ammo and health to whatever the
       // next room's loadout happened to be. For a hub world that is right; for a room split out of one
       // level it is exactly wrong, which is why it is a FLAG and not a behaviour change.
+      /* build 1415: THE RUN CROSSES THE DOORWAY, not just the gear.
+         `logicStart` clears `logicVars` on every level load and `_persistSeed` puts back whatever
+         `campaignVars` holds — and until this line nothing but the level-CLEAR path ever wrote it. So a
+         gauntlet split into one file per booth (which is the arrangement build 1394 exists to serve) lost
+         its score at every door, silently, while a clear carried it perfectly.
+
+         UNCONDITIONAL, deliberately not behind `keep`. `persistVars` is ALREADY the creator's opt-in —
+         they ticked "carry this between levels" — and requiring a second one would mean a hub world whose
+         author ticked the box and used a plain `goto` still lost it. `keep` answers a different question
+         (does the PLAYER arrive as they left, or re-equipped), which is why it is a flag and this is not.
+
+         Before the load, because `_campaignLoad` ends in `startGame`, which is where the clearing happens.
+         The INVENTORY needs nothing here: build 1227 writes items through on pickup, so it already rides
+         the same blob — proven by the probe, where it is the positive control. */
+      if(typeof _persistCommit === 'function') _persistCommit();
       const _carry = p.keep ? _captureLoadout() : null;
       const _dest = campaign.levels[_n1 - 1];
       _loaderTitle = 'Entering ' + String((_dest && _dest.name != null) ? _dest.name : ('Level ' + _n1)).slice(0, 60);
@@ -33876,7 +33900,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1414 · 2026-08-06';
+const BUILD_VERSION = 'build 1415 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

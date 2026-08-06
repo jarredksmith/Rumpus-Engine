@@ -36,6 +36,7 @@ once by accident and removed in build 1293's follow-up.
 | `fair-hub.mjs` | builds 1410/1411/1412 driven TOGETHER — the composition, not the features |
 | `point-shadow-cost.mjs` | what a point-light shadow costs, in DRAW CALLS — the measurement build 1348 could not get to close (1414) |
 | `point-shadow-blocks.mjs` | that a wall actually blocks the lamp, on pixels, with shadow-off as the control (1414) |
+| `doorway-state.mjs` | whether a level-to-level DOORWAY carries the run — score, inventory, checkpoint (1415) |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.
@@ -52,6 +53,10 @@ updates by hand, don't: hash the bytes.
 that calls `renderScene`/`renderer.render` directly and reads `renderer.info.render` is reading a RUNNING
 TOTAL — the counts climb monotonically through a sweep and keep climbing on the return to the baseline.
 `point-shadow-cost` found this only because its control failed. Call `renderer.info.reset()` per sample.
+
+**Run the lint AFTER the last edit, not before the first.** A backtick inside a probe's page-code template
+closes the literal and Node reports it at an innocent line. It has now cost nine cycles, and build 1415's
+was in a comment added *after* a clean lint run.
 
 **Programs are cached for the life of the page.** A recompile measurement has to run BEFORE anything else
 has exercised that shader variant, or it reads 0 and looks like a refutation.
