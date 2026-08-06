@@ -9817,8 +9817,28 @@ function updateShadowLightBudget(dt){
     list.sort((a,b)=>a._sd - b._sd); } };
   rank(want); rank(wantPt);
   let changed = false;
-  const apply = (list, n)=>{ for(let i=0;i<list.length;i++){
-    const L = list[i].userData.light, on = i < n && list[i].userData.lon !== false;
+  /* build 1417: A DARK LAMP DOES NOT SPEND A SLOT. Until this, the test was `i < n && lon !== false` —
+     `i` is the RANK, so a lamp a signal had switched off occupied its place in the budget and resolved to
+     "off", producing no shadow and denying the slot to a lit lamp behind it. Shipped since 1132, so it has
+     applied to every signal-controlled SPOT as well; build 1414 recorded it rather than changing it,
+     because it is not a property of point lights and deserved its own reasoning.
+
+     Measured on four lamps in a line at a budget of two (tools/probe/shadow-slot-dark.mjs):
+
+         all lit          lit+SHADOW  lit+SHADOW  lit  lit    -> 2 casting
+         nearest two off  dark  dark  lit  lit                -> 0 casting   <- two lit lamps, no shadows
+         back on          lit+SHADOW  lit+SHADOW  lit  lit    -> 2 casting
+
+     So a corridor of switchable lamps went completely shadowless whenever the switch nearest the player
+     happened to be off. Counting only the LIT ones toward the cap costs one local and fixes it.
+
+     It also makes the caster COUNT steadier, which is not a side note: the count is
+     NUM_POINT_LIGHT_SHADOWS / NUM_SPOT_LIGHT_SHADOWS, a #define, and build 1414 measured a change to it at
+     11 recompiled programs in one frame. Before, walking past lamps that switch on and off moved the count
+     between 0 and n; now it holds at min(n, lit) for as long as the level has n lit casters anywhere. */
+  const apply = (list, n)=>{ let k = 0; for(let i=0;i<list.length;i++){
+    const L = list[i].userData.light, on = (list[i].userData.lon !== false) && k < n;
+    if(on) k++;
     if(L.castShadow !== on){ L.castShadow = on; changed = true; } } };
   apply(want, cap); apply(wantPt, capPt);
   if(changed && typeof _dirtyShadows==='function') _dirtyShadows(2);   // a light that just started casting has no map yet
@@ -33919,7 +33939,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1416 · 2026-08-06';
+const BUILD_VERSION = 'build 1417 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

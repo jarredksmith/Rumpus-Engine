@@ -92,13 +92,12 @@ const src = gameSource();
     const b3 = mkBudget(off); b3.run(1);
     assert(!off[0].userData.light.castShadow, 'a lamp a signal switched off never casts');
     assert(off[1].userData.light.castShadow, '...and the next one does');
-    // Worth stating rather than asserting an ideal: a dark lamp still occupies its RANK, so only one of
-    // these two slots is spent. That is build 1132's shipped shape (`on = i < n && lon !== false`) and it
-    // is identical for spots; changing it is a different build with its own reasoning, not a side effect
-    // of adding a light type. Recorded in CLAUDE.md's open work.
-    assert(!off[2].userData.light.castShadow,
-      'and the dark lamp still holds its rank, so a third lamp does not inherit the freed slot ' +
-      '(pre-existing, shared with spots, recorded not changed)');
+    // This build RECORDED that a dark lamp still occupied its rank, and said the fix was a different
+    // build with its own reasoning rather than a side effect of adding a light type. That build is 1417,
+    // and it closed it — so the assertion inverts, which is the honest outcome of a recorded backlog item
+    // being picked up rather than forgotten.
+    assert(off[2].userData.light.castShadow,
+      'and the dark lamp does not hold its rank: the third lamp inherits the freed slot (build 1417)');
   }
   // nothing wanting a shadow at all is an early return, not a sort of an empty list every third of a second
   {

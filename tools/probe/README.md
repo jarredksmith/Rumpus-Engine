@@ -38,6 +38,7 @@ once by accident and removed in build 1293's follow-up.
 | `point-shadow-blocks.mjs` | that a wall actually blocks the lamp, on pixels, with shadow-off as the control (1414) |
 | `doorway-state.mjs` | whether a level-to-level DOORWAY carries the run — score, inventory, checkpoint (1415) |
 | `campaign-carry.mjs` | whether a carried value survives a room that never declared it (1416) |
+| `shadow-slot-dark.mjs` | whether a lamp a signal switched off still spends a shadow slot (1417) |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.

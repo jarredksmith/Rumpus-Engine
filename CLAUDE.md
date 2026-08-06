@@ -3416,6 +3416,40 @@ published wrong conclusion.
 probe *after* running the lint. The habit that actually fixes it: run `tools/probe/lint.mjs` after the last
 edit, not before the first.
 
+## A switched-off lamp was holding a shadow slot (build 1417)
+
+Build 1414 recorded this and deliberately left it, because it is not a property of point lights: it is build
+1132's shipped ranking, so it has applied to every signal-controlled **spot** since that build.
+
+```js
+const L = list[i].userData.light, on = i < n && list[i].userData.lon !== false;
+```
+
+`i` is the RANK. A lamp a signal had switched off occupied its place in the budget and resolved to "off" —
+producing no shadow and denying the slot to a lit lamp behind it. Measured on four lamps in a line at a
+budget of two, with the all-lit case as the control at both ends (`tools/probe/shadow-slot-dark.mjs`):
+
+```
+all lit          lit+SHADOW  lit+SHADOW  lit  lit    -> 2 casting
+nearest two off  dark  dark  lit  lit                -> 0 casting   <- two lit lamps, no shadows
+back on          lit+SHADOW  lit+SHADOW  lit  lit    -> 2 casting
+```
+
+**A corridor of switchable lamps went completely shadowless whenever the switch nearest the player happened
+to be off.** Counting only the LIT ones toward the cap costs one local and fixes it.
+
+**The second half is not a side note.** The caster count IS `NUM_POINT_LIGHT_SHADOWS` / `NUM_SPOT_LIGHT_SHADOWS`,
+a `#define`, and build 1414 measured one change to it at **11 recompiled programs in a single frame**. Before,
+walking past lamps that switch on and off moved the count between 0 and n; now it holds at `min(n, lit)` for
+as long as the level has n lit casters anywhere. Across seven on/off patterns the total went from swinging to
+**two distinct values, and zero of the patterns containing a lit lamp came out shadowless.**
+
+**One pin's WORDING was already right while its regex pinned the defect.** `test-1132` has asserted *"a light
+switched off by a signal does not hold a shadow slot"* since that build — a true statement of intent attached
+to a regex quoting the code that contradicted it. The sentence is unchanged; what changed is that it is now
+true. That is a third variety of the pin traps this file records: not a pin satisfied by prose, nor defeated
+by it, but a pin whose MESSAGE and REGEX had drifted apart from each other.
+
 ## The point-light shadow was blocked by an instrument, not by a decision (build 1414)
 
 Builds 1132 and 1348 both refused a point-light shadow and both were right on the evidence they had. 1348
@@ -3494,12 +3528,13 @@ blind to: the guard refused a staging whose version string was identical to the 
 
 **The general rule: a freshness check keyed on a value the workflow updates last is not a freshness check.**
 
-### Open, recorded rather than changed
+### Recorded rather than changed — and then changed, in build 1417
 
-A light a signal switched **off** still occupies its rank in the budget (`on = i < n && lon !== false`), so a
-dark lamp holds a shadow slot a lit one further away could have used. That is build 1132's shipped shape,
-identical for spots, and correcting it is its own build with its own reasoning — not a side effect of adding
-a light type. `test-1414` asserts the shipped behaviour and says so.
+A light a signal switched **off** still occupied its rank in the budget (`on = i < n && lon !== false`), so a
+dark lamp held a shadow slot a lit one further away could have used. That is build 1132's shipped shape,
+identical for spots, and correcting it was its own build with its own reasoning rather than a side effect of
+adding a light type. **That build is 1417** — see below. `test-1414`'s assertion inverted when it landed,
+which is what a recorded backlog item being picked up rather than forgotten looks like.
 
 ## The shadow patches are verified to land (build 1381)
 

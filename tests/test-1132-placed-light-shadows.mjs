@@ -105,7 +105,10 @@ const src = gameSource();
   // build 1414 split the ranking into a shared `rank`/`apply` pair so point casters get their own cap.
   // Both intents are unchanged and are now asserted by EXECUTION further down rather than by quotation.
   assert(/list\.sort\(\(a,b\)=>a\._sd - b\._sd\);/.test(fn), 'nearest to the camera win');
-  assert(/on = i < n && list\[i\]\.userData\.lon !== false;/.test(fn),
+  // This assertion's WORDING was always the intent and the code contradicted it until build 1417: `i` is
+  // the rank, so a dark lamp held its place in the budget and merely resolved to off. The sentence is
+  // unchanged; what changed is that it is now true, and it is asserted by execution in test-1417.
+  assert(/on = \(list\[i\]\.userData\.lon !== false\) && k < n;/.test(fn),
     'a light switched off by a signal does not hold a shadow slot');
   assert(/if\(L\.castShadow !== on\)\{ L\.castShadow = on; changed = true; \}/.test(fn), 'only writes on a real change');
   assert(/if\(changed && typeof _dirtyShadows==='function'\) _dirtyShadows\(2\);/.test(fn),
