@@ -2909,6 +2909,97 @@ page-code template literal closes it, and Node reports "missing ) after argument
 It skips escaped backticks and nested `${...}` interpolation, and is controlled both ways: 123 probes clean,
 one injected backtick caught at the right line. **Run it before running a probe.**
 
+## The level can point at where to go (build 1412)
+
+A level made of separate places — a fair with five booths, a hub with four doors, an objective across the
+map — could TELL the player where to go (objective text, a toast, and since 1411 a sign at the door) and
+could not **point**. The only marker in the engine was `mapWaypoint`, which a PLAYER drops on their own
+map. A creator had nothing.
+
+`marker` is a world verb, so it inherits `who` from build 1232 unchanged: the default reaches everyone,
+and `actor` marks the objective for the one player who tripped the trigger — which is what a co-op level
+with a split objective means. `_applyMarker` is the ONE applier and a client runs it on the identical
+payload, so the two cannot come to different answers.
+
+Four decisions:
+
+- **A SET, not one marker, capped at 8.** "The objective" and "here are the five booths" are both real,
+  and a creator switching between them should not need a different verb. **The same tag twice is the same
+  marker**, updated in place — otherwise an interval that re-marks fills the cap in four seconds.
+- **One place, never a random one.** `_lgPlaceAt` picks at RANDOM among props sharing a tag so a spawned
+  squad scatters (1394 recorded that distinction), and an arrow that points at a different crate every
+  frame is not a marker. A tag resolves the FIRST live prop — which is also what makes it **track**: a
+  marker on a lift rides it, and one on a prop the graph moves follows. Anything else (`me`, `start`,
+  `#here`, a trigger name) resolves to a static point through the same shared vocabulary.
+- **DOM in the HUD, not a world sprite.** An objective marker has to read THROUGH geometry (that is what
+  it is for), stay crisp at any distance, and clamp to the screen edge when the target is behind you. A
+  world-space sprite fights all three.
+- **A place nothing answers to is REFUSED and reported** (1214's channel). An arrow pointing nowhere is
+  worse than no arrow.
+
+The label interpolates through `_hwInterp` — the same function a HUD widget and a build-1411 sign use — so
+all three agree about what `{coins@}` means, and `Hits {hits}` on a marker is a scoreboard you can see
+from across the map.
+
+### The one thing the maths will not do for you
+
+**Behind the camera, `project()` mirrors BOTH axes.** A target at your back therefore lands on the wrong
+side of the screen, and the arrow points the player exactly the wrong way — the single worst failure this
+feature has, and it looks entirely plausible in code. `const behind = _mkV.z > 1` flips it back before the
+edge clamp. The probe measures it directly: with the player facing −Z and the target at +Z, the arrow must
+sit at the BOTTOM of the screen (**y 326 of 360**); unflipped it sits at the top.
+
+### Two defects the live probe found and no Node test could have
+
+- **The signal router's verb list — build 1277's defect, committed again, by me.** `marker` was in the Do
+  node's dropdown, in the signal editor, in `SIG_KEYS` and in `_applyWorldAction`, and the router's
+  hand-kept `s.do==='…'||…` chain did not name it, so **the verb was completely inert**. Every end was
+  pinned and the wire was not. `test-1412` opens by asserting the router line, because that is the link
+  that keeps going missing.
+- **A null read that took the frame loop down.** The guard for "the marked prop was destroyed" was written
+  INSIDE the re-resolve — so it covered the frame the prop died on and **not the next one**, when
+  `m.prop` is already null, the re-resolve is skipped, and the static-point branch reads `m.pt.x` off
+  null. The probe hit it on its second drive. It is a bare statement followed by the guard now, and the
+  test asserts that SHAPE rather than the behaviour, because the behaviour needs a frame to show.
+
+### Measured live (`tools/probe/objective-marker.mjs`, 21/21)
+
+```
+in frame     diamond, no rotation, "RANGE  40m", authored colour, at 320,187 of 640x360
+behind you   arrow, rotated, at the BOTTOM (y 326 of 360)
+same tag     2 markers stay 2, the label updates in place
+label        {hits} = 5 renders "Hits 5"
+tracking     moving the prop moves the marker
+destroyed    the marker stops showing rather than freezing over a corpse
+bad tag      nothing added, and the Level Check says why
+cap          12 requests -> 8 markers
+editor       all hidden, and back on the way out
+clear        every element removed, not just the entries
+```
+
+### Eight pins moved, and seven were the same trap
+
+Six quoted a WHOLE VERB LIST (1073 x2, 1077, 1232, 1404 x3) and one a whole verb COUNT (1277) — so every
+verb that legitimately joined broke them **with every part of what they meant still true**. That is builds
+519 and 928's trap from build 1411, one day later and in a different table, and the fix is the same:
+assert MEMBERSHIP of the real field, extracted, rather than quoting the literal. 1073's now also asserts
+what must NOT be in the list, which is the half a quoted literal was silently providing.
+
+The eighth is 1074's, and it is the character-budget trap: `src.slice(i, i + 1200)` over the client's
+`wact` block, which this build's own line pushed two still-true assertions past the end of. `wact` is the
+LAST case in its handler, so there is no next case to end on — `extractFunction('handleHostMsg')`
+brace-matches and cannot drift at all, which is build 1149's preferred answer rather than its fallback.
+
+**The general form, now stated once for both:** *a pin that quotes a neighbourhood — a whole list, a whole
+count, a fixed number of characters — is a pin against the neighbourhood, not against what it says.*
+
+### And prose defeated a pin for the third time in two builds
+
+`!/innerHTML/` failed against correct code — it matched this build's own comment saying it never uses
+`innerHTML`. Build 1411's `!/raycast/` was the same, and 164/1393/1395 record it from the other direction
+(a pin SATISFIED by prose). The rule is now unconditional: **pin the syntax, never the bare word** —
+`/\.textContent = /` and `/\.innerHTML\s*=/`, not the identifier.
+
 ## A sign in the world, and a scoreboard on it (build 1411)
 
 The engine could draw text in the world for **damage numbers** and **player name tags**, and nowhere else.

@@ -306,6 +306,8 @@ Sliders are multipliers over the preset; **Reset** returns to it.
 
 **+ Sign** (build 1411) — a readable board in the world. Type the text in the Object panel; **{name}** shows a live logic variable, so `Hits: {score}` is a scoreboard on a wall. Text size, text colour, board colour, board opacity (0 = floating text, no board) and alignment. The canvas follows the prop's own scale, so a wide banner is not stretched text. It carries **No collision** by default — a label should not stop bullets or make enemies path around it; untick it for a solid board. Readable from both sides, mirrored from behind: place two back to back if both sides matter.
 
+**Objective marker** (build 1412) — a Logic *Do → Objective marker* action points an on-screen diamond at a tag, a place, `me`, `start` or `#here`, with a label (`{var}` interpolates) and a colour. Off screen it becomes an arrow clamped to the edge, rotated at the target, with the distance in metres. Up to 8 at once; the same tag twice updates rather than adding. *Stop pointing at…* drops one, *Clear all markers* drops them all, and a deploy clears them. `who` sends it to everyone or to the one player who tripped the trigger.
+
 **Effects** (build 1250): **+ Embers, + Dust, + Smoke, + Steam, + Fireflies, + Fountain** — ambient particle emitters placed, moved, scaled and tagged like any prop; Logic *hide/show props* switches them at runtime.
 
 ### Race track (collapsible fold)

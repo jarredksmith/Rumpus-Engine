@@ -12821,6 +12821,7 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
   if(typeof _lgResetStats==='function') _lgResetStats();     // build 1074: a bent stat springs back to what the level authored
   if(typeof _lgMusic!=='undefined') _lgMusic=null;           // ...and the level's own music track comes back
   _viewOv=null;                                              // build 1404: ...and so does the level's own camera
+  if(typeof _markersClear==='function') _markersClear();     // build 1412: ...and the objective arrows are play state too
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   _lgRunT = performance.now();   // build 1169: the 'time' stat reads seconds since this deploy
   for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
@@ -13408,7 +13409,7 @@ const LG_DEFS = {
        vocabulary (tags, `me`, `start`), which is exactly what _lgPlaceAt accepts. */
     {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist']],listId:'lgPlaceList'},
     {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'vdwell',l:'cut every (s)',w:44,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['marker','Objective marker'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb',['objective','marker']]},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'vdwell',l:'cut every (s)',w:44,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'mkmode',l:'',w:112,ifv:['verb','marker'],sel:[['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']]},{k:'mcol',l:'colour',w:70,ifv:['verb','marker']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view','marker']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill','marker']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -13992,7 +13993,7 @@ function _applySignalAction(s, src){
     // HANDLER's source and the DROPDOWN's source and never that a node reaches the handler. test-1277
     // walks the path instead.
     if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'
-       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'||s.do==='view'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
+       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'||s.do==='view'||s.do==='marker'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
       if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
       return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
@@ -14286,6 +14287,14 @@ function _applyWorldAction(s){
     const dw=_viewDwell(s.vdwell);   /* build 1410: seconds per camera; 0 holds on the first one */
     if(who==='actor'){ if(_wactToActor({ vw:[vm, vt, tr?1:0, dw] })) return; }
     _setViewOverride(vm, vt, tr, dw); _wactSend({ vw:[vm, vt, tr?1:0, dw] }); return; }
+  /* build 1412: point at it. Same shape as the camera above — a local view thing, so `who:'actor'` marks
+     the objective for one player and the default reaches everyone. */
+  if(s.do==='marker'){
+    const mm=(s.mkmode==='hide'||s.mkmode==='clear') ? s.mkmode : 'show';
+    const at=String(s.at==null?'':s.at).trim(), tx=String(s.text==null?'':s.text).slice(0,40), mc=String(s.mcol||'');
+    const pay={ mk:[mm, at, tx, mc] };
+    if(who==='actor'){ if(_wactToActor(pay)) return; }
+    _applyMarker(mm, at, tx, mc); _wactSend(pay); return; }
   if(s.do==='command'){
     /* build 1408: an order can be given to the enemies at ONE PLACE. This resolved to all of them or to the
        single nearest one to the PLAYER, so in a level with more than one room "hold position" froze every
@@ -20210,6 +20219,7 @@ const SIG_KEYS = {
   who:'wh', amt:'am', r:'rr', stat:'st', mul:'mu',                      // damage / heal / kill / stat
   ewho:'ew', cmd:'cm',                                                  // command
   vmode:'vm', vtag:'vt', vtrack:'vk', vdwell:'vd',                      // view (build 1404); the bank's dwell (1410)
+  mkmode:'mk', mcol:'mo',                                               // marker (build 1412); `at` and `text` are shared
   prefab:'pb', escope:'es', er:'er'                                     // build 1408: the command's own scope
 };
 const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
@@ -28576,6 +28586,134 @@ function _tpFrame(pivot, yaw, pitch, blend){
   _TPF.z = pivot.z - fz*dist + rz*side;
   return _TPF;
 }
+/* ---- build 1412: the objective marker --------------------------------------------------------------
+   A level made of separate places — a fair with five booths, a hub with four doors, an objective across
+   the map — could TELL the player where to go (objective text, a toast, a sign at the door) and could
+   not POINT. The only marker in the engine was `mapWaypoint`, which a PLAYER drops on their own map; a
+   creator had nothing.
+
+   It is a world verb, so it inherits `who` from build 1232: the default reaches everyone, and `actor`
+   marks the objective for the one player who tripped the trigger — which is what a co-op level with a
+   split objective means. A client applies the identical payload through the identical function.
+
+   Deliberately a SET rather than one marker, capped: "the objective" and "here are the five booths" are
+   both real, and a creator switching between them should not need a different verb. Same tag twice is
+   the same marker (it updates), so an interval that re-marks does not fill the cap. */
+const MARKER_MAX = 8, MARKER_EDGE = 34;   // how far off the screen edge a clamped arrow sits
+const MARKER_DEF_COL = '#ffd166';
+let _markers = [], _mkHost = null;
+/* One place, not a random one. `_lgPlaceAt` picks at RANDOM among props sharing a tag so a spawned squad
+   scatters (build 1394 recorded the distinction) — an arrow that points at a different crate every frame
+   is not a marker. Resolving the PROP rather than a point is also what makes it TRACK: a marker on a lift
+   rides it, and one on a prop the graph moves follows. */
+function _markerProp(tag){
+  if(!tag || typeof propModels==='undefined') return null;
+  for(const o of propModels){ if(o && o.parent && o.userData && o.userData.tag===tag) return o; }
+  return null;
+}
+function _markerSet(tag, text, color){
+  const t = String(tag==null?'':tag).trim();
+  if(!t) return false;
+  const prop = _markerProp(t);
+  const pt = prop ? null : (typeof _lgPlaceAt==='function' ? _lgPlaceAt(t) : null);
+  if(!prop && !pt){
+    if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "marker" action points at "'+t+'", but nothing in the level answers to it.');
+    return false;   // an arrow pointing nowhere is worse than no arrow
+  }
+  let m = null; for(const x of _markers){ if(x.tag===t){ m=x; break; } }
+  if(!m){
+    if(_markers.length >= MARKER_MAX){
+      if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "marker" action was refused: a level can show '+MARKER_MAX+' at once, and that many are already up.');
+      return false;
+    }
+    m = { tag:t, el:null }; _markers.push(m);
+  }
+  m.prop = prop; m.pt = pt;
+  m.text = String(text==null?'':text).slice(0, 40);
+  m.color = (/^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(String(color||''))) ? color : MARKER_DEF_COL;   // it lands in a style (build 1325/1411)
+  return true;
+}
+function _markerDrop(tag){
+  const t = String(tag==null?'':tag).trim();
+  for(let i=_markers.length-1;i>=0;i--){ if(!t || _markers[i].tag===t){ if(_markers[i].el && _markers[i].el.parentNode) _markers[i].el.parentNode.removeChild(_markers[i].el); _markers.splice(i,1); } }
+}
+function _markersClear(){ _markerDrop(''); }
+/* ONE applier, so a client and the host cannot come to different answers about the same payload. */
+function _applyMarker(mode, tag, text, color){
+  if(mode==='clear'){ _markersClear(); return true; }
+  if(mode==='hide'){ _markerDrop(tag); return true; }
+  return _markerSet(tag, text, color);
+}
+/* Drawn as DOM in the HUD, not as a sprite: an objective marker has to read THROUGH geometry (that is
+   what it is for), stay crisp at any distance, and clamp to the screen edge when the target is behind
+   you — all three of which a world-space sprite fights. */
+const _mkV = new THREE.Vector3();
+function _markerTick(){
+  if(!_markers.length) return;
+  /* Play only. A marker in the editor is noise over the thing being edited, and it is play state — the
+     deploy clears it beside the camera override (build 1404's rule). */
+  if((typeof editorOpen!=='undefined' && editorOpen) || !(typeof gameOn!=='undefined' && gameOn)){
+    for(const m of _markers) if(m.el) m.el.style.display='none';
+    return;
+  }
+  if(!_mkHost || !_mkHost.parentNode){
+    _mkHost = document.createElement('div'); _mkHost.id='objMarkers';
+    _mkHost.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:5;overflow:hidden;';
+    hud.appendChild(_mkHost);
+  }
+  const cam = (typeof activeCam==='function') ? activeCam() : camera;
+  const W = innerWidth, H = innerHeight, cx = W/2, cy = H/2;
+  for(const m of _markers){
+    /* re-resolve a destroyed prop by tag, exactly as the camera mount does (1404/1410) — and if the tag
+       has gone entirely, the marker goes with it rather than freezing over a corpse */
+    if(m.prop && !m.prop.parent) m.prop = _markerProp(m.tag);
+    /* The guard has to sit OUTSIDE the re-resolve, not inside it. Written inside, it covered the frame
+       the prop died on and not the NEXT one — by then `m.prop` is already null, the re-resolve is
+       skipped, and the static-point branch reads `m.pt.x` off null and takes the frame loop down with
+       it. The probe found this on its second drive; nothing in the Node suite could have. */
+    if(!m.prop && !m.pt){ if(m.el) m.el.style.display='none'; continue; }
+    if(m.prop) m.prop.getWorldPosition(_mkV); else _mkV.set(m.pt.x, m.pt.y, m.pt.z);
+    const dist = Math.hypot(_mkV.x-player.pos.x, _mkV.z-player.pos.z);
+    _mkV.y += 1.6;   // aim at the top of the thing, not its feet
+    _mkV.project(cam);
+    let sx = (_mkV.x*0.5+0.5)*W, sy = (-_mkV.y*0.5+0.5)*H;
+    /* BEHIND the camera, project() mirrors x and y — so a target at your back would draw on the wrong
+       side of the screen, pointing the player exactly the wrong way. Flip it back, then clamp. */
+    const behind = _mkV.z > 1;
+    if(behind){ sx = W - sx; sy = H - sy; }
+    let edge = behind;
+    if(sx < MARKER_EDGE || sx > W-MARKER_EDGE || sy < MARKER_EDGE || sy > H-MARKER_EDGE) edge = true;
+    if(edge){
+      /* clamp along the ray from screen centre, so the arrow sits where the target actually is */
+      let dx = sx-cx, dy = sy-cy;
+      if(!dx && !dy) dy = 1;
+      const sxr = (W/2 - MARKER_EDGE) / Math.max(1e-3, Math.abs(dx)), syr = (H/2 - MARKER_EDGE) / Math.max(1e-3, Math.abs(dy));
+      const k = Math.min(sxr, syr);
+      sx = cx + dx*k; sy = cy + dy*k;
+    }
+    if(!m.el){
+      m.el = document.createElement('div');
+      m.el.style.cssText='position:absolute;transform:translate(-50%,-50%);text-align:center;font:600 12px/1.15 system-ui,sans-serif;text-shadow:0 1px 3px rgba(0,0,0,0.9);white-space:nowrap;';
+      _mkHost.appendChild(m.el);
+      m.el._gl = document.createElement('div'); m.el.appendChild(m.el._gl);
+      m.el._tx = document.createElement('div'); m.el.appendChild(m.el._tx);
+    }
+    const label = (typeof _hwInterp==='function') ? _hwInterp(m.text) : String(m.text||'');
+    const glyph = edge ? '\u25b2' : '\u25c6';
+    /* textContent, never innerHTML: the label is level data and interpolates a variable (1325/1411) */
+    if(m.el._glW !== glyph+'|'+m.color){ m.el._gl.textContent = glyph; m.el._gl.style.cssText='font-size:15px;line-height:1;color:'+m.color+';'; m.el._glW = glyph+'|'+m.color; }
+    if(edge){
+      /* point the triangle AT the target. The glyph faces UP, so 0 rad is straight up and the angle is
+         measured from -Y — atan2(dx, -dy), not the usual atan2(dy, dx). */
+      m.el._gl.style.transform = 'rotate(' + Math.atan2(sx-cx, -(sy-cy)) + 'rad)';
+    } else if(m.el._gl.style.transform) m.el._gl.style.transform = '';
+    const line = label ? (label + '  ' + Math.round(dist) + 'm') : (Math.round(dist) + 'm');
+    if(m.el._txW !== line+'|'+m.color){ m.el._tx.textContent = line; m.el._tx.style.color = m.color; m.el._txW = line+'|'+m.color; }
+    m.el.style.display = '';
+    m.el.style.left = sx.toFixed(1)+'px';
+    m.el.style.top  = sy.toFixed(1)+'px';
+  }
+}
 // build 1404: the mounted camera. Reused scratch vectors, because this runs every frame (build 1168).
 const _vfP = new THREE.Vector3(), _vfQ = new THREE.Quaternion(), _vfD = new THREE.Vector3();
 function _viewCamYaw(){ camera.getWorldDirection(_vfD); return Math.atan2(-_vfD.x, -_vfD.z); }   // the engine's forward is (-sin yaw, -cos yaw)
@@ -29841,7 +29979,8 @@ function handleHostMsg(msg){
     if(msg.tp && typeof _lgPlacePlayer==='function') _lgPlacePlayer({ x:+msg.tp[0]||0, y:+msg.tp[1]||0, z:+msg.tp[2]||0 });
     if(msg.k) try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){}
     else if(msg.d>0) try{ applyEnemyDamageToSelf(+msg.d||0, null, null); }catch(e){}
-    if(msg.vw && typeof _setViewOverride==='function') try{ _setViewOverride(String(msg.vw[0]||''), String(msg.vw[1]||''), !!msg.vw[2], +msg.vw[3]||0); }catch(e){}   // build 1404: the host's camera change lands here (1410: the dwell rides along; a pre-1410 host sends none and the bank holds)
+    if(msg.vw && typeof _setViewOverride==='function') try{ _setViewOverride(String(msg.vw[0]||''), String(msg.vw[1]||''), !!msg.vw[2], +msg.vw[3]||0); }catch(e){}
+    if(msg.mk && typeof _applyMarker==='function') try{ _applyMarker(String(msg.mk[0]||'show'), String(msg.mk[1]||''), String(msg.mk[2]||''), String(msg.mk[3]||'')); }catch(e){}   // build 1412   // build 1404: the host's camera change lands here (1410: the dwell rides along; a pre-1410 host sends none and the bank holds)
     if(msg.h>0){ player.hp=Math.min(player.maxHp, player.hp+(+msg.h||0)); if(typeof updateHUD==='function') updateHUD(); }
     if(msg.gi && typeof giveItem==='function') try{ giveItem(String(msg.gi[0]), +msg.gi[1]||1); }catch(e){}      // build 1074
     if(msg.ti && typeof takeItem==='function') try{ takeItem(String(msg.ti[0]), +msg.ti[1]||1); }catch(e){}
@@ -33659,7 +33798,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1411 · 2026-08-06';
+const BUILD_VERSION = 'build 1412 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39384,7 +39523,7 @@ function loop(){
   }
   if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _signTick==='function') _signTick(); if(typeof _lodTick==='function') _lodTick(); if(typeof _edPlayerPreviewTick==='function') _edPlayerPreviewTick(); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _signTick==='function') _signTick(); if(typeof _markerTick==='function') _markerTick(); if(typeof _lodTick==='function') _lodTick(); if(typeof _edPlayerPreviewTick==='function') _edPlayerPreviewTick(); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
@@ -45797,6 +45936,18 @@ function _sigWorldRow(s, rerender){
       /* build 1348's rule: a capability nobody can find is, for most creators, a capability that does
          not exist. Nothing else in the product says that tagging a SECOND prop makes a camera bank. */
       lab('s \u2014 tag several props to cut between them');
+    }
+    sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
+  } else if(s.do==='marker'){
+    /* build 1412: the arrow. `at` takes the same place vocabulary every other verb does, so a tag, `me`,
+       `start` or `#here` all work — and it INTERPOLATES (1402), so `booth{n}` points at the live one. */
+    sel([['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']], s.mkmode||'show', v=>{ s.mkmode=v; });
+    if((s.mkmode||'show')!=='clear'){
+      txt('place or tag', s.at, v=>{ if(v) s.at=v; else delete s.at; }, 110, 'lgPlaceList');
+      if((s.mkmode||'show')==='show'){
+        txt('label ({var} ok)', s.text, v=>{ if(v) s.text=v; else delete s.text; }, 130);
+        txt('#ffd166', s.mcol, v=>{ if(v) s.mcol=v; else delete s.mcol; }, 70);
+      }
     }
     sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
   } else if(s.do==='command'){

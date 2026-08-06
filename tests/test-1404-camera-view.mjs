@@ -172,7 +172,9 @@ function rig(opts) {
     '...while the default reaches everyone, like the other world verbs');
   assert(/if\(msg\.vw && typeof _setViewOverride==='function'\)/.test(src),
     'a client applies the identical payload through the identical function');
-  assert(/\|\|s\.do==='resetprop'\|\|s\.do==='view'\)\{/.test(src),
+  /* build 1412: this quoted `view` as the LAST verb in the router's chain, so the next verb to join
+     broke it with the assertion still true. Assert that the chain names it — which is the wire. */
+  assert(/\|\|s\.do==='view'(\|\||\)\{)/.test(src),
     'the signal router forwards it to the world handler (build 1277: the wire, not the ends)');
 
   // it must not survive a deploy — an override is play state
@@ -180,8 +182,7 @@ function rig(opts) {
     'a deploy clears it, so the level\'s own camera always comes back');
 
   // both authoring surfaces
-  assert(/\['command','Command enemies'\],\['view','Camera view'\],\['showprop','Show props'\]/.test(src),
-    'the Do node offers it');
+  assert(/\['view','Camera view'\]/.test(src), 'the Do node offers it');
   assert(/\['command','Command enemies'\],\['view','Camera view'\]\], s\.do, v=>\{ s\.do=v; \}\)\);/.test(src),
     '...and so does the prop-signal editor, so a camera prop can arm itself on contact');
   assert(/\{k:'vmode',l:'',w:130,ifv:\['verb','view'\]/.test(src), 'with a mode picker...');
@@ -191,8 +192,10 @@ function rig(opts) {
      editor reads it too — the box used to render UNCHECKED while the runtime treated it as on. */
   assert(/\{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:\['verb','view'\],ifv2:\['vmode','fixed'\]\}/.test(src),
     '...and the tracking switch beside it, on by default in the table the editor and the runtime share');
-  assert(/ifv:\['verb',\['damage','heal','kill','teleport','give','take','view'\]\]/.test(src),
-    '...plus build 1232\'s who field');
+{ /* build 1412: membership, not a quoted list — every verb that joins the audience broke this
+     with its assertion still true (builds 519/928/1073's trap). */
+  const who = /\{k:'who',l:'',w:104,ifv:\['verb',\[([^\]]*)\]\]/.exec(src);
+  assert(who && who[1].indexOf("'view'") >= 0, '...plus build 1232\'s who field'); }
 
   // build 1402's rule: the camera tag is a NAME
   const doCase = extractFunction('_lgPulse');
