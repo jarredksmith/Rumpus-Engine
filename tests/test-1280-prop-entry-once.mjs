@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 // build 1280: the audit's code-quality CRITICAL. A 1,326-character block was BYTE-IDENTICAL in
 // loadHostedProps, loadLevelFromNet and restoreLevel — the three paths by which a prop reaches the scene
@@ -39,8 +39,15 @@ const entry = extractFunction('_applyPropEntry');
 // Before this build that mutation had to be made in three places to be caught, so making it in one was
 // invisible. Now one edit changes every path — which is the whole point, and this proves it by running it.
 {
+  /* build 1406 moved the signal mapping into _sigUnpack, which this scope must be given. It is LIFTED
+     from source rather than restated — a rig that restates the thing under test keeps passing against a
+     stale copy, which is what the probe for 1406 did on its first run. */
   const mk = (body) => new Function('applyPropDynState', 'xaApply', 'jointApply', 'vehicleApply',
     'trackApply', '_bumpGroupSeq', '_fxCfgSan', '_fxReset',
+    'const SIG_KEYS = ' + extractConst('SIG_KEYS') + ';\n' +
+    'const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();\n' +
+    'const SIG_STR_MAX = ' + extractConst('SIG_STR_MAX') + ';\n' +
+    extractFunction('_sigUnpack') + '\n' +
     body + '; return _applyPropEntry;')(
     () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, (v) => v, () => {});
 
@@ -73,8 +80,11 @@ const entry = extractFunction('_applyPropEntry');
   const sg = real.signals[0];
   eq(sg.when, 'use'); eq(sg.do, 'open'); eq(sg.target, 'gate');
   eq(sg.clip, 'clip'); eq(sg.cs, 'cs'); eq(sg.from, 'from');
-  eq(sg.contain, true); eq(sg.text, 'txt'); eq(sg.needItem, 'key');
-  eq(sg.needConsume, true); eq(sg.consume, true); eq(sg.sound, 'snd');
+  /* build 1406: the flags come back as the 1 they were stored as rather than being coerced to true. Every
+     consumer tests truthiness, and keeping the stored value is what makes pack(unpack(x)) === x for a
+     pre-1406 level — which is the property that lets this ship over existing content. */
+  assert(sg.contain); eq(sg.text, 'txt'); eq(sg.needItem, 'key');
+  assert(sg.needConsume); assert(sg.consume); eq(sg.sound, 'snd');
 
   // now delete the one statement, exactly as the critic did
   const mutated = entry.replace('if(p.tg) obj.userData.tag=p.tg;', '');

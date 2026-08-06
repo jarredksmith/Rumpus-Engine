@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, done } from './harness.mjs';
 const src = gameSource();
 
 // build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
@@ -54,8 +54,20 @@ assert(it.indexOf("fireSignals(o, 'interacted')", xI) > it.indexOf('broadcastXAn
 
 // --- persistence: serialize + 3-site restore ---
 assert(/if\(o\.userData\.tag\) e\.tg=o\.userData\.tag;/.test(extractFunction('propEntry')), 'tag serialized');
-assert(/e\.sg=o\.userData\.signals\.map\(s=>\{ const x=\{ w:s\.when, d:s\.do, t:s\.target \}; if\(s\.clip\) x\.c=s\.clip; if\(s\.cs\) x\.n=s\.cs; if\(s\.from\) x\.f=s\.from; if\(s\.contain\) x\.ci=1; if\(s\.text\) x\.tx=s\.text; if\(s\.needItem\) x\.ni=s\.needItem; if\(s\.needConsume\) x\.nc=1; if\(s\.consume\) x\.cn=1; if\(s\.sound\) x\.so=s\.sound; return x; \}\);/.test(extractFunction('propEntry')), 'signals serialized compactly (clip 349, cutscene 356, contact 682, objective 692, needItem 706, consume 740, sound 750)');
-assert(extractFunction('_applyPropEntry').includes('if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; });'), 'restored at all three prop-load sites (clip + cutscene + contact + objective + needItem + consume + sound)');
+/* build 1406: this quoted the hand-written short-key mapping, which is the very thing that had drifted —
+   fourteen of seventeen world verbs lost every parameter because eight builds added fields to the signal
+   editor and none of them to this line. The intent (these seven fields serialize compactly, under these
+   exact short keys) is unchanged and is now asserted against the ONE table they come from. */
+{ const T = extractConst('SIG_KEYS');
+  assert(/e\.sg=o\.userData\.signals\.map\(_sigPack\)/.test(extractFunction('propEntry')), 'signals serialize through the one packer');
+  for(const [k,short] of [['clip','c'],['cs','n'],['from','f'],['contain','ci'],['text','tx'],['needItem','ni'],['needConsume','nc'],['consume','cn'],['sound','so']])
+    assert(new RegExp('\\b'+k+":'"+short+"'").test(T), 'signals serialized compactly: '+k+' -> '+short+' (clip 349, cutscene 356, contact 682, objective 692, needItem 706, consume 740, sound 750)'); }
+/* build 1406: "all three prop-load sites" became build 1280's ONE apply plus the prefab spawner, and both
+   now unpack through the same function the serializer packs with — which is what makes "restored" true for
+   every field rather than for the nine somebody remembered. */
+assert(/obj\.userData\.signals=p\.sg\.map\(_sigUnpack\)/.test(extractFunction('_applyPropEntry')) &&
+       (src.match(/obj\.userData\.signals=p\.sg\.map\(_sigUnpack\)/g)||[]).length === 2,
+  'restored at every prop-load site (clip + cutscene + contact + objective + needItem + consume + sound)');
 
 // --- editor + level check ---
 assert(/edFold\(behaveHost, 'signals', 'Signals', false, 'Tag this prop/.test(src), 'Signals fold in the inspector (title + subtitle, build 362)');

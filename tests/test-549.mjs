@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, done } from './harness.mjs';
 const src = gameSource();
 
 // build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
@@ -44,8 +44,11 @@ const mk = (held) => {
   assert(calls.fired.join()==='toggle', 'a signal with no needItem fires normally'); }
 
 // --- serialize + restore carry the gate (compact ni/nc) ---
-assert(/if\(s\.needItem\) x\.ni=s\.needItem; if\(s\.needConsume\) x\.nc=1;/.test(extractFunction('propEntry')), 'needItem/needConsume serialized');
-assert(extractFunction('_applyPropEntry').includes('if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true;'), 'restored at all three prop-load sites');
+{ const T = extractConst('SIG_KEYS');   /* build 1406 */
+  assert(/\bneedItem:'ni'/.test(T) && /\bneedConsume:'nc'/.test(T) &&
+         /e\.sg=o\.userData\.signals\.map\(_sigPack\)/.test(extractFunction('propEntry')), 'needItem/needConsume serialized'); }
+assert(/obj\.userData\.signals=p\.sg\.map\(_sigUnpack\)/.test(extractFunction('_applyPropEntry')),
+  'restored at every prop-load site');
 
 // --- editor UI: a "needs item" picker + consume toggle per signal ---
 const ui = extractFunction('buildSignalsUI');

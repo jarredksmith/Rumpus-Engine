@@ -2618,6 +2618,100 @@ a station exists — is asserted directly now, beside the url landing as data ei
 from `restoreLevel`, so inserting it first makes every one of those anchors ambiguous. The count assert
 caught it on the first run and nothing was written, which is what they are for.
 
+## A prop signal lost everything but its verb (build 1406)
+
+Found while scoping the AI booth's next gap, and it had been true for a long time. `serializeLevel` wrote a
+prop's signals through a HAND-WRITTEN short-key list — `w, d, t, c, n, f, ci, tx, ni, nc, cn, so` — and the
+signal editor writes `etype, n, at, pk, item, once, who, amt, r, stat, mul, ewho, cmd, vmode, vtag, vtrack`
+on top of that. Nothing carried the second list.
+
+Measured with the real serializer across all seventeen verbs a signal can carry
+(`tools/probe/signal-roundtrip.mjs`):
+
+```
+before   3/17 survive        after   17/17
+"command nearest -> hold @post1"   {"w":"used","d":"command"}
+                               ->  {"w":"used","d":"command","a":"post1","ew":"nearest","cm":"hold"}
+"view fixed on cam1, tracking"     {"w":"used","d":"view"}
+                               ->  {"w":"used","d":"view","vm":"fixed","vt":"cam1","vk":1}
+```
+
+**Fourteen of seventeen lost every parameter.** `music` and `objective` survived only because `sound` and
+`text` happened to be on the list; `anim` survived because it is a tag verb. So a creator authors "the
+pressure plate spawns 3 brutes at the gate", tests it — it works, because the in-memory object is right —
+saves, reloads, and gets one grunt at the player. **Silently, and only after a save**, which is the worst
+shape a data-loss bug can have.
+
+**The cause is not a missing field; it is that the mapping was kept by hand in three places.** The list was
+written when signals were tag verbs only, and builds 1073, 1074, 1077, 1170, 1216, 1258, 1399 and 1404 each
+added a world verb to the signal dropdown without touching it. That is build 1280's finding one layer down —
+*a test that counts copies of a thing is a test of the copying* — so `SIG_KEYS` names the mapping once and
+`_sigPack` / `_sigUnpack` derive from it, used by the serializer and by BOTH loaders.
+
+Three constraints on the table, each of which is a defect the other way:
+- **The twelve original short keys are FROZEN.** Every level ever saved uses them, so `cs` must stay `n` —
+  which is why the count field `n` takes `q` rather than the obvious letter. A short key is a wire format.
+- **Falsy is absent**, exactly as the hand-written emitter had it (`if(s.clip) x.c=s.clip`). Nothing in the
+  engine can tell an amount of 0 from an unset one (`+s.amt||25`), so emitting it would grow every saved
+  level for a value that means nothing — and would break `pack(unpack(x)) === x` for a pre-1406 signal,
+  which is the property that makes this safe to ship over existing content.
+- **Booleans emit 1**, matching the old wire form, and come back as 1 rather than `true`. Every consumer
+  tests truthiness; test-1280's `eq(sg.contain, true)` became `assert(sg.contain)` for that reason.
+
+**And build 1404's own gap, one build later.** That build put `view` in the signal verb dropdown and never
+gave it a parameter row, so a signal could select *Camera view* and had no way to say WHICH view. It is
+build 1277's defect — a verb offered and not reachable — committed by the build that recorded it. The row is
+here, gated on `fixed` exactly as the graph node gates its tag field.
+
+### The test asserts the property, not the fields
+
+Pinning the field list is what failed for eight builds. `test-1406` instead extracts the signal editor's own
+`s.X =` writes and asserts **every one is a key `SIG_KEYS` carries** — so the next verb that adds a field
+fails here rather than shipping. It asks the same question of the verb dropdown: every configurable verb it
+offers must have a row that configures it. That second check is what caught `view`.
+
+**A slice scoped by a character count broke it first**, for the umpteenth time: the dropdown scan used a
+fixed window that reached back into the WHEN select and reported `destroyed` and `contact` as verbs with no
+row. It walks back from the select's own callback to its option list now.
+
+**And the probe was wrong before the engine was right.** Its first draft PASTED the loader's body inline, so
+after the fix the serializer carried every field and the probe still reported them lost — it was measuring
+its own stale copy of the thing under test. It calls the engine's `_sigUnpack` now. *A probe that reimplements
+the code under test is a probe of the reimplementation.*
+
+Seven harnesses moved (242, 291, 528, 538, 549, 1280, 1397), every one keeping its intent: "this field
+serializes and is restored at every load site" is now asserted against the one table and the two shared
+functions rather than against a quotation of the code that had drifted.
+
+## The AI booth (probe, after build 1405)
+
+The last of the three the gauntlet is scoped around. `tools/probe/ai-booth.mjs` reads **16/16** and found no
+engine defect — every one of its seven failures was an instrument fault, and four are worth carrying:
+
+- **`loop()` early-returns past the ENTIRE simulation** when any UI gate is up (the level loader, a cutscene,
+  an interstitial, the shop, the upgrade picker, the map, the inventory, `paused`) — and `_frameNo` is
+  incremented BEFORE all of them, so a drive that simulated nothing still reported its full frame count.
+  That is why two runs of the same sweep disagreed 8/15 against 11/15 on the same tree: clearing the field
+  reaches `beginUpgradeChoice`. The gates are cleared at the head of every drive and `__gate()` names the
+  one that was closed.
+- **Half the AI's timers are wall-clock TIMESTAMPS, not countdowns** (`_windupT = performance.now() + 320`),
+  so a drive that advances only the simulated clock never completes a wind-up. The telegraph fired, the
+  squash played, and the swing never landed — which reads exactly like broken melee.
+- **Clamping that virtual clock forward to the real one advanced it at the REAL rate** (2 ms a call instead
+  of 16.67), so an enemy twenty simulated seconds into a chase had not moved. It is a pure counter now, and
+  `_tabHidden` holds the page's own rAF frames off so the virtual clock is the only clock.
+- The spawn descriptor key is `fac`; what lands on the enemy is **`faction`**.
+
+**There is no `updateEnemyAI`** — the enemy tick is inline in `loop()`, and real frames are unusable here
+(measured: `_frameNo` advances 3 times in 3 seconds, so 3 simulated seconds would take 3 real minutes).
+`__drive(n)` calls the real `loop()` with `renderer.render` a no-op and the rAF re-arm neutralised: **300
+frames in 469 ms.**
+
+`tools/probe/lint.mjs` closes the backtick trap that has cost eleven cycles — a backtick inside a probe's
+page-code template literal closes it, and Node reports "missing ) after argument list" at an innocent line.
+It skips escaped backticks and nested `${...}` interpolation, and is controlled both ways: 123 probes clean,
+one injected backtick caught at the right line. **Run it before running a probe.**
+
 ## The next build, specified (critic pass after build 1381)
 
 A harsh rendering critic was run cold against the 1380 frames and scored the engine **3/10 vs AAA**. Its

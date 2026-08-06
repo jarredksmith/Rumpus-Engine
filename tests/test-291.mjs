@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, done } from './harness.mjs';
 const src = gameSource();
 // build 398: (bug) pressing E on a trigger prop ignored the clip chosen in the editor and played all clips;
 // playPropAnimationOnce now defaults to the prop's selected animClip. (feature) the signal "Play anim" action
@@ -23,6 +23,8 @@ assert(/o\.textContent=s\.clip\+' \(other\)'/.test(src), 'a clip typed for a dif
 assert(/:'clip name \(blank = all clips\)'/.test(src), 'free-text fallback kept for props with unknown clips');
 
 // signal clip is serialized both ways
-assert(/if\(s\.clip\) x\.c=s\.clip;/.test(src), 'signal clip saved');
-assert(/if\(s\.c\) x\.clip=s\.c;/.test(src), 'signal clip restored');
+/* build 1406: the clip's short key is now stated once in SIG_KEYS and both directions derive from it */
+assert(/\bclip:'c'/.test(extractConst('SIG_KEYS')), 'signal clip saved under the short key c');
+assert(/e\.sg=o\.userData\.signals\.map\(_sigPack\)/.test(src) && /p\.sg\.map\(_sigUnpack\)/.test(src),
+  'signal clip restored — through the one pack/unpack pair, so it cannot be dropped on one side only');
 done();

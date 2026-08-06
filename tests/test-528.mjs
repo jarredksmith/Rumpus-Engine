@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, done } from './harness.mjs';
 const src = gameSource();
 
 // build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
@@ -53,8 +53,10 @@ assert(/if\(v\) s\.from=v; else delete s\.from;/.test(panel), 'the object-tag fi
 assert(/if\(mi\.value\) s\.contain=true; else delete s\.contain;/.test(panel), 'touching vs inside is editable');
 
 // --- persistence (serialize + 3 restore paths) ---
-assert(/if\(s\.from\) x\.f=s\.from; if\(s\.contain\) x\.ci=1;/.test(src), 'from/contain serialize');
-assert(/if\(s\.f\) x\.from=s\.f; if\(s\.ci\) x\.contain=true;/.test(extractFunction('_applyPropEntry')), 'from/contain restore in all three load paths');
+{ const T = extractConst('SIG_KEYS');   /* build 1406: one table, both directions */
+  assert(/\bfrom:'f'/.test(T) && /\bcontain:'ci'/.test(T), 'from/contain serialize'); }
+assert(/obj\.userData\.signals=p\.sg\.map\(_sigUnpack\)/.test(extractFunction('_applyPropEntry')),
+  'from/contain restore in every load path — the unpack is derived, not enumerated');
 
 // --- build 740: "Consume it" — the placed object vanishes when it lands on/in the detector ---
 const cn = extractFunction('_consumeTouchers');
@@ -63,7 +65,8 @@ assert(/for\(let j=rm\.length-1;j>=0;j--\)\{ try\{ if\(typeof removeProp==='func
 assert(/if\(s\.consume\)\{ const keys=_consumeTouchers\(o, s\); if\(keys\.length\)\{ try\{ _applySignalAction\(s, o\);/.test(tk), 'single-toucher + Consume: each placement is removed and fires');
 assert(/const keys = s\.consume \? _consumeTouchers\(o, s\) : _contactTouchers\(o, s\);/.test(tk), 'multi-toucher + Consume: distinct placements are consumed as they count toward N');
 assert(/cc\.appendChild\(document\.createTextNode\('Consume it \(the placed object vanishes when it lands\)'\)\)/.test(panel), 'the editor exposes a Consume checkbox on contact signals');
-assert(/if\(s\.consume\) x\.cn=1;/.test(src), 'consume serializes');
-assert(/if\(s\.cn\) x\.consume=true;/.test(extractFunction('_applyPropEntry')), 'consume restores in all three load paths');
+assert(/\bconsume:'cn'/.test(extractConst('SIG_KEYS')), 'consume serializes');
+assert(/obj\.userData\.signals=p\.sg\.map\(_sigUnpack\)/.test(extractFunction('_applyPropEntry')),
+  'consume restores in every load path');
 
 done('build 682/735/740: contact signal trigger + Needs-N distinct touchers + Consume (vanish on placement)');

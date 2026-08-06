@@ -19996,8 +19996,56 @@ function _bumpGroupSeq(gid){ if(typeof gid==='string' && gid[0]==='g'){ const n=
 // _pfSpawnEntry keeps its own near-copy DELIBERATELY and is not merged here: prefabs and paste strip
 // identity (a fresh gid, no nid) and that difference is the feature. Two functions that differ on purpose
 // beat three that are supposed to match.
+/* ---- build 1406: a prop signal serializes WHOLE -------------------------------------------------
+   serializeLevel wrote a prop's signals through a hand-written short-key list — w, d, t, c, n, f, ci, tx,
+   ni, nc, cn, so — and every world verb added to the signal dropdown since wrote fields that list never
+   heard of. Measured with the real serializer across all 17 verbs a signal can carry: FOURTEEN lost every
+   parameter. "Command the nearest enemy to hold at post1" serialized to {w:'used', d:'command'} — the verb
+   survives and everything about it is gone, so the plate you tested spawns a grunt at the player after a
+   reload. Silently, because the in-memory object is right until the level is saved.
+
+   This is build 1280's lesson one layer down: a list kept by hand in three places drifts, and the drift is
+   invisible until someone saves. SIG_KEYS is the ONE place the mapping exists; the serializer and both
+   loaders derive from it, so a verb that adds a field is carried without anyone remembering to.
+
+   Two constraints on the table:
+   - THE TWELVE ORIGINAL SHORT KEYS ARE FROZEN. Every level ever saved uses them, so `cs` must stay `n` —
+     which is why the count field `n` takes `q` rather than the obvious one. A short key is a wire format.
+   - Booleans emit 1, matching what the old code wrote, so a level with no new fields authored serializes
+     byte-identically. They come back as 1 rather than true; every consumer tests truthiness. */
+const SIG_KEYS = {
+  when:'w', do:'d', target:'t', clip:'c', cs:'n', from:'f', contain:'ci', text:'tx',
+  needItem:'ni', needConsume:'nc', consume:'cn', sound:'so',            // <- frozen: pre-1406 levels
+  etype:'et', n:'q', at:'a', pk:'pk', item:'it', once:'o1',             // spawn / pickup / give / take
+  who:'wh', amt:'am', r:'rr', stat:'st', mul:'mu',                      // damage / heal / kill / stat
+  ewho:'ew', cmd:'cm',                                                  // command
+  vmode:'vm', vtag:'vt', vtrack:'vk',                                   // view (build 1404)
+  prefab:'pb', escope:'es'                                              // room to grow without a fourth list
+};
+const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
+const SIG_STR_MAX = 300;   // a signal can carry a sound URL; the consumers keep their own tighter caps
+function _sigPack(s){
+  const x={};
+  if(!s) return x;
+  /* FALSY IS ABSENT, exactly as the hand-written emitter had it (`if(s.clip) x.c=s.clip`). Nothing in the
+     engine can tell an amount of 0 from an unset one — every consumer reads `+s.amt||25` — so emitting it
+     would grow every saved level for a value that means nothing, and would break the byte-identical
+     round trip that makes this safe over existing content. */
+  for(const k in SIG_KEYS){ const v=s[k];
+    if(!v) continue;
+    x[SIG_KEYS[k]] = (v===true) ? 1 : v; }
+  return x;
+}
+function _sigUnpack(x){
+  const s={};
+  if(!x) return s;
+  for(const sk in x){ const k=SIG_UNKEYS[sk]; if(!k) continue;          // an unknown short key is ignored, never trusted
+    const v=x[sk];
+    s[k] = (typeof v==='string') ? v.slice(0, SIG_STR_MAX) : v; }       // level data is untrusted (build 1325)
+  return s;
+}
 function _applyPropEntry(obj, p){
-  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
+  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406: one derivation, or the world verbs' fields keep being dropped */ if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
 }
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
@@ -33382,7 +33430,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1405 · 2026-08-06';
+const BUILD_VERSION = 'build 1406 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42348,7 +42396,7 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     if(gid) obj.userData.groupId=gid;
     if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(x=>String(x).slice(0,200));
     if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40);
-    if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(sg=>{ const x={ when:sg.w, do:sg.d, target:sg.t }; if(sg.c) x.clip=sg.c; if(sg.n) x.cs=sg.n; if(sg.f) x.from=sg.f; if(sg.ci) x.contain=true; if(sg.tx) x.text=sg.tx; if(sg.ni) x.needItem=sg.ni; if(sg.nc) x.needConsume=true; if(sg.cn) x.consume=true; if(sg.so) x.sound=sg.so; return x; });
+    if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406 */
     if(p.snd>1) obj.userData.sigNeed=+p.snd;
     if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); }
     if(p.xa) xaApply(obj, p.xa);
@@ -42655,7 +42703,7 @@ function propEntry(o){
   if(o.userData.groupId) e.gid=o.userData.groupId;   // build 798: prop group link
   if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,120).map(s=>String(s).slice(0,200));   // build 695 / 1076: NPC dialogue script
   if(o.userData.npcName) e.npc=String(o.userData.npcName).slice(0,40);
-  if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(s=>{ const x={ w:s.when, d:s.do, t:s.target }; if(s.clip) x.c=s.clip; if(s.cs) x.n=s.cs; if(s.from) x.f=s.from; if(s.contain) x.ci=1; if(s.text) x.tx=s.text; if(s.needItem) x.ni=s.needItem; if(s.needConsume) x.nc=1; if(s.consume) x.cn=1; if(s.sound) x.so=s.sound; return x; });
+  if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(_sigPack);   /* build 1406 */
   if(o.userData.sigNeed>1) e.snd=o.userData.sigNeed;
   if(o.userData.attribution) e.att=o.userData.attribution;
   if(o.userData.pf && o.userData.pf.id) e.pf={ id:String(o.userData.pf.id), inst:String(o.userData.pf.inst||'i0'), slot:o.userData.pf.slot|0 };   // build 1030: prefab instance mark
@@ -45497,6 +45545,15 @@ function _sigWorldRow(s, rerender){
     lab('(\u00d71 puts it back)');
   } else if(s.do==='music'){
     txt('music URL (blank = silence)', s.sound, v=>{ if(v) s.sound=v; else delete s.sound; }, 210, 'lgSndList');
+  } else if(s.do==='view'){
+    /* build 1406: build 1404 added this verb to the dropdown above and never gave it a row, so a signal
+       could select "Camera view" and had no way to say WHICH view — build 1277's defect, one build later. */
+    sel([['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']], s.vmode||'normal', v=>{ s.vmode=v; });
+    if(s.vmode==='fixed'){
+      lab('tag'); txt('camera prop tag', s.vtag, v=>{ if(v) s.vtag=v; else delete s.vtag; }, 110, 'lgTagList');
+      chk('follows the player', s.vtrack, v=>{ if(v) s.vtrack=1; else delete s.vtrack; });
+    }
+    sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
   } else if(s.do==='command'){
     sel([['enemies','All enemies'],['nearest','Nearest enemy']], s.ewho||'enemies', v=>{ s.ewho=v; });
     sel(Object.keys(LG_CMDS).map(k=>[k, LG_CMDS[k]]), s.cmd||'hunt', v=>{ s.cmd=v; });
