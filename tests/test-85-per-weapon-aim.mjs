@@ -19,10 +19,17 @@ assert(/apply\(\)\{ const s=this\.state; const w=getWeaponAim\(curWep\); w\.x=s\
 assert(/if\(tgt\.perWeapon && !tgt\.urlField\)\{/.test(src), 'aim tab renders a weapon picker');
 
 // persistence
-assert(/aimWep:  JSON\.parse\(JSON\.stringify\(aimByWep\)\)/.test(src), 'per-weapon aim serialized');
+/* build 1420: only the poses a creator CHANGED are written. `getWeaponAim` creates an entry lazily on
+   first aim, so the old whole-map copy grew the file by a full seven-field pose per weapon simply from
+   PLAYING the level — and a level saved after play differed from the same level saved before it. The
+   intent here (a per-weapon pose survives a save) is unchanged; omitting the defaults is lossless because
+   a weapon with no entry gets AIM_DEFAULT on demand. */
+assert(/aimWep:  \(function\(\)\{ const o=\{\}; let any=false;/.test(src), 'per-weapon aim serialized');
 assert(/if\(level\.aimWep\)\{ for\(const k in level\.aimWep\) aimByWep\[k\]=/.test(src), 'per-weapon aim restored');
 assert(/if\(!level\.aimWep\)\{ for\(const k of Object\.keys\(WEAPONS\)\) aimByWep\[k\]=Object\.assign\(\{\}, level\.aim\.state\)/.test(src), 'old single-aim levels seed every weapon (back-compat)');
 // regression: per-weapon aim must be restored from the level on page-load init (not just the editor load path)
 assert(/for\(const k in savedLevel\.aimWep\) aimByWep\[k\]=Object\.assign/.test(src), 'init restores the per-weapon aim map from savedLevel.aimWep');
-assert(/aimWep:\s*JSON\.parse\(JSON\.stringify\(aimByWep\)\)/.test(src), 'save serializes the full per-weapon aim map');
+assert(/if\(chg\)\{ o\[k\]=Object\.assign\(\{\}, a\); any=true; \}/.test(src),
+  'save serializes every per-weapon pose that DIFFERS from the default — the full map minus the entries ' +
+  'that carry no information');
 done('per-weapon aim');

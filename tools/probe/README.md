@@ -39,6 +39,10 @@ once by accident and removed in build 1293's follow-up.
 | `doorway-state.mjs` | whether a level-to-level DOORWAY carries the run — score, inventory, checkpoint (1415) |
 | `campaign-carry.mjs` | whether a carried value survives a room that never declared it (1416) |
 | `shadow-slot-dark.mjs` | whether a lamp a signal switched off still spends a shadow slot (1417) |
+| `level-roundtrip.mjs` | is serialize -> restore -> serialize idempotent? the whole-level save/load check (1418) |
+| `local-model-draco.mjs` | a dragged-in .glb gets Draco/KTX2/meshopt, and a codec failure retries (1419) |
+| `share-link-size.mjs` | how big a share link gets as a level grows — the codec is lossless, so size is the question |
+| `saved-level-boot.mjs` | does a saved level containing EVERY primitive boot? build 1331's rule, checked |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.
@@ -59,6 +63,22 @@ TOTAL — the counts climb monotonically through a sweep and keep climbing on th
 **Run the lint AFTER the last edit, not before the first.** A backtick inside a probe's page-code template
 closes the literal and Node reports it at an innocent line. It has now cost nine cycles, and build 1415's
 was in a comment added *after* a clean lint run.
+
+**A slice is only as good as BOTH of its ends.** Extracting the primitive table by running to a function
+name thousands of lines below it swept up 43 identifiers from unrelated objects. If a probe derives its own
+inputs from the source, give it a SHAPE GUARD that refuses to run on an implausible extraction and prints
+what it got — it caught this twice in one probe.
+
+**An empty saved level is not a control.** With no props the engine falls back to its own default level, so
+the seeded path is never exercised and the run reports the stock scene. Seed one real prop.
+
+**A container rollback defeats the staleness guard (1418).** It reverts `probe-out/` along with the repo,
+so the two agree and the hash check passes — it detects "you forgot to re-stage", not "the filesystem went
+back in time". If a probe reports that a feature several builds old does not exist, check `git log` FIRST.
+
+**A fixture that is still simulating is not a fixture (1418).** A dynamic physics prop settles between two
+serializes and reads exactly like format drift. The control caught it; without one it would have shipped as
+a finding.
 
 **Programs are cached for the life of the page.** A recompile measurement has to run BEFORE anything else
 has exercised that shader variant, or it reads 0 and looks like a refutation.

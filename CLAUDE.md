@@ -3416,6 +3416,204 @@ published wrong conclusion.
 probe *after* running the lint. The habit that actually fixes it: run `tools/probe/lint.mjs` after the last
 edit, not before the first.
 
+## The local-import path had no codecs (build 1419)
+
+Reported from play: *"I get this error on some model imports — THREE.GLTFLoader: No DRACOLoader instance
+provided."*
+
+**The word SOME is the tell.** `_loadLocalModel` — build 1177's drag-and-drop import and 1348's picker —
+constructed a **bare `new THREE.GLTFLoader`**, bypassing `_mkGLTFLoader`, which is the one function that
+attaches the three optional codecs: KTX2 (917), meshopt (918) and Draco (1256). So a model you dragged in
+carrying any of the three failed, with no retry, surfacing three's own raw message. Sketchfab and most
+"optimize my glTF" pipelines emit Draco by default, which is exactly why it hits some imports and not
+others.
+
+Build 1256 wired Draco properly and its retry works — **on the hosted path only**. This is the same defect
+shape this file records more than any other: one behaviour, two implementations, and only one maintained.
+The helper existed for precisely this reason and one site did not call it.
+
+**Two halves are needed and only one is the helper.** The decoders are LAZY — `_dracoLoader` is null until
+the first model that needs one asks — so attaching what exists is not enough on the FIRST such model. The
+hosted path solves that in `_ec`: read the codec named in the error, pull it in, retry. The local path now
+does the same, against the same three needles, with a one-shot latch per codec so a decoder that genuinely
+cannot be fetched reports rather than looping. The buffer is captured rather than re-read, so a retry needs
+no second trip to IndexedDB.
+
+Verified both ways. `test-1419` executes the real function with a fake loader through every branch (first
+Draco model, all three codecs, one-shot, a decoder fetch that rejects, an ordinary corrupt file, a model
+not on this device). And the shipped function driven in the running game with a real IndexedDB blob:
+
+```
+mkGLTFLoader -> parse:12 -> ensureDraco -> mkGLTFLoader -> parse:12  =>  ok
+```
+
+**The test asserts the property, not a count.** My first version required exactly one
+`new THREE.GLTFLoader(` in the engine and failed at two — because `_mkGLTFLoader`'s own line is a ternary
+and contains two. The property that was actually false is that every construction site lives INSIDE that
+function, and that is what it checks now.
+
+### The guard for this existed and had the right sentence attached to the wrong regex
+
+`test-1177` has asserted, since the build that introduced the defect:
+
+> *the local parse uses the SAME manager — KTX2/meshopt codecs and URL modifiers still apply*
+
+…against `/new THREE\.GLTFLoader\(gltfManager\(\)\)/`. **That regex pinned the bare constructor — the
+defect itself — while the sentence beside it named the very codecs the path was not getting.** Green for
+242 builds, and the test's own title says "through the same loader/codec path as every model".
+
+This is the SECOND occurrence in three builds: build 1417 moved `test-1132`'s *"a light switched off by a
+signal does not hold a shadow slot"*, which had been true-as-intent with a regex quoting the code that
+contradicted it. So it is a pattern, not a coincidence, and it has a rule now:
+
+**When an assertion's message says "the SAME X as everything else", the regex must assert SAMENESS.**
+Quoting one instance of X cannot — it will keep passing after that instance drifts away from the others,
+which is precisely when the assertion becomes worth having. This file already records pins *satisfied* by
+prose and pins *defeated* by prose; this is the third kind, where the message and the regex simply describe
+different things.
+
+## Two questions asked and answered NO (probe pass after build 1420)
+
+Both were pointed at the path a shipped gauntlet actually takes. Neither found a defect, and that is worth
+recording — an unrecorded negative gets re-investigated.
+
+**Does a level survive being SHARED?** `encodeLevel` is JSON → gzip → base64url, so the codec is lossless
+by construction and there is nothing to lose. The interesting number is size, and it goes the good way:
+
+```
+level             props     JSON     code     LINK    gzip
+stock                59   14,270    4,593    4,630    3.1x
++100                159   27,259    6,611    6,648    4.1x
++250                309   46,820    9,041    9,078    5.2x
++500                559   79,316   12,669   12,706    6.3x
+```
+
+**Compression IMPROVES with scale** — repeated prop structure is exactly what gzip eats — so a 559-prop
+level is a 12.7 KB link. Two facts worth having: a URL hash is **never sent to a server**, so no
+request-line limit applies; and the load path already handles a truncated link (`decodeLevel` throws,
+the catch reports *"Shared level link looks invalid"*). What a share link does NOT fit inside is a chat
+message — even the stock level's 4,630 characters exceed Discord's 2,000 — and the engine's answer to that
+is build 972's instant `/game/` publish, which 1348 surfaced on the publish card. No change made.
+
+**Does a saved level containing EVERY primitive boot?** This is the one that had teeth, because it has
+shipped twice and a user found it both times: `loadHostedProps()` runs at module level and builds the saved
+level's props before most of the file has evaluated, so a builder that reads a binding declared below the
+table throws mid-load and strands every prop after it. Build 1331 (`FX_PRESETS`, an ambient emitter) and
+build 1411 (`NET`, a world sign) are the two. 1331 wrote the rule down; nothing checked it.
+
+`tools/probe/saved-level-boot.mjs` seeds a real saved level with one of every primitive, boots the real
+game, and counts. **28 of 28.** The rule is being followed. It derives its list FROM the builder table, so
+a primitive added later is covered without editing the probe.
+
+### Three instrument failures, and the third is a lint that had been silent
+
+| # | it reported | why |
+|---|---|---|
+| 1 | 43 primitives including `crouch`, `sketchfab`, `tracer` | the slice ran to `function spawnProp`, thousands of lines past the table. **A slice is only as good as BOTH of its ends** — the character-budget trap wearing a different hat |
+| 2 | 0 primitives built, 59 props | a saved level with NO props falls back to the engine's own default level, so an empty one is not a control: it never exercises the saved-level path at all. One box is |
+| 3 | `1250` missing | the table carries `/* build 1250: emitters are props */`, and 1250 is not a primitive. Comments stripped |
+
+#1 and #3 were both caught by a **shape guard in the probe itself** — it refuses to run when the extracted
+list is implausible (too short, too long, missing `box` or `sign`, or containing a bare number) and prints
+what it got. A probe that derives its own inputs needs to check them, or it measures a fiction confidently.
+
+**And the probe lint had stopped checking a file without saying so** — until build 1413 made it say so.
+`share-link-size.mjs` opens its page code with `async function(){`, which the opener regex did not
+recognise, so the file was skipped. 1413's vacuous-run warning is what surfaced it; the opener now accepts
+the async form, and the widening was self-tested by injecting a real backtick and confirming it still
+fails. **Rollback #23 also landed during this pass** — same signature, same one-command recovery.
+
+## Saving a level twice now produces the same level (build 1420)
+
+Build 1418's round-trip probe found the colour decay and left four smaller differences behind. This closes
+them — and **the four are not the point.** `tools/probe/level-roundtrip.mjs` is now BYTE CLEAN on a 58-key,
+59-prop level carrying props with signals and locks and physics, all eight zone types, a shadow-casting
+point light, spawn markers, pickups, five graph node kinds, lists, persistence, HUD widgets, weapon stats,
+enemy mods, a wave manifest, animation slices and a cutscene. So it becomes a **standing guard**: any
+future field that fails to survive a save fails there, instead of being discovered by a creator whose work
+came back wrong.
+
+**Two of the four were the engine and two were the probe's own fixture**, which is worth stating plainly
+because all four looked identical in the diff:
+
+| | |
+|---|---|
+| **engine** | `st.melee` wrote `true` on the first save and `1` on every one after it. `melee` lives as `true` on the factory table and as 0/1 everywhere else (1296 normalises where `GUN_BASE` is captured; `_wepApplyStats` clamps on load), so a straight `!==` against the baseline wrote two different files for one level |
+| **engine** | `aimWep` grew a full seven-field ADS pose per weapon **simply from playing the level** — `getWeaponAim` creates the entry lazily on first aim — so a level saved after play differed from the same level saved before it, with 56 redundant numbers in between. Now only the poses a creator CHANGED are written, which is the same "only changed values" rule builds 1190, 1240 and 1296 already follow |
+| fixture | a prop's health lives in `maxHp`; the fixture set `hp`, which the serializer does not read |
+| fixture | widgets minted raw have no id and the serializer sanitizes into a COPY — but the editor's own Add button pushes through the sanitizer, so a real widget has an id from birth. **Not a defect** |
+| fixture | `animCuts` fields are `n/s/a/b/f`; an unnamed slice is discarded by design |
+
+**And the last difference of all was the fixture being ALIVE.** A dynamic physics crate settles between two
+serializes, and its rotation reads exactly like format drift — the control showed it, which is the only
+reason it was not published as decay. Every serialize in the probe now takes `resetDynamicProps()` first.
+The crate stays dynamic, because `phys`/`mass`/`bounce` are real coverage; it just is not moving while
+being measured. **A fixture that is still simulating is not a fixture**, recorded twice now.
+
+The general lesson is about the SHAPE of the question. No feature owns "does the file survive a save", so
+no feature test asks it — and three of this repo's worst silent-data-loss bugs (1162, 1280, 1325) were
+found by accident rather than by asking. `serialize -> restore -> serialize` is idempotent or it is not,
+the check needs no knowledge of what any field means, and it now runs against everything at once.
+
+## A light's colour decayed to red, one save at a time (build 1418)
+
+Found by asking a question no single-feature test asks, and that no feature owns: **is
+`serialize -> restore -> serialize` idempotent?** Author a level that uses as much of the engine as one
+level can, round-trip it, and diff the two serializations. Anything that differs is data the creator
+authored and the engine dropped or mangled. `tools/probe/level-roundtrip.mjs`.
+
+It found this. `ColorManagement.legacyMode = false` (build 1115) means `Color.setHex` runs the sRGB→linear
+transfer on the way IN, so `color.r` is a LINEAR value — and `Math.round(color.r*255)` is not the byte the
+creator authored, it is that byte pushed through a one-way curve. **Three sites did exactly that**, and two
+of them fed the result straight back into `setHex`, which applies the curve again:
+
+```
+shipped   ffddaa -> ffb867 -> ff7a23 -> ff3204 -> ff0800 -> ff0100 -> ff0000
+fixed     ffddaa -> ffddaa -> ffddaa -> ffddaa -> ffddaa -> ffddaa -> ffddaa
+```
+
+**A warm lamp becomes pure red in six saves, and this engine autosaves every 20 seconds.** Swept over all
+256 byte values the shipped form is wrong for **254**; the fix for **none**. And `_lightOpts` feeds
+`buildLight`, so *duplicating* a light did it too — the same decay in seconds rather than over a session.
+
+**It rounds rather than calling `getHex()`.** Three's own method is the right conversion with the wrong
+rounding (`clamp(r*255) << 16` truncates), which walks a colour one value darker per save — including a
+full 255 channel, which lands a hair under 255.0 and truncates to 254. Worth recording that my first sweep
+of that compared only the GREEN channel and reported "11 of 256"; the full-hex comparison is far worse. **A
+sweep that varies one channel and checks that channel is not a sweep of the conversion.**
+
+The editor's R/G/B sliders were the third site and were *self-consistent* — they read linear and wrote
+linear (`setRGB` defaults to the working space), so they never drifted — but they showed 255,183,103 for a
+lamp authored 255,221,170 and agreed with neither the level file nor any colour picker. All three now share
+one conversion and its inverse.
+
+**Honest limit:** a level saved before this build has the drifted value STORED. Loading it now holds that
+value stable forever instead of degrading further, but the original colour is not recoverable — it was
+destroyed by the save that wrote it.
+
+### What the round-trip probe cost to build, and what that says about the fixture
+
+Four instrument failures before one number was real, and every one is a fixture problem rather than an
+engine one:
+
+| # | it reported | why |
+|---|---|---|
+| 1 | the sign primitive did not exist | **container rollback #22.** The tree was at build 1382, which predates 1411's sign — and the rollback reverts `probe-out/` TOO, so the repo and the staging agreed and build 1414's hash guard was satisfied. **The guard detects disagreement, not recency** |
+| 2 | `triggers is not defined` | the live arrays are not named after the serialized keys (`ZONE_TYPES` says `triggers`; the array is `triggerZones`). Read them, don't guess |
+| 3 | `buildSpawnMarker` threw on `opts.t[0]` | it takes `t:[x,z]`, not `x`/`z`. Read a real call site |
+| 4 | the control showed a prop ROTATING between two restores of the same bytes | the crate was a **dynamic physics body**. It was genuinely settling. A live fixture reads exactly like format drift |
+
+#4 is the one to carry: **a fixture that is still simulating is not a fixture.** The control caught it,
+which is the only reason the rotation numbers were not published as serialization decay.
+
+**Backticks in a probe's page code for the tenth time — and the lint caught it this time**, which is the
+first time that tool has paid for itself before a run was wasted. The habit it enforces is build 1415's:
+run `tools/probe/lint.mjs` after the last edit, not before the first.
+
+### Still open from that probe — CLOSED in build 1420
+
+Four smaller differences remained and were deferred rather than folded into a colour fix. See below.
+
 ## A switched-off lamp was holding a shadow slot (build 1417)
 
 Build 1414 recorded this and deliberately left it, because it is not a property of point lights: it is build

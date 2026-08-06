@@ -42,7 +42,11 @@ const mk = () => {
 // ---------------------------------------------------------------- the round trip
 {
   // serializer emits only CHANGED stats; loaders apply st through the one helper
-  assert(/for\(const s of GUN_STAT_KEYS\)\{ if\(w\[s\]!=null && GUN_BASE\[k\] && w\[s\]!==GUN_BASE\[k\]\[s\]\)\{ \(st=st\|\|\{\}\)\[s\]=w\[s\]; \} \}/.test(src),
+  /* build 1420 NORMALISES a boolean before the compare (`melee` lives as `true` on the factory table and
+     as 0/1 everywhere else), so the diff no longer quotes a bare `!==`. The intent — only CHANGED stats
+     are written, factory levels carry no sheet at all — is unchanged and is now asserted by execution in
+     test-1420 as well. */
+  assert(/for\(const s of GUN_STAT_KEYS\)\{ if\(w\[s\]==null \|\| !GUN_BASE\[k\]\) continue;[\s\S]*?if\(_v !== GUN_BASE\[k\]\[s\]\)\{ \(st=st\|\|\{\}\)\[s\]=_v; \} \}/.test(src),
     'the serializer diffs against GUN_BASE — factory levels carry no sheet at all (623\'s pattern)');
   // build 1401: BOTH runtime loaders route through ONE `_applyLevelKit`, so counting copies of this line
   // counts the DUPLICATION rather than the behaviour — build 1280's lesson, and the reason the old count of
