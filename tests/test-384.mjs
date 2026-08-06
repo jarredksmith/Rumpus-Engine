@@ -1,6 +1,10 @@
 import { gameSource, extractFunction, assert, near, done } from './harness.mjs';
 import * as THREE from 'three';
 const src = gameSource();
+// build 1418: _lightOpts converts a linear THREE.Color to an sRGB hex through a shared helper. Lifted from
+// source rather than restated — a rig that restates a conversion keeps passing against a stale copy of it.
+const COLHELP = src.slice(src.indexOf('const _colSRGB = new THREE.Color();'), src.indexOf('function _lightOpts(g){'));
+
 // build 508: editable lights gain three.js types — Spotlight, Directional, Hemisphere — alongside Point.
 // buildLight branches on opts.type; _aimLight points spot/dir from a [yaw,pitch] heading; _lightOpts
 // serializes any live light back to authoring opts (used by save / duplicate / type-swap / code export);
@@ -20,7 +24,7 @@ const aim = new Function('THREE','_UP_Y', 'return ('+extractFunction('_aimLight'
 }
 
 // ---- _lightOpts round-trips each type ----
-const lopts = new Function('THREE','scene','return ('+extractFunction('_lightOpts')+')')(THREE, null);   // build 997: world-pos serialize needs THREE; scene only gates the att branch
+const lopts = new Function('THREE','scene', COLHELP + 'return ('+extractFunction('_lightOpts')+')')(THREE, null);   // build 997: world-pos serialize needs THREE; scene only gates the att branch
 { const g=new THREE.Group(); g.position.set(1,2,3);
   g.userData.light=new THREE.SpotLight(0x804020,5,30,0.6,0.4); g.userData.ltype='spot'; g.userData.dir=[0.5,-1.0];
   const o=lopts(g);

@@ -3416,6 +3416,70 @@ published wrong conclusion.
 probe *after* running the lint. The habit that actually fixes it: run `tools/probe/lint.mjs` after the last
 edit, not before the first.
 
+## A light's colour decayed to red, one save at a time (build 1418)
+
+Found by asking a question no single-feature test asks, and that no feature owns: **is
+`serialize -> restore -> serialize` idempotent?** Author a level that uses as much of the engine as one
+level can, round-trip it, and diff the two serializations. Anything that differs is data the creator
+authored and the engine dropped or mangled. `tools/probe/level-roundtrip.mjs`.
+
+It found this. `ColorManagement.legacyMode = false` (build 1115) means `Color.setHex` runs the sRGB→linear
+transfer on the way IN, so `color.r` is a LINEAR value — and `Math.round(color.r*255)` is not the byte the
+creator authored, it is that byte pushed through a one-way curve. **Three sites did exactly that**, and two
+of them fed the result straight back into `setHex`, which applies the curve again:
+
+```
+shipped   ffddaa -> ffb867 -> ff7a23 -> ff3204 -> ff0800 -> ff0100 -> ff0000
+fixed     ffddaa -> ffddaa -> ffddaa -> ffddaa -> ffddaa -> ffddaa -> ffddaa
+```
+
+**A warm lamp becomes pure red in six saves, and this engine autosaves every 20 seconds.** Swept over all
+256 byte values the shipped form is wrong for **254**; the fix for **none**. And `_lightOpts` feeds
+`buildLight`, so *duplicating* a light did it too — the same decay in seconds rather than over a session.
+
+**It rounds rather than calling `getHex()`.** Three's own method is the right conversion with the wrong
+rounding (`clamp(r*255) << 16` truncates), which walks a colour one value darker per save — including a
+full 255 channel, which lands a hair under 255.0 and truncates to 254. Worth recording that my first sweep
+of that compared only the GREEN channel and reported "11 of 256"; the full-hex comparison is far worse. **A
+sweep that varies one channel and checks that channel is not a sweep of the conversion.**
+
+The editor's R/G/B sliders were the third site and were *self-consistent* — they read linear and wrote
+linear (`setRGB` defaults to the working space), so they never drifted — but they showed 255,183,103 for a
+lamp authored 255,221,170 and agreed with neither the level file nor any colour picker. All three now share
+one conversion and its inverse.
+
+**Honest limit:** a level saved before this build has the drifted value STORED. Loading it now holds that
+value stable forever instead of degrading further, but the original colour is not recoverable — it was
+destroyed by the save that wrote it.
+
+### What the round-trip probe cost to build, and what that says about the fixture
+
+Four instrument failures before one number was real, and every one is a fixture problem rather than an
+engine one:
+
+| # | it reported | why |
+|---|---|---|
+| 1 | the sign primitive did not exist | **container rollback #22.** The tree was at build 1382, which predates 1411's sign — and the rollback reverts `probe-out/` TOO, so the repo and the staging agreed and build 1414's hash guard was satisfied. **The guard detects disagreement, not recency** |
+| 2 | `triggers is not defined` | the live arrays are not named after the serialized keys (`ZONE_TYPES` says `triggers`; the array is `triggerZones`). Read them, don't guess |
+| 3 | `buildSpawnMarker` threw on `opts.t[0]` | it takes `t:[x,z]`, not `x`/`z`. Read a real call site |
+| 4 | the control showed a prop ROTATING between two restores of the same bytes | the crate was a **dynamic physics body**. It was genuinely settling. A live fixture reads exactly like format drift |
+
+#4 is the one to carry: **a fixture that is still simulating is not a fixture.** The control caught it,
+which is the only reason the rotation numbers were not published as serialization decay.
+
+**Backticks in a probe's page code for the tenth time — and the lint caught it this time**, which is the
+first time that tool has paid for itself before a run was wasted. The habit it enforces is build 1415's:
+run `tools/probe/lint.mjs` after the last edit, not before the first.
+
+### Still open from that probe, and deliberately not fixed here
+
+The round trip is not yet byte-clean. What remains is benign, and is recorded so the next reader knows it
+was looked at rather than missed: `st.melee` normalises `true → 1`; `aimWep` and a breakable prop's `hp`
+are ADDED on load rather than lost; HUD widget ids are regenerated; and an empty `animCuts` serializes as
+`{}` once and is absent the next time. None of them is data loss and none accumulates — the eight-cycle
+sweep holds every value flat. A build that makes the format exactly idempotent is worth doing on its own
+terms, not folded into a colour fix.
+
 ## A switched-off lamp was holding a shadow slot (build 1417)
 
 Build 1414 recorded this and deliberately left it, because it is not a property of point lights: it is build

@@ -9,6 +9,10 @@
 import * as THREE from 'three';
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
+// build 1418: _lightOpts converts a linear THREE.Color to an sRGB hex through a shared helper. Lifted from
+// source rather than restated — a rig that restates a conversion keeps passing against a stale copy of it.
+const COLHELP = src.slice(src.indexOf('const _colSRGB = new THREE.Color();'), src.indexOf('function _lightOpts(g){'));
+
 
 // ---------------------------------------------------------------- the capture, executed against real THREE
 const mkCapture = () => {
@@ -22,7 +26,7 @@ const mkCapture = () => {
   const stray = new THREE.Group();            // an unattached light must NOT ride
   stray.userData = { light: new THREE.PointLight(0xffffff, 5, 10), ltype: 'point' }; scene.add(stray);
   const env = { THREE, scene, propEntry: () => ({ src: 'box', t: [5, 0, 5, 0, 0, 0, 1, 1, 1] }), lightModels: [lg, stray] };
-  const code = extractFunction('_lightOpts') + '\n' + extractFunction('_pfEntryOf') + '\nreturn _pfEntryOf(prop, { x: 0, y: 0, z: 0 });';
+  const code = COLHELP + extractFunction('_lightOpts') + '\n' + extractFunction('_pfEntryOf') + '\nreturn _pfEntryOf(prop, { x: 0, y: 0, z: 0 });';
   return new Function(...Object.keys(env), 'prop', code)(...Object.values(env), prop);
 };
 {

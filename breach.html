@@ -20500,9 +20500,46 @@ function _aimLight(g, yaw, pitch){
 }
 const _UP_Y = new THREE.Vector3(0,1,0);
 // Serialize a live light group back to its authoring opts (used by save / duplicate / type-swap / code export).
+/* ---------- build 1418: a THREE.Color's components are LINEAR, not sRGB bytes ----------
+   `ColorManagement.legacyMode = false` (build 1115) means `setHex` runs the sRGB->linear transfer on the
+   way IN. So `color.r` is a linear value, and `Math.round(color.r*255)` is not the byte the creator
+   authored — it is that byte pushed through a one-way curve. Three sites did exactly that, and two of
+   them fed the result back into `setHex`, which applies the curve AGAIN.
+
+   Measured against the real r149, six save/load cycles of one warm lamp:
+
+       shipped   ffddaa -> ffb867 -> ff7a23 -> ff3204 -> ff0800 -> ff0100 -> ff0000
+       fixed     ffddaa -> ffddaa -> ffddaa -> ffddaa -> ffddaa -> ffddaa -> ffddaa
+
+   A warm lamp becomes PURE RED in six saves, and this engine autosaves every 20 seconds. Duplicating a
+   light did it too, because `_lightOpts` -> `buildLight` is the same round trip through a hex.
+
+   Swept over every one of the 256 byte values: the shipped form is wrong for **254** of them, the fixed
+   form for **none**. `getHex()` is three's own inverse and would be very nearly right — but it TRUNCATES
+   (`clamp(r*255) << 16`), which is wrong for 11 of the 256 and walks a near-black colour one value darker
+   per save. Rounding the same conversion is exact, so this rounds rather than calling `getHex()`.
+
+   HONEST LIMIT: a level saved before this build has the drifted value STORED. Loading it now keeps that
+   value stable forever instead of degrading further, but the original colour is not recoverable — that
+   information was destroyed on the save that wrote it. */
+const _colSRGB = new THREE.Color();
+function _colToBytes(c){
+  _colSRGB.copy(c);
+  try{ if(THREE.ColorManagement && THREE.ColorManagement.fromWorkingColorSpace)
+         THREE.ColorManagement.fromWorkingColorSpace(_colSRGB, THREE.SRGBColorSpace); }catch(e){}
+  return [Math.round(_colSRGB.r*255), Math.round(_colSRGB.g*255), Math.round(_colSRGB.b*255)];
+}
+function _colToHex(c){ const b=_colToBytes(c); return (b[0]<<16)|(b[1]<<8)|b[2]; }
+/* and the inverse, for the editor's own R/G/B sliders: three's setRGB defaults to the WORKING space, so
+   without naming sRGB it would write the creator's bytes in as linear and the light would read back
+   brighter than they set it. */
+function _colFromBytes(c, r, g, b){
+  try{ c.setRGB(r/255, g/255, b/255, THREE.SRGBColorSpace); }
+  catch(e){ c.setRGB(r/255, g/255, b/255); }
+}
 function _lightOpts(g){
   const L=g.userData.light, type=g.userData.ltype||'point';
-  const hx=(c)=>(Math.round(c.r*255)<<16)|(Math.round(c.g*255)<<8)|Math.round(c.b*255);
+  const hx=_colToHex;   /* build 1418: was a hand-rolled linear-as-sRGB read; see _colToHex */
   // build 997: t is always WORLD coords (attached lights have a prop parent, so g.position is local)
   const _wp=new THREE.Vector3(); g.getWorldPosition(_wp);
   /* build 1338: the AUTHORED brightness, not the live one. `litI` is what the slider writes and what every
@@ -33939,7 +33976,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1417 · 2026-08-06';
+const BUILD_VERSION = 'build 1418 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -41408,16 +41445,20 @@ const editorTargets = {
       if(t==='point'||t==='spot') this.state.distance=L.distance;
       if(t==='spot'){ this.state.angle=L.angle; this.state.penumbra=L.penumbra; }
       if(t==='spot'||t==='dir'){ const d=g.userData.dir||[0,-1.3]; this.state.dyaw=d[0]; this.state.dpitch=d[1]; }
-      this.state.r=Math.round(L.color.r*255); this.state.g=Math.round(L.color.g*255); this.state.b=Math.round(L.color.b*255);
-      if(t==='hemi'){ this.state.gr=Math.round(L.groundColor.r*255); this.state.gg=Math.round(L.groundColor.g*255); this.state.gb=Math.round(L.groundColor.b*255); } },
+      /* build 1418: the sliders show the sRGB bytes the creator authored. They used to show the LINEAR
+         components, so a lamp placed at 255,221,170 read back 255,183,103 — self-consistent with the
+         write below (setRGB also defaulted to linear), so it never drifted, but it never agreed with the
+         hex in the level file or with any colour picker either. */
+      { const _b=_colToBytes(L.color); this.state.r=_b[0]; this.state.g=_b[1]; this.state.b=_b[2]; }
+      if(t==='hemi'){ const _g=_colToBytes(L.groundColor); this.state.gr=_g[0]; this.state.gg=_g[1]; this.state.gb=_g[2]; } },
     apply(){ const g=this.obj(), s=this.state; if(!g) return; const L=g.userData.light, t=g.userData.ltype||'point';
       g.position.set(s.px,s.py,s.pz);
       L.intensity=s.intensity; g.userData.litI=s.intensity;   // build 699: the slider sets the light's "on" brightness
       if(t==='point'||t==='spot') L.distance=s.distance;
       if(t==='spot'){ L.angle=Math.max(0.02, Math.min(Math.PI/2-0.01, s.angle)); L.penumbra=Math.max(0, Math.min(1, s.penumbra)); }
       if(t==='spot'||t==='dir') _aimLight(g, s.dyaw, s.dpitch);
-      L.color.setRGB(s.r/255, s.g/255, s.b/255);
-      if(t==='hemi') L.groundColor.setRGB(s.gr/255, s.gg/255, s.gb/255);
+      _colFromBytes(L.color, s.r, s.g, s.b);
+      if(t==='hemi') _colFromBytes(L.groundColor, s.gr, s.gg, s.gb);
       if(t==='point' && g.userData.marker) g.userData.marker.material.color.setRGB(s.r/255, s.g/255, s.b/255);   // point markers track their color; typed lights keep a type-coded marker
     },
     code(){
@@ -43239,7 +43280,7 @@ function tupleEq(a,b){ if(!a||!b) return false; for(let i=0;i<9;i++){ if(Math.ab
 function propByNid(nid){ for(const o of propModels){ if(o && o.userData.nid===nid) return o; } return null; }
 function propIndexByNid(nid){ for(let i=0;i<propModels.length;i++){ const o=propModels[i]; if(o && o.userData.nid===nid) return i; } return -1; }
 function serializeLevel(){
-  const lightHex = g=>{ const L=g.userData.light; return (Math.round(L.color.r*255)<<16)|(Math.round(L.color.g*255)<<8)|Math.round(L.color.b*255); };
+  const lightHex = g=>_colToHex(g.userData.light.color);   /* build 1418: shares ONE conversion with _lightOpts, which is how the two came to disagree with three in the first place */
   return {
     v: LEVEL_FORMAT_V,   // build 1165: the version is now READ on load (see _levelFormatCheck) — bump it when the schema changes shape, and set minV only when an old client's partial read would be load-bearing wrong
     gun:     { url: gunModelUrl,     state: Object.assign({}, editorTargets.gun.state) },
