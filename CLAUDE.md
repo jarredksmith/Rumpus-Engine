@@ -2256,6 +2256,57 @@ block. And my replacement pin `/g\.view==='chase'/` silently matched the tail of
 as well — six hits where one was meant. **A short variable name in a source pin is a substring of everything
 that ends with it**; that one asks `extractFunction('_applyGameCfg')` instead.
 
+## The gauntlet's first booth, built end to end — and the one thing it could not say (build 1403)
+
+Build 1402 was reasoned from a gap. This one was found by **building the booth**: `tools/probe/range-booth.mjs`
+authors a shooting range as a real logic graph plus real prop signals, with nothing a creator could not
+author, and runs it.
+
+```
+RANGE_START -> setvar score=0 -> read time -> emit NEXT
+NEXT        -> setvar n random 1..3 -> showprop plate{n}
+HIT         -> addvar score+1 -> resetprop plate{n} -> hideprop plate{n} -> emit NEXT
+every 1 s   -> read time -> expr left = 20 - (now - t0) -> branch left<=0 -> toast 'Time! Score {score}'
+each plate   carries a `damaged` signal (1397) that emits HIT
+```
+
+**Eleven of twelve things worked.** The twelfth was that build 1402's own rule — *every field that NAMES
+something* — had a hole in it: the `emit` node's event name was still a literal, so a booth with several
+lanes could not say `emit lane{n}_done`. One line, and it is the line the whole loop is built on.
+
+**The LISTENER stays literal, and that is a decision.** An `On event` name is MATCHED, not computed, so a
+listener whose own name moved with a variable would answer a different question every time the graph
+happened to evaluate it.
+
+### An emit nobody hears now says so
+
+The same defect build 1214 fixed for tags: an event no node listens for did exactly nothing, **silently** —
+and a computed name makes that likelier, because `lane{n}` with `n` unset fires `lane0`. `_lgEmit` reports
+through 1214's channel and **still fires**: a report is a note in the Level Check, never a refusal, because
+a prop signal or a HUD button may legitimately be the only thing that hears an event this run. Only a BLANK
+name fires nothing, because there is nothing to fire.
+
+It covers the two places a creator TYPES a name to fire it — the emit node and the emit signal verb.
+Everything else that fires an event (a HUD button, a trigger zone, an action bind) names a fixed event per
+control and keeps calling `logicEvent` directly.
+
+### 12/12, and four instrument faults on the way — every one read as a broken feature
+
+| # | it looked like | it was |
+|---|---|---|
+| 1 | every shot missing | the booth was built at the ORIGIN, where the stock level's geometry is in the way (build 1323's rule) |
+| 2 | the on-hit signal being dead | the plates carried `w:'damaged'` — the SERIALIZED key. The runtime field is `when` |
+| 3 | the shots missing again | `yaw = Math.PI` aimed the firing line AWAY from the plates. Forward is `(-sin yaw, -cos yaw)` |
+| 4 | the clock never firing | an `interval` node is TICKED by `updateLogic`; pulsing it by hand is not the same wire |
+
+**And one thing NOT isolated, stated rather than papered over.** Shots in the headless renderer are
+**intermittent**: identical camera, identical direction, the mag decrements every time, and roughly one in
+three lands. A raycast the probe casts itself over `colliders` reports zero hits even on the shot that
+connects, so the probe's comparison ray is not the same mechanism the shot uses and settles nothing. The
+probe therefore **fires until it lands and reports the count**, and drives the ten-round loop through
+`damageProp`, so what is measured is the BOOTH rather than the rig. Worth knowing before the next person
+writes a firing probe and reads a null as a finding.
+
 ## The graph could not name a thing it computed (build 1402)
 
 Found by asking what the gauntlet's first booth — a shooting gallery — actually needs, and checking rather
