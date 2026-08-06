@@ -39,13 +39,15 @@ const src = gameSource();
   const i = src.indexOf("if(g0.userData.ltype==='point'){");
   assert(i > 0, 'the point-light branch exists in the light panel');
   const blk = src.slice(i, i + 900);
-  assert(/shines through walls/.test(blk), 'it states the consequence in the creator’s terms');
-  assert(/Spot/.test(blk), '...and names the fix that actually works');
+  // build 1414 IMPLEMENTED the thing this branch used to only explain, so the notice's subject changed
+  // from a limitation to a price. The intent 1348 pinned — the creator is told the consequence in their
+  // own terms at the point of decision, and pointed at the cheaper alternative — is unchanged.
+  assert(/cube/.test(blk) && /six/.test(blk), 'it states the cost in the creator’s terms');
+  assert(/Spot/.test(blk), '...and names the cheaper alternative');
+  assert(/90 draw calls/.test(blk),
+    '...with the measured figure, not an adjective (tools/probe/point-shadow-cost.mjs)');
   assert(/six depth passes/.test(src.slice(Math.max(0, i - 1800), i)),
-    'the reason build 1132 refused is recorded at the site, so nobody "fixes" it by enabling cube shadows');
-  // build 1132's refusal itself must be untouched — this build explains it, it does not change it
-  assert(/if\(opts\.shadow && \(type==='spot' \|\| type==='dir'\)\)/.test(src),
-    'the refusal is unchanged: this build adds an explanation, not a capability');
+    'the reason build 1132 refused is recorded at the site, so the cost is never mistaken for free');
   // and the two measured facts that decided explain-vs-implement
   assert(/54 -> 65 programs/.test(src),
     'the recompile measurement is recorded — flipping castShadow rebuilt 11 programs in one frame, so a ' +

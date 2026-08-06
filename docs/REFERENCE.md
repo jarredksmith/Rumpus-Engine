@@ -378,7 +378,7 @@ Per-tab numeric fields (slider + number; typed values may exceed slider range). 
 
 ## Lights
 
-**Add light** · **Attach to selected prop / Detach** (light rides the prop, physics falls included; position sliders become prop-relative) · **Type** Point / Spotlight / Directional / Hemisphere · **Tag** (Open = on, Close = off, Toggle = flip) · **Starts off (lit by a signal)** · **Casts shadows** (spot & directional only; nearest few to the camera keep theirs; point lights deliberately can't) · **Fade (s)** ≥0 (0.4) · **Pos X/Z** ±65, **Pos Y** 0–30 · **Intensity** 0–40 (8) · **Range** 1–80 (22; point & spot) · **Cone angle** 0.05–1.5 rad (0.6; spot) · **Edge softness** 0–1 (0.4; spot) · **Aim yaw/pitch** (spot & directional) · **R/G/B** 0–255 · **Ground R/G/B** (hemisphere only). Duplicate (⇧D) and Delete work here too.
+**Add light** · **Attach to selected prop / Detach** (light rides the prop, physics falls included; position sliders become prop-relative) · **Type** Point / Spotlight / Directional / Hemisphere · **Tag** (Open = on, Close = off, Toggle = flip) · **Starts off (lit by a signal)** · **Casts shadows** (spot, directional & point; the nearest few to the camera keep theirs — **4** spots and **2** points on a desktop, none of either on a phone or once the quality scaler engages. A point light's shadow is a *cube*: six depth passes, measured at nearly double the frame's draw calls, so a Spot is still the cheaper way to block a lamp) · **Fade (s)** ≥0 (0.4) · **Pos X/Z** ±65, **Pos Y** 0–30 · **Intensity** 0–40 (8) · **Range** 1–80 (22; point & spot) · **Cone angle** 0.05–1.5 rad (0.6; spot) · **Edge softness** 0–1 (0.4; spot) · **Aim yaw/pitch** (spot & directional) · **R/G/B** 0–255 · **Ground R/G/B** (hemisphere only). Duplicate (⇧D) and Delete work here too.
 
 ## Enemy spawn markers (Enemies mode)
 
@@ -525,7 +525,8 @@ Opened from the editor's **Logic** tab → "Open logic graph". A full-screen nod
 
 ### Variables that carry over (persistence)
 In the Logic panel, every variable is listed with a checkbox:
-- **Ticked = survives into the next campaign level.** Saved when a level is CLEARED — dying and retrying rewinds to entry values.
+- **Ticked = this level passes its value on.** Passed on when the level is CLEARED *or* when a **Go to level** door is taken (build 1415) — dying and retrying rewinds to entry values.
+- **Anything the campaign is already carrying arrives here whether or not it is ticked** (build 1416), so a room you forgot to tick in cannot silently end a run. A name no room ever ticked stays per-level scratch.
 - **Also keep them between sessions** — browser-persisted so a returning player resumes.
   - **Carry the inventory too** (solo): keys/quest items/consumables come back; using an item saves.
   - **Resume at the last checkpoint** (solo): returning players continue; completing the game clears it.

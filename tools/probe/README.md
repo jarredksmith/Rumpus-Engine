@@ -34,11 +34,34 @@ once by accident and removed in build 1293's follow-up.
 | `objective-marker.mjs` | where an on-screen marker actually lands, including behind you (build 1412) |
 | `chase-pivot.mjs` | the third-person camera's height through the whole boom, per character (1413) |
 | `fair-hub.mjs` | builds 1410/1411/1412 driven TOGETHER — the composition, not the features |
+| `point-shadow-cost.mjs` | what a point-light shadow costs, in DRAW CALLS — the measurement build 1348 could not get to close (1414) |
+| `point-shadow-blocks.mjs` | that a wall actually blocks the lamp, on pixels, with shadow-off as the control (1414) |
+| `doorway-state.mjs` | whether a level-to-level DOORWAY carries the run — score, inventory, checkpoint (1415) |
+| `campaign-carry.mjs` | whether a carried value survives a room that never declared it (1416) |
+| `shadow-slot-dark.mjs` | whether a lamp a signal switched off still spends a shadow slot (1417) |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.
 
 ## Things that have gone wrong here, more than once
+
+**The staleness stamp was blind for the whole life of every build (1414).** `assertFreshStaging` compared
+`BUILD_VERSION` — a value this project's workflow bumps LAST. So from a build's first edit until its final
+commit the repo and the staging carried the same version string and different code, and the guard said
+fresh. It is a CONTENT HASH now. If you are ever tempted to key a freshness check on something a human
+updates by hand, don't: hash the bytes.
+
+**`renderer.info.autoReset` is FALSE (build 1122b), and `loop()` owns the one reset per frame.** A probe
+that calls `renderScene`/`renderer.render` directly and reads `renderer.info.render` is reading a RUNNING
+TOTAL — the counts climb monotonically through a sweep and keep climbing on the return to the baseline.
+`point-shadow-cost` found this only because its control failed. Call `renderer.info.reset()` per sample.
+
+**Run the lint AFTER the last edit, not before the first.** A backtick inside a probe's page-code template
+closes the literal and Node reports it at an innocent line. It has now cost nine cycles, and build 1415's
+was in a comment added *after* a clean lint run.
+
+**Programs are cached for the life of the page.** A recompile measurement has to run BEFORE anything else
+has exercised that shader variant, or it reads 0 and looks like a refutation.
 
 - **`window.__probe` does not exist until the start button is clicked.** The hook is declared inside
   `startGame`. Waiting for the hook before clicking hangs for the full timeout.

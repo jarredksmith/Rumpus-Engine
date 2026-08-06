@@ -3316,12 +3316,225 @@ frame"* — and two supporting findings. Where each of them went:
 |---|---|
 | `floorMat`/`wallMat` get neither a break-up layer (1379 refuses a material with a map) nor macro variation | **build 1382.** `applyMacroDetail(floorMat, MACRO_PERIOD_M)` and the same for `wallMat`, at `MACRO_TILE_MUL = 2.75` — deliberately not an integer multiple of `SURF_TILE_M`, or the layer lands on the repeat it exists to hide. The frequency is `1 / periodMetres`, because these two geometries are real metres and unscaled; the primitive path's `_albDetailFreq` would have been three orders of magnitude off and would have looked like nothing happening |
 | the 1145/1379 procedural normal noise aliases with no AA to suppress it once MSAA sheds | **build 1383.** `_syncOdBump` indexes `_OD_BUMP_STEP` by `_prStepI`, so the relief fades down the adaptive ladder exactly as the critic suggested — by reference through one shared uniform (1181), so a rung change is one CPU write and recompiles nothing |
-| point lights still cannot cast shadows (29 of them around the stock spawn) | **build 1348, deliberately parked with its reasons.** Flipping `castShadow` at runtime recompiles (measured: 54 → 65 programs in one frame), so a point shadow could never be a live toggle; and the frame-cost sweep **failed its own control** (a 0-caster baseline read 396 ms and the return to 0 read 554 ms), so there was no honest number to ship a cube shadow against. The panel names the consequence and the fix (use a Spot) instead |
+| point lights still cannot cast shadows (29 of them around the stock spawn) | **build 1414**, after 1348 parked it on a broken instrument. See below |
 
-**The third is the only one still open, and it is open on an INSTRUMENT, not on a decision.** What it
-needs is a cost measurement that survives a control — which this session's rig can now plausibly give
-(paused scene, `__drive` on a virtual clock, a control pair that returns). Anyone picking it up should
-start by reproducing 1348's failed sweep and getting the control to close, not by writing a cube shadow.
+## The carried set belongs to the campaign, not to the file you ticked (build 1416)
+
+Build 1415's own probe hit this on its first run and reported a defect that did not exist, which is the
+strongest possible evidence a creator will hit it too.
+
+`persistVars` — the list of what carries between levels — is level DATA: ticked in the Rules tab, saved
+into that one file. A gauntlet is one file per booth, so the same names had to be ticked in **every room**,
+and a room that forgot ended the run at its own door with nothing said anywhere. Measured on three rooms
+where only the first ticks `score`, against a control where every room does
+(`tools/probe/campaign-carry.mjs`):
+
+```
+only room 1 ticks it     12  ->  null  ->  null
+every room ticks it      12  ->   12   ->   12      <- the control, i.e. build 1415 working
+```
+
+So the TICK now means *"this room passes its value on"* and the seed takes whatever the campaign is
+carrying. **`_persistCommit` already had the matching half** — it writes only the ticked names and never
+deletes the rest — which is why this is one line in `_persistSeed` rather than a redesign, and why the
+accumulate-across-rooms property is asserted by executing the commit rather than by reading it.
+
+Three things it is deliberately not:
+- **Not "carry everything".** `campaignVars` only ever contains names some room COMMITTED, so a scratch
+  variable stays scratch — checked both in the probe and by ticking a name that was never committed.
+- **Not a format change.** A single-level game, and a campaign whose rooms all tick the same names, are
+  byte-identical: the two sets are the same set there.
+- **Not silent.** The panel now LISTS a name another room ticked, unticked, beside the "carrying now:"
+  line that says what it holds — the honest state, since it arrives either way.
+
+**And build 1415 had left the panel's own text stale**, which is worth catching in the build that notices
+rather than the audit that eventually would: it still said the value *"is saved when a level is cleared"*,
+a sentence that stopped being the whole truth the moment a doorway started committing.
+
+### An instrument fault worth the line
+
+The probe's first run reported all three rooms declaring the carry in BOTH conditions — no trap, nothing
+measured. `serializeLevel()` reads the LIVE persist list, so a base captured after a previous run carries
+it into every clone. The fix is `delete r.persistVars` rather than merely not setting it. *A fixture cloned
+from live state inherits the thing you are trying to vary* — the same shape as build 1400's first probe,
+which restored the same level and proved nothing because nothing had cleared it.
+
+## The doorway carried the gear and lost the run (build 1415)
+
+Found by asking what the gauntlet the user described actually needs — *"break out large rooms or levels
+into separate json files ... a trigger that shows a loading message and then picks up the game with the
+newly loaded scene"* — and then building it rather than reasoning about it.
+
+Build 1394 made that door real for the PLAYER: weapons, ammo and HP cross it behind `keep`. **A gauntlet is
+not made of weapons.** It is made of score, of which booths are finished, of the key from room one — all of
+which live in `logicVars`, which `logicStart` clears on every level load. `_persistSeed` then puts back
+whatever `campaignVars` holds, and **nothing but the level-CLEAR path had ever written `campaignVars`.**
+
+Measured on a three-room campaign, with a clear as the control (`tools/probe/doorway-state.mjs`):
+
+```
+through a DOOR     score 12  ->  null     and the player arrived at room 1's checkpoint, (-55,-55)
+through a CLEAR    score 30  ->  30       arriving at the room's own spawn
+the INVENTORY      redKey    ->  redKey   <- the positive control
+```
+
+**The inventory surviving is what made both failures attributable.** Build 1227 writes items through on
+pickup, so they already ride the blob and cross the door — which proves the persistence machinery works
+across a transition and narrows the fault to the two things that waited for a commit.
+
+The second row is the worse one and nobody had reported it: a doorway with no arrival tag **materialised
+the player at the previous room's checkpoint coordinates**, which name a spot in a level that is no longer
+loaded. Losing a score is annoying; arriving inside a wall is not recoverable.
+
+### The fix is one call, because the function already did exactly the right two things
+
+`_persistCommit` clears the checkpoint and carries the live variables. Its NAME says *the level was
+CLEARED* and its comment said so too — but both behaviours are properties of **leaving**, and a doorway
+leaves. So `goto` calls it. No second implementation, which is the defect this file records more than any
+other; only the comment widened.
+
+Three decisions:
+- **Before the load.** `_campaignLoad` ends in `startGame`, which is where the clearing happens, so
+  committing after it would carry forward values that had already been wiped.
+- **After every refusal.** A `goto` that names a level outside the campaign must not clear a checkpoint on
+  its way to doing nothing.
+- **UNCONDITIONAL, deliberately not behind `keep`.** `persistVars` is *already* the creator's opt-in —
+  they ticked "carry this between levels" — and requiring a second one would lose a hub world whose author
+  ticked the box and used a plain `goto`. `keep` answers a different question (does the PLAYER arrive as
+  they left, or re-equipped), which is why that one is a flag and this is not.
+
+### The control failed first, and that was the instrument
+
+The probe's first run reported the doorway losing the score **and the clear losing it too**, which proves
+nothing at all. `persistVars` is level DATA, and the rooms had been serialized before it was set — so the
+first load blanked it and both paths were measuring an empty list. Ticking it in each room's file (which is
+what a creator does) made the control close and the finding appear. *A control that fails is the
+instrument, not the finding* — recorded for the fourth time in this file, and it cost one run rather than a
+published wrong conclusion.
+
+**Backticks inside a template literal, for the ninth time** (1328, 1342, 1357), in a comment I added to the
+probe *after* running the lint. The habit that actually fixes it: run `tools/probe/lint.mjs` after the last
+edit, not before the first.
+
+## A switched-off lamp was holding a shadow slot (build 1417)
+
+Build 1414 recorded this and deliberately left it, because it is not a property of point lights: it is build
+1132's shipped ranking, so it has applied to every signal-controlled **spot** since that build.
+
+```js
+const L = list[i].userData.light, on = i < n && list[i].userData.lon !== false;
+```
+
+`i` is the RANK. A lamp a signal had switched off occupied its place in the budget and resolved to "off" —
+producing no shadow and denying the slot to a lit lamp behind it. Measured on four lamps in a line at a
+budget of two, with the all-lit case as the control at both ends (`tools/probe/shadow-slot-dark.mjs`):
+
+```
+all lit          lit+SHADOW  lit+SHADOW  lit  lit    -> 2 casting
+nearest two off  dark  dark  lit  lit                -> 0 casting   <- two lit lamps, no shadows
+back on          lit+SHADOW  lit+SHADOW  lit  lit    -> 2 casting
+```
+
+**A corridor of switchable lamps went completely shadowless whenever the switch nearest the player happened
+to be off.** Counting only the LIT ones toward the cap costs one local and fixes it.
+
+**The second half is not a side note.** The caster count IS `NUM_POINT_LIGHT_SHADOWS` / `NUM_SPOT_LIGHT_SHADOWS`,
+a `#define`, and build 1414 measured one change to it at **11 recompiled programs in a single frame**. Before,
+walking past lamps that switch on and off moved the count between 0 and n; now it holds at `min(n, lit)` for
+as long as the level has n lit casters anywhere. Across seven on/off patterns the total went from swinging to
+**two distinct values, and zero of the patterns containing a lit lamp came out shadowless.**
+
+**One pin's WORDING was already right while its regex pinned the defect.** `test-1132` has asserted *"a light
+switched off by a signal does not hold a shadow slot"* since that build — a true statement of intent attached
+to a regex quoting the code that contradicted it. The sentence is unchanged; what changed is that it is now
+true. That is a third variety of the pin traps this file records: not a pin satisfied by prose, nor defeated
+by it, but a pin whose MESSAGE and REGEX had drifted apart from each other.
+
+## The point-light shadow was blocked by an instrument, not by a decision (build 1414)
+
+Builds 1132 and 1348 both refused a point-light shadow and both were right on the evidence they had. 1348
+went furthest: it tried to price the thing and **its frame-cost sweep failed its own control** — a 0-caster
+baseline read 396 ms and the return to 0 read 554 ms — so it parked the feature and *said so*, rather than
+shipping an expensive one on a measurement it did not believe. That entry's closing line was the right
+instruction and this build followed it: **reproduce the failed sweep and get the control to close first.**
+
+**What changed is the MEASURAND, not the patience.** A wall-clock frame under SwiftShader has a noise floor
+larger than the effect. DRAW CALLS do not: they are integers, they are exactly what a shadow map costs, and
+a control either returns to the baseline or the instrument is broken. `tools/probe/point-shadow-cost.mjs`,
+scene paused, camera pinned, `renderer.info.reset()` per sample:
+
+```
+casters       0     1     2     4     0 (control)
+calls       104   193   289   474   104     <- returns EXACTLY, which is what 1348 could not get
+per caster        +89  +185  +370
+median ms   1.1   1.7    —   651.1  34.0    <- the TIMING control still does not close. It never will here
+```
+
+That last row is worth keeping: the timing figure is reported for scale and **no decision rests on it**,
+because its own control drifts 30×. The call counts decide, and they say **one point caster is +89 draw
+calls** — linear in caster count.
+
+**Two independent runs agreed on +89 to the call while their BASELINES differed** (104 and 173, by how much
+of the level had finished loading). That is the linearity row doing its job: +89 is a property of the
+caster, not of the frame it was measured in. Against a stock frame it is somewhere between half again and
+double — the largest single thing a creator can add with one checkbox.
+
+Worth knowing when reading that against *"a cube is six passes"*: +89 calls against **28** shadow-casting
+meshes is **~3.2 effective passes, not 6**. Three frustum-culls each cube face and most of a level is
+outside most faces. Six is the upper bound; 3.2 is what it costs here.
+
+So the feature ships **capped hard**: `_maxPointShadows()` is 2 on desktop, **0 on a phone** (the device the
+measurement says can least afford it), and 0 as soon as the resolution scaler engages — the same rung the
+spot budget sheds on. `updateShadowLightBudget` now ranks and caps the two kinds **separately**, because one
+shared cap of four would let two lamps quietly buy twelve depth passes out of a budget written for spots.
+
+**And 1348's other finding is confirmed, not overturned:** the first flip of `castShadow` recompiled by
+**11 programs** (69 → 80) — the *same delta* 1348 recorded as 54 → 65, so that build's recompile figure was
+right all along and only its timing sweep was broken. `NUM_POINT_LIGHT_SHADOWS` is a `#define`. That is why the cap is a *ranking*
+rather than a toggle — the budget only ever swaps WHICH lights cast while the COUNT stays at the cap, so a
+player walking between lamps changes the set and not the define, which keeps this off builds
+636/977/1153/1155's freeze path.
+
+### The flag being set proves nothing — so it was measured on pixels
+
+`tools/probe/point-shadow-blocks.mjs` builds a floor, a wall and one lamp at (200, 200) — outside `ARENA`,
+build 1323's rule — zeroes every other light, and reads scene-linear radiance out of a `FloatType` target
+with tone mapping off, sampling two points **projected** from world space rather than picked off a
+screenshot (build 1151's rule):
+
+```
+              floor beside the lamp    floor behind the wall
+shadow OFF          0.37057                  0.09524     <- the lamp shines straight through
+shadow ON           0.37057                  0.02312     <- 75.7% darker
+shadow OFF          0.37057                  0.09524     <- the control returns
+```
+
+**The lit side moving 0.0% is the whole assertion.** If both columns had moved, the frame merely got darker
+and the measurement would be worthless; only the shadowed side moving means the wall is an occluder.
+
+### The staleness guard was blind for the entire life of every build
+
+The first run of that probe reported `wantShadow false` and three's default 0.5/500 shadow camera — which
+reads exactly like the new code being broken. It was measuring **build 1413**.
+
+Build 1389 added a guard for precisely this (a probe staged during a rollback answered questions about code
+no longer in the tree) and keyed it on **`BUILD_VERSION`** — a value this project's workflow bumps **LAST**,
+after the edits, the probes and the suite. So from the first edit of a build until its final commit, the
+repo and the staging carry the *same version string* and *different code*, and the guard reports fresh.
+Every probe run during development measured the previous build, silently, since 1389.
+
+The stamp is a **content hash** now, with the version beside it as a label. Proven by the failure it was
+blind to: the guard refused a staging whose version string was identical to the repo's.
+
+**The general rule: a freshness check keyed on a value the workflow updates last is not a freshness check.**
+
+### Recorded rather than changed — and then changed, in build 1417
+
+A light a signal switched **off** still occupied its rank in the budget (`on = i < n && lon !== false`), so a
+dark lamp held a shadow slot a lit one further away could have used. That is build 1132's shipped shape,
+identical for spots, and correcting it was its own build with its own reasoning rather than a side effect of
+adding a light type. **That build is 1417** — see below. `test-1414`'s assertion inverted when it landed,
+which is what a recorded backlog item being picked up rather than forgotten looks like.
 
 ## The shadow patches are verified to land (build 1381)
 

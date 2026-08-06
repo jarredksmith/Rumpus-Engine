@@ -130,7 +130,10 @@ assert(/persistVars=\[\]; persistSave=false;/.test(src), 'a scene wipe clears it
 {
   const fn = extractFunction('_renderPersistUI', src);
   assert(/textContent='Values that carry over'/.test(fn), 'the fold is named in plain language, not "persistence"');
-  assert(/survives into the next level/.test(fn), '...and says what ticking one does');
+  // build 1416 changed what the tick MEANS — it is what this room contributes, not a gate on what
+  // arrives — so the sentence moved with it. The intent (the fold explains the checkbox in plain
+  // language rather than leaving it to be discovered) is unchanged.
+  assert(/passes its value on/.test(fn), '...and says what ticking one does');
   assert(/dying and retrying rewinds it to what it was when you walked in/.test(fn),
     '...including the forgiving half, which is the part an author would otherwise have to discover by losing progress');
   assert(/const names=\(typeof _lgVarOptions==='function'\) \? _lgVarOptions\(\) : \[\];/.test(fn),

@@ -46,17 +46,17 @@ const src = gameSource();
     eq(g.userData.light.castShadow, false, 'a ' + type + ' light does not cast by default');
     assert(!g.userData.wantShadow, '...and is not marked as wanting to');
   }
-  // opt in on the two types that are allowed to
+  // opt in on the types that are allowed to (build 1414 added `point` — see below for its own terms)
   for (const type of ['spot', 'dir']) {
     const g = build({ type, shadow: 1 });
     eq(g.userData.light.castShadow, true, 'a ' + type + ' light casts when asked');
     eq(g.userData.wantShadow, true, '...and is marked, so the budget and the save path can see it');
     eq(g.userData.light.shadow.mapSize.x, 1024, '...at 1024 on a desktop');
   }
-  // and NOT on the two that are not
-  for (const type of ['point', 'hemi']) {
-    const g = build({ type, shadow: 1 });
-    eq(g.userData.light.castShadow, false, 'a ' + type + ' light never casts, even when asked (a cube map is six passes)');
+  // and NOT on the one that still cannot: a hemisphere light has no direction and therefore no shadow
+  {
+    const g = build({ type: 'hemi', shadow: 1 });
+    eq(g.userData.light.castShadow, false, 'a hemi light never casts, even when asked');
     assert(!g.userData.wantShadow, '...and is not marked');
   }
   // the shadow camera has to bracket the light's own reach, or the shadow either clips or has no precision
@@ -102,8 +102,13 @@ const src = gameSource();
   assert(/_shadowLightT \+= \(dt\|\|0\); if\(_shadowLightT < 0\.33\) return;/.test(fn),
     're-ranked three times a second, not per frame — reallocating shadow maps every frame thrashes');
   assert(/g\.userData\.wantShadow && g\.userData\.light/.test(fn), 'only lights that asked are considered');
-  assert(/want\.sort\(\(a,b\)=>a\._sd - b\._sd\);/.test(fn), 'nearest to the camera win');
-  assert(/const L = want\[i\]\.userData\.light, on = i < cap && want\[i\]\.userData\.lon !== false;/.test(fn),
+  // build 1414 split the ranking into a shared `rank`/`apply` pair so point casters get their own cap.
+  // Both intents are unchanged and are now asserted by EXECUTION further down rather than by quotation.
+  assert(/list\.sort\(\(a,b\)=>a\._sd - b\._sd\);/.test(fn), 'nearest to the camera win');
+  // This assertion's WORDING was always the intent and the code contradicted it until build 1417: `i` is
+  // the rank, so a dark lamp held its place in the budget and merely resolved to off. The sentence is
+  // unchanged; what changed is that it is now true, and it is asserted by execution in test-1417.
+  assert(/on = \(list\[i\]\.userData\.lon !== false\) && k < n;/.test(fn),
     'a light switched off by a signal does not hold a shadow slot');
   assert(/if\(L\.castShadow !== on\)\{ L\.castShadow = on; changed = true; \}/.test(fn), 'only writes on a real change');
   assert(/if\(changed && typeof _dirtyShadows==='function'\) _dirtyShadows\(2\);/.test(fn),
@@ -125,8 +130,10 @@ assert(/if\(typeof updateShadowLightBudget==='function'\) updateShadowLightBudge
 
 // ---------------------------------------------------------------- authorable
 assert(/shSp\.textContent='Casts shadows';/.test(src), 'the Lights tab has the checkbox');
-assert(/if\(g0\.userData\.ltype==='spot' \|\| g0\.userData\.ltype==='dir'\)\{/.test(src),
-  '...shown only for the types that can cast, rather than offered and silently ignored');
+assert(/if\(g0\.userData\.ltype==='spot' \|\| g0\.userData\.ltype==='dir' \|\| g0\.userData\.ltype==='point'\)\{/.test(src),
+  '...shown only for the types that can cast, rather than offered and silently ignored (build 1414 added point)');
+assert(!/g0\.userData\.ltype==='hemi'/.test(src.slice(src.indexOf('shSp.textContent='))),
+  '...and a hemisphere light, which has no direction to cast in, is still not offered it');
 assert(/const o=_lightOpts\(g0\); if\(on\) o\.shadow=1; else delete o\.shadow;/.test(src),
   'toggling REBUILDS the light through buildLight, where the shadow camera and bias are configured');
 assert(/lightModels\.splice\(lightModels\.indexOf\(ng\),1\); lightModels\.splice\(idx,0,ng\);/.test(src),
