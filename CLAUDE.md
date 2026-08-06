@@ -2256,6 +2256,75 @@ block. And my replacement pin `/g\.view==='chase'/` silently matched the tail of
 as well — six hits where one was meant. **A short variable name in a source pin is a substring of everything
 that ends with it**; that one asks `extractFunction('_applyGameCfg')` instead.
 
+## A trigger can change the camera, and change it back (build 1404)
+
+Asked for from use: *"a player walks into a zone that triggers the camera to be from a single, security
+camera mounted POV, or switch to a top-down angle, and then go back to normal view with a different
+trigger."*
+
+`gameCfg.view` was authored ONCE and was the only thing that decided the camera. A cinematic could move the
+camera, but a cinematic **takes control** — this is a view change you keep playing through, which is the
+fixed-camera idiom of every survival-horror game ever made.
+
+### An override, never a write
+
+`gameCfg.view` is level data, and a runtime verb must not edit the level (build 1170's rule) — a creator who
+saves mid-play must not bake the security camera into their file. So `_viewOv` sits beside it and `_viewNow()`
+decides, and the SERIALIZER and the editor's own view picker deliberately keep reading the authored value:
+a creator choosing the level's camera must never be shown the one the graph armed.
+
+**Four things read `gameCfg.view` to decide which camera was running**, and if the override had reached three
+of them the fourth would have kept placing the old camera — this file's most-repeated defect. They all ask
+`_viewNow()` now: the mode gate, the third-person gate, the chase-cursor gate and the orbit framing.
+
+### The mounted camera
+
+`fixed` mounts on a tagged prop. Four decisions:
+- **World position**, so a camera on a lift or a parented prop (build 1309) rides it.
+- **Tracking by default**, because a security camera watches you. Untracked, it takes the PROP's own
+  orientation — both a prop and a camera are −Z forward, so it is build 1394's identity mapping rather than
+  a conversion, and a creator aims the camera by rotating the prop.
+- **The FIRST prop with the tag wins** (1394 again): a camera is one place.
+- **A refusal changes nothing.** A tag nobody carries, or a view the engine does not have, is reported
+  through build 1214's channel and whatever camera was running keeps running — a camera pointed nowhere is
+  the worst possible failure for this verb, and snapping the player to a view they did not ask for mid-scene
+  is the second worst.
+
+### Two things that had to follow it, and one that did not
+
+- **The cursor plane.** `_updateViewAim` branched on `vm==='top'` where the real question is *"not the
+  side-scroll lane"* — a `fixed` mode would have fallen into the side branch with no lane captured and
+  aimed at NaN. It asks `vm!=='side'` now, which is a generalisation: `top` and `side` were the only two
+  values that reached there before this build.
+- **The movement basis.** WASD under a fixed camera has to be relative to that CAMERA. The body faces the
+  cursor, so a body-relative basis would steer differently every time the mouse moved. One frame stale,
+  exactly like the cursor unproject above it — and a fixed camera barely moves anyway.
+- **`_vcamMode()` returns `''` for `fixed`**, so the orbit framing declines it and `_viewFixedPose` is the
+  only thing placing that camera. Nothing had to be added there.
+
+`who:'actor'` (build 1232) sends it to the player who tripped the trigger and nobody else, which is what a
+security camera in a co-op level means; the default reaches everyone like the other world verbs, and a
+client applies the identical payload through the identical function. The camera tag interpolates (1402), so
+`cam{n}` addresses a bank of them. A deploy clears the override — it is play state.
+
+### Measured live, 16/16 (`tools/probe/camera-view.mjs`)
+
+```
+top-down     armed, and the live camera really is overhead — while gameCfg.view stays 'fps' throughout
+fixed        sits EXACTLY on its mount (delta 0.00 on all three axes) and looks straight at the player
+             (dot 1.0000); keeps tracking as the player walks 20 m with the camera moving 0.000
+untracked    looks along the prop's own facing (dot 1.0000)
+normal       the camera is back on the player's own eye, 0.00 m away
+failures     a missing tag and an unknown view are each refused and reported once
+deploy       clears it;  editor  sees 'fps' while the graph has 'top' armed
+```
+
+### Still open, and stated rather than implied
+
+A fixed camera does not yet CUT between mounts on a timer, blend between them, or avoid geometry between
+itself and the player — each of those is its own build. And the camera does not collide: a mount inside a
+wall shows the inside of that wall, which is the creator's placement to fix.
+
 ## The gauntlet's first booth, built end to end — and the one thing it could not say (build 1403)
 
 Build 1402 was reasoned from a gap. This one was found by **building the booth**: `tools/probe/range-booth.mjs`

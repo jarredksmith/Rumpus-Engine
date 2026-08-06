@@ -11,7 +11,11 @@ import { gameSource, extractFunction, evalDecl, assert, eq, done } from './harne
 const src = gameSource();
 
 // ---- the mode gate, executed: only live play reports a non-fps view ----
-const mk = (deps) => evalDecl(extractFunction('activeViewMode', src), 'activeViewMode', deps);
+/* build 1404: activeViewMode asks _viewNow(), the ONE gate that decides which camera is running (the
+   authored view, or a runtime override armed by the camera verb). Lifted from source so this rig tests the
+   shipped gate rather than a restatement of it. */
+const _VIEWNOW = 'var _viewOv = null;\n' + extractFunction('_viewNow', src) + '\n';
+const mk = (deps) => evalDecl(_VIEWNOW + extractFunction('activeViewMode', src), 'activeViewMode', deps);
 eq(mk({ gameCfg:{ view:'top' }, gameOn:true, editorOpen:false, _cineActive:false })(), 'top', 'top mode live in play');
 eq(mk({ gameCfg:{ view:'side' }, gameOn:true, editorOpen:false, _cineActive:false })(), 'side', 'side mode live in play');
 eq(mk({ gameCfg:{ view:'top' }, gameOn:true, editorOpen:true, _cineActive:false })(), 'fps', 'the EDITOR always flies first-person');
@@ -38,12 +42,17 @@ assert(/if\(vm==='side' && _sideLock==null\) _sideLock=\(axis==='x'\) \? player\
 // ---- movement: screen-relative in top, lane-only in side ----
 // build 1085 rotated this basis with the camera; at yaw 0 it must still be exactly the original, so run
 // it rather than matching the old literal.
-{ const b=src.match(/if\(_vm874==='top'\)\{ const _ya=[^\n]*?right\.set\([^\n]*?\); \}/);
+{ const b=src.match(/if\(_vm874==='top' \|\| _vm874==='fixed'\)\{[\s\S]*?right\.set\([^\n]*?\); \}/);
   assert(b, 'the top-down movement basis is still set in one place');
   const F={}, R={}, mk=o=>({ set:(x,y,z)=>{ o.x=x; o.y=y; o.z=z; } });
-  new Function('_vm874','forward','right','_vcamYawRad', b[0])('top', mk(F), mk(R), ()=>0);
+  new Function('_vm874','forward','right','_vcamYawRad','_viewCamYaw', b[0])('top', mk(F), mk(R), ()=>0, ()=>0);
   eq([F.x,F.y,F.z].join(), '0,0,-1', 'top at yaw 0: W = up-screen');
   eq([R.x,R.y,R.z].join(), '1,0,0', 'top at yaw 0: D = right-screen');
+  /* build 1404: a fixed camera shares the block and takes its yaw from where that CAMERA looks */
+  const F2={}, R2={};
+  new Function('_vm874','forward','right','_vcamYawRad','_viewCamYaw', b[0])('fixed', mk(F2), mk(R2), ()=>99, ()=>Math.PI/2);
+  eq(Math.round(F2.x), -1, 'fixed: W runs along the camera forward, not the authored top yaw');
+  eq(Math.round(R2.z), -1, '...and D along its right');
 }
 assert(/else if\(_vm874==='side'\)\{ if\(gameCfg\.viewAxis==='z'\)\{ right\.set\(0,0,-1\); \} else \{ right\.set\(1,0,0\); \} forward\.set\(0,0,0\); \}/.test(src), 'side: only the lane axis moves');
 assert(/if\(_vm874==='side' && _sideLock!=null && !drivingCar\)\{/.test(src), 'lane hold: off-lane velocity killed, eased back on');

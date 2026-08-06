@@ -227,7 +227,9 @@ assert(/\['spawn','Spawn enemies'\],\['pickup','Spawn pickup'\],\['damage','Dama
 eq((src.match(/\['spawn','Spawn enemies'\]/g) || []).length, 2, '...in BOTH the graph node and the prop-signal editor');
 assert(/\{k:'at',l:'at',w:84,ifv:\['verb',\['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill'\]\],listId:'lgPlaceList'\}/.test(src),   // build 1170: moveprop points somewhere too; build 1216: so does spawnprop; build 1288: damage/heal/kill point at the AREA they affect
   'the place field appears for exactly the verbs that need one, and offers a dropdown of real places');
-assert(/\{k:'who',l:'',w:104,ifv:\['verb',\['damage','heal','kill','teleport','give','take'\]\]/.test(src), 'and the who field for exactly those');   // build 1232: give/take joined — the actor option is how a key reaches the player who earned it
+// build 1404: `view` joined the audience list — a security camera in a co-op level means the player who
+// tripped the trigger, not everyone.
+assert(/\{k:'who',l:'',w:104,ifv:\['verb',\['damage','heal','kill','teleport','give','take','view'\]\]/.test(src), 'and the who field for exactly those');   // build 1232: give/take joined — the actor option is how a key reaches the player who earned it
 assert(/\{k:'item',l:'item',w:76,ifv:\['verb','pickup'\],ifv2:\['pk','item'\]/.test(src),
   'the inventory-item field needs BOTH conditions — it only shows for an item pickup');
 
@@ -258,11 +260,13 @@ assert(/const pl=mk\('lgPlaceList'\);/.test(src) && /const il=mk\('lgItemList'\)
 assert(/else if\(msg\.t==='wact'\)\{/.test(src), 'and clients apply it');
 {
   const i = src.indexOf("else if(msg.t==='wact')");
-  const blk = src.slice(i, i + 620);
+  const blk = src.slice(i, src.indexOf("else if(msg.t===", i + 30));
   assert(/if\(msg\.tp && typeof _lgPlacePlayer==='function'\) _lgPlacePlayer\(/.test(blk), 'a teammate gets teleported by the same rule that moved the host');
   assert(/if\(msg\.k\) try\{ applyEnemyDamageToSelf\(99999/.test(blk), '...killed');
   assert(/else if\(msg\.d>0\)/.test(blk), '...hurt');
   assert(/if\(msg\.h>0\)\{ player\.hp=Math\.min\(player\.maxHp/.test(blk), '...and healed');
+  assert(/if\(msg\.vw && typeof _setViewOverride==='function'\)/.test(blk),
+    '...and build 1404: the host\'s camera change lands through the identical function');
 }
 assert(/_wactSend\(\{ tp:\[at\.x, at\.y, at\.z\] \}\); return; \}/.test(src), 'the host tells them about a teleport');
 

@@ -30,6 +30,8 @@ const build = (cfg, spawn = {}) => {
     updateMatrixWorld(){} };
   const api = new Function('gameCfg','playerSpawn','worldCfg','EYE','camera','terrainHeightAt','THREE',
     `${CONSTS}
+     var _viewOv = null;
+     ${extractFunction('_viewNow')}
      ${extractFunction('_vcamMode')}
      ${extractFunction('_vcamTarget')}
      ${extractFunction('_vcamNum')}
@@ -220,11 +222,13 @@ eq(build({ view: 'fps' }).api.reset(), false, 'reset does nothing in a first-per
 // ---------------------------------------------------------------- 5. movement follows a rotated camera
 // Top-down WASD is screen-relative. If the camera rotates and the basis does not, W stops meaning "up".
 {
-  const b = src.match(/if\(_vm874==='top'\)\{ const _ya=[^\n]*?right\.set\([^\n]*?\); \}/);
+  /* build 1404: the block gained the fixed-camera case, so the match spans it. What is asserted — that
+     the top-down basis rotates with the authored camera yaw — is unchanged and still proven by execution. */
+  const b = src.match(/if\(_vm874==='top' \|\| _vm874==='fixed'\)\{[\s\S]*?right\.set\([^\n]*?\); \}/);
   assert(b, 'the top-down movement basis is derived from the camera yaw');
   const run = (yaw) => {
     const F = {}, R = {}, mk = o => ({ set: (x,y,z) => { o.x=x; o.y=y; o.z=z; } });
-    new Function('_vm874','forward','right','_vcamYawRad', b[0])('top', mk(F), mk(R), () => yaw);
+    new Function('_vm874','forward','right','_vcamYawRad','_viewCamYaw', b[0])('top', mk(F), mk(R), () => yaw, () => 0);
     return { F, R };
   };
   let m = run(0);

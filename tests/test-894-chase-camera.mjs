@@ -41,9 +41,14 @@ assert(tp.indexOf('_tpCamCur.set(camx,camy,camz)') < tp.indexOf('_cameraCollide(
 }
 
 // ---- the per-level chase view ----
-assert(/function chaseForced\(\)\{/.test(src) && /gameCfg\.view==='chase'/.test(extractFunction('chaseForced', src)), 'a level can require the chase camera');
+/* build 1404: the chase gates ask _viewNow() — the ONE function that decides the running camera, so a
+   runtime override and the authored view cannot disagree. A level requiring chase is unchanged: _viewNow
+   returns gameCfg.view whenever nothing is armed. */
+assert(/function chaseForced\(\)\{/.test(src) && /_viewNow\(\)==='chase'/.test(extractFunction('chaseForced', src)), 'a level can require the chase camera');
+assert(/return \(typeof gameCfg!=='undefined' && gameCfg && gameCfg\.view\) \? gameCfg\.view : 'fps';/.test(extractFunction('_viewNow', src)),
+  '...because with nothing armed _viewNow IS the authored view');
 assert(/function tpActive\(\)\{ return tpMode \|\| chaseForced\(\); \}/.test(src), 'tpActive is the one truth for third-person rendering');
-assert(/if\(gameCfg\.view==='chase'\) return 'fps';/.test(extractFunction('activeViewMode', src)),
+assert(/if\(v==='chase'\) return 'fps';/.test(extractFunction('activeViewMode', src)),
   'chase reports as fps — mouselook/aim/crosshair paths stay untouched (no twin-stick cursor)');
 assert(/if\(tpActive\(\) && gameOn && !duelDead\)\{ gun\.visible=false; tpCameraPushback\(dt\); \}/.test(src), 'the render loop drives it with dt');
 // every view sanitizer accepts 'chase' (boot init, net load, restore, serialize)
