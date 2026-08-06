@@ -3472,6 +3472,57 @@ which is precisely when the assertion becomes worth having. This file already re
 prose and pins *defeated* by prose; this is the third kind, where the message and the regex simply describe
 different things.
 
+## Two questions asked and answered NO (probe pass after build 1420)
+
+Both were pointed at the path a shipped gauntlet actually takes. Neither found a defect, and that is worth
+recording — an unrecorded negative gets re-investigated.
+
+**Does a level survive being SHARED?** `encodeLevel` is JSON → gzip → base64url, so the codec is lossless
+by construction and there is nothing to lose. The interesting number is size, and it goes the good way:
+
+```
+level             props     JSON     code     LINK    gzip
+stock                59   14,270    4,593    4,630    3.1x
++100                159   27,259    6,611    6,648    4.1x
++250                309   46,820    9,041    9,078    5.2x
++500                559   79,316   12,669   12,706    6.3x
+```
+
+**Compression IMPROVES with scale** — repeated prop structure is exactly what gzip eats — so a 559-prop
+level is a 12.7 KB link. Two facts worth having: a URL hash is **never sent to a server**, so no
+request-line limit applies; and the load path already handles a truncated link (`decodeLevel` throws,
+the catch reports *"Shared level link looks invalid"*). What a share link does NOT fit inside is a chat
+message — even the stock level's 4,630 characters exceed Discord's 2,000 — and the engine's answer to that
+is build 972's instant `/game/` publish, which 1348 surfaced on the publish card. No change made.
+
+**Does a saved level containing EVERY primitive boot?** This is the one that had teeth, because it has
+shipped twice and a user found it both times: `loadHostedProps()` runs at module level and builds the saved
+level's props before most of the file has evaluated, so a builder that reads a binding declared below the
+table throws mid-load and strands every prop after it. Build 1331 (`FX_PRESETS`, an ambient emitter) and
+build 1411 (`NET`, a world sign) are the two. 1331 wrote the rule down; nothing checked it.
+
+`tools/probe/saved-level-boot.mjs` seeds a real saved level with one of every primitive, boots the real
+game, and counts. **28 of 28.** The rule is being followed. It derives its list FROM the builder table, so
+a primitive added later is covered without editing the probe.
+
+### Three instrument failures, and the third is a lint that had been silent
+
+| # | it reported | why |
+|---|---|---|
+| 1 | 43 primitives including `crouch`, `sketchfab`, `tracer` | the slice ran to `function spawnProp`, thousands of lines past the table. **A slice is only as good as BOTH of its ends** — the character-budget trap wearing a different hat |
+| 2 | 0 primitives built, 59 props | a saved level with NO props falls back to the engine's own default level, so an empty one is not a control: it never exercises the saved-level path at all. One box is |
+| 3 | `1250` missing | the table carries `/* build 1250: emitters are props */`, and 1250 is not a primitive. Comments stripped |
+
+#1 and #3 were both caught by a **shape guard in the probe itself** — it refuses to run when the extracted
+list is implausible (too short, too long, missing `box` or `sign`, or containing a bare number) and prints
+what it got. A probe that derives its own inputs needs to check them, or it measures a fiction confidently.
+
+**And the probe lint had stopped checking a file without saying so** — until build 1413 made it say so.
+`share-link-size.mjs` opens its page code with `async function(){`, which the opener regex did not
+recognise, so the file was skipped. 1413's vacuous-run warning is what surfaced it; the opener now accepts
+the async form, and the widening was self-tested by injecting a real backtick and confirming it still
+fails. **Rollback #23 also landed during this pass** — same signature, same one-command recovery.
+
 ## Saving a level twice now produces the same level (build 1420)
 
 Build 1418's round-trip probe found the colour decay and left four smaller differences behind. This closes

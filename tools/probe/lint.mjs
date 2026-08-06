@@ -33,7 +33,7 @@ for (const f of files) {
      looking inside them. It had been doing that for every booth probe in this session. A checker that
      cannot find the thing it checks reports success — which is worse than not running it, because it is
      believed. Hence the `\s*`, and the vacuous-run warning below. */
-  const open = /`\s*\(\s*(?:function\s*\(\s*\)\s*\{|async\s*\(\s*\)\s*=>)/g;
+  const open = /`\s*\(\s*(?:async\s+)?(?:function\s*\(\s*\)\s*\{|\(\s*\)\s*=>)/g   /* build 1421: `async function(){` too — the vacuous-run warning caught share-link-size.mjs going unchecked */;
   let m, found = 0;
   while ((m = open.exec(src))) {
     found++;
