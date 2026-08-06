@@ -89,10 +89,12 @@ const src = gameSource();
   const doCase = pulse.slice(pulse.indexOf("case 'do': {"), pulse.indexOf("case 'toast':"));
   // build 1402: the four fields that NAME something now interpolate `{var}` on the way through. What this
   // has always asserted — that the Do node forwards them at all — is unchanged.
-  assert(/prefab:_lgName\(p\.prefab\)/.test(doCase),
+  /* build 1407: the forwarding is derived from the node's parameter table, so "does it forward X" became
+     "is X a declared param, and does the derivation run" — which covers every field rather than three. */
+  const NAMED = extractConst('_LG_NAME_FIELDS');
+  assert(/'prefab'/.test(NAMED) && /const _args=_lgDoArgs\(p\)/.test(doCase),
     'the Do node forwards the prefab name — without it spawnprop had nothing to spawn even once routed');
-  // every verb the dropdown offers must be forwarded with the fields its own handler reads
-  assert(/target:_tgt/.test(doCase) && /at:_lgName\(p\.at\)/.test(doCase),
+  assert(/_args\.target=_tgt/.test(doCase) && /'at'/.test(NAMED),
     '...alongside the tag and the place the prop verbs use');
 }
 { // the palette and the dispatcher must agree — this is the parity that was missing

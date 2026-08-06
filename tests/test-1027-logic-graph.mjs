@@ -4,7 +4,7 @@
 // verb; actions OUT via a 'do' node speaking _applySignalAction's whole verb vocabulary (the
 // existing per-action MP broadcasts ride along). Host/solo authoritative; a per-frame pulse
 // budget means a mis-wired loop can never lock the game. Serialized as level.logic.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
 
 // ---- executable: the whole interpreter, with stubbed world hooks ----
@@ -30,7 +30,13 @@ function makeEnv(graph){
     /* build 1402: the fields that name something interpolate `{var}` through _lgName
        build 1403: and the emit node routes through _lgEmit, which reports an event nobody hears */
     + 'const LG_NAME_MAX = 64;\n' + extractFunction('_lgName', src) + '\n'
-    + extractFunction('_lgEventHeard', src) + '\n' + extractFunction('_lgEmit', src) + '\n';
+    + extractFunction('_lgEventHeard', src) + '\n' + extractFunction('_lgEmit', src) + '\n'
+    /* build 1407: the do node's argument object is DERIVED from the node's own parameter table now, so this
+       scope needs the table and the derivation. Both are lifted from source rather than restated — a rig
+       that restates the thing under test keeps passing against a stale copy. */
+    + 'const LG_DEFS = ' + extractConst('LG_DEFS', src) + ';\n'
+    + 'const _LG_NAME_FIELDS = ' + extractConst('_LG_NAME_FIELDS', src) + ';\n'
+    + extractFunction('_lgDoArgs', src) + '\n';
   const env = new Function('GRAPH','NET','gameOn','editorOpen','_applySignalAction','flashToast','gameWon','applyEnemyDamageToSelf','toast','console',
     glue + fns + '\nreturn { start:logicStart, event:logicEvent, tick:updateLogic, vars:()=>logicVars, graph:()=>logicGraph, sanitize:_sanitizeLogic };')(
     graph, { mode:'off' }, true, false,

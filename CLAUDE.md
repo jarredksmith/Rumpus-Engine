@@ -2618,6 +2618,56 @@ a station exists — is asserted directly now, beside the url landing as data ei
 from `restoreLevel`, so inserting it first makes every one of those anchors ambiguous. The count assert
 caught it on the first run and nothing was written, which is what they are for.
 
+## The Do node dropped two of its own fields (build 1407)
+
+Build 1406's shape, one layer up, found by asking the same question of the next hand-kept list. The graph's
+Do node built a **hand-written literal** to forward to `_applySignalAction`, and the node's parameter table
+is the list of fields a creator can fill in. Two lists, and eight builds added to one of them.
+
+Measured (`tools/probe/do-node-forward.mjs`), against a control that fires:
+
+```
+missing: ["once", "r"]
+control   "damage all enemies"        both enemies 31 -> 26
+then      "damage enemies near X"     the one two metres from X: 26 -> 26
+```
+
+**So build 1288's area damage did NOTHING from the graph** — the feature whose whole point was that tower
+defence, traps and mines were structurally unbuildable without it — and **build 1399's once-only pickup was
+never once-only.** Both work fine from a prop SIGNAL, which is why nobody noticed: only the graph dropped
+them.
+
+The argument object is derived from the table now, and so are the defaults:
+- **A select's default is its FIRST OPTION** — which is what all seven hand-written defaults already were
+  (grunt, health, player, normal, speed, enemies, hunt), so nothing moved. The test asserts that against the
+  real table rather than restating the seven, so reordering a dropdown fails there instead of silently
+  moving a default.
+- **A checkbox defaults to `def`**, which exists for exactly one field: build 1404's `vtrack`. That default
+  lived only inside the forwarding literal, so **the editor rendered the box UNCHECKED while the runtime
+  treated it as on.** The table is the one place that says so now, and the node renderer reads it too.
+- A text/number field arrives BLANK rather than absent, which every handler already reads as its own default
+  (`+s.amt||25`, `+s.r||0` — and 0 is the fail-closed direction for a radius).
+- `_LG_NAME_FIELDS` states build 1402's four (now six) interpolating fields once, instead of one `_lgName`
+  call per site.
+
+### Two instrument faults, both of which read exactly like the defect
+
+`_lgPulse` takes a node **ID** and looks it up, so passing it a node OBJECT returns at `_lgNode(id)` and
+does nothing. And the switch is on **`n.type`**, not `n.t`, so a node keyed the other way is found and then
+falls through every case. Neither throws. **The positive control — the same verb with an audience that has
+always worked — is the only reason those were not published as "the feature is dead".** Build 1316 recorded
+the general form and it earned its keep again: *before believing a null, prove the instrument can produce a
+positive.*
+
+The probe's first check also SCANNED THE SOURCE for the forwarding literal. After the fix there is no
+literal, so it reported every field missing — a probe that reads the code rather than the behaviour calls
+the fix a regression. It fires a node and reports what the handler received.
+
+Eight harnesses moved (1027, 1073, 1074, 1077, 1214, 1277, 1402, 1404), each keeping its intent. Two of them
+EXECUTE the do branch and needed the derivation supplied, lifted from source rather than restated; without
+it the branch threw, its own catch reported "a do action failed", and test-1214's failure counts read one
+too high — which is the same class of silent miscount this build removes.
+
 ## A prop signal lost everything but its verb (build 1406)
 
 Found while scoping the AI booth's next gap, and it had been true for a long time. `serializeLevel` wrote a

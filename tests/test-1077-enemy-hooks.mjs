@@ -183,7 +183,11 @@ assert(/\{k:'cmd',l:'',w:120,ifv:\['verb','command'\],sel:\[\['hunt','Hunt the p
   '...and all six commands in plain English');
 assert(/ifv:\['verb',\['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill'\]\],listId:'lgPlaceList'/.test(src),   // build 1170; build 1216: + spawnprop; build 1288: + the area verbs
   'it shares the place field with the other verbs that point somewhere');
-assert(/ewho:p\.ewho\|\|'enemies', cmd:p\.cmd\|\|'hunt'/.test(src), 'the Do-action node passes them through');
+/* build 1407 replaced the hand-written forwarding literal with a derivation over the node's own
+   parameter table — which is what stopped `once` and `r` being silently dropped. The intent here is
+   unchanged and now stronger: these fields reach the handler because EVERY declared param does. */
+assert(/k:'ewho'/.test(src) && /k:'cmd'/.test(src) &&
+       /const _args=_lgDoArgs\(p\)/.test(extractFunction('_lgPulse')), 'the Do-action node passes them through');
 {
   const fn = extractFunction('_sigWorldRow', src);
   assert(/sel\(Object\.keys\(LG_CMDS\)\.map\(k=>\[k, LG_CMDS\[k\]\]\), s\.cmd\|\|'hunt'/.test(fn), 'the Signals fold offers the commands too');
