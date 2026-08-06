@@ -18,21 +18,29 @@ const src = gameSource();
 {
   const fn = extractFunction('damageProp');
   const head = fn.slice(0, fn.indexOf('\n', fn.indexOf('shootable')) + 1);
-  assert(/if\(obj\.userData\.breakable===false\) return false;/.test(head),
-    'an explicit `breakable:false` still refuses everything — that is the creator saying no');
+  // build 1421: `breakable:false` used to refuse everything, and that line is GONE — it now means the
+  // prop never BREAKS, not that nothing lands on it. THIS build's gate, which answers the entirely
+  // different question of whether the prop is damageable at all, is the one that had to stay and did.
   assert(/if\(!obj\.userData\.phys && !obj\.userData\.shootable\) return false;/.test(head),
-    'and a non-physics prop is refused UNLESS it opted in');
+    'a non-physics prop is refused UNLESS it opted in');
+  // Matched as a real STATEMENT, not as the bare phrase: the comment build 1421 left in damageProp
+  // quotes the removed line, and a looser pin is satisfied by that prose. Third time in one build.
+  assert(!/obj\.userData\.breakable===false\) return false;/.test(fn),
+    "...and `breakable` is no longer an immunity gate anywhere in it (build 1421)");
 
   // executed: the four combinations that matter, through the real predicate
-  const gate = new Function('u', 'if(u.breakable===false) return false; if(!u.phys && !u.shootable) return false; return true;');
+  const gate = new Function('u', 'if(!u.phys && !u.shootable) return false; return true;');
   eq(gate({}), false, 'a plain static prop is indestructible — this is what keeps every existing level unchanged');
   eq(gate({ breakable: true }), false,
     'AND a static prop with breakable:true is STILL indestructible, which is the whole reason this is a new flag: ' +
     '_applyPropEntry sets breakable:true on every prop it loads');
   eq(gate({ phys: true }), true, 'a dynamic prop is damageable exactly as before');
   eq(gate({ shootable: true }), true, 'a static prop that opted in is damageable');
-  eq(gate({ shootable: true, breakable: false }), false, '...unless the creator turned breakable off');
-  eq(gate({ phys: true, breakable: false }), false, 'which is unchanged for dynamic props too');
+  // build 1421: unticking Breakable no longer takes the prop OUT of the damageable set — it stops it
+  // shattering. That distinction is what this build could not make, and it silently disarmed every
+  // range target whose creator asked for the one thing a range needs.
+  eq(gate({ shootable: true, breakable: false }), true, 'an unbreakable target is still damageable (1421)');
+  eq(gate({ phys: true, breakable: false }), true, '...and so is an unbreakable dynamic prop');
   // probed live: a plain static wall took 999 damage and kept all 50 HP; a target went 30 -> 20 -> shattered
   // without ever entering dynamicProps.
 }
@@ -67,8 +75,10 @@ const src = gameSource();
   assert(/for\(const o of propModels\)\{ if\(!o \|\| !o\.userData \|\| !o\.userData\.shootable \|\| o\.userData\.phys\) continue;/.test(fn),
     'and a second sweep covers static targets — they are not in dynamicProps, so a grenade at the range ' +
     'would have left every plate standing while the crates beside them broke');
-  assert(/o\.userData\._shattered \|\| o\.userData\._destroyed \|\| o\.userData\.breakable===false\) continue;/.test(fn),
-    '...skipping the already-gone, so one blast cannot shatter a target twice');
+  assert(/o\.userData\._shattered \|\| o\.userData\._destroyed\) continue;/.test(fn),
+    '...skipping the already-gone, so one blast cannot shatter a target twice. Build 1421 dropped the ' +
+    'third term: an unbreakable target is not skipped, it is damaged and simply does not break, and ' +
+    'damageProp is the one place that decides that');
   assert(/!o\.userData\.phys\) continue/.test(fn),
     '...and skipping dynamic props, so nothing is damaged by both sweeps');
 }

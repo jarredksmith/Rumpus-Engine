@@ -120,10 +120,14 @@ const src = gameSource();
     eq(r.shoved.length, 0, '...and is not shoved afterwards');
   }
   {
-    // `breakable:false` means "cannot be damaged", not "is not made of matter"
+    // `breakable:false` means "cannot be damaged", not "is not made of matter" — and build 1421 narrowed
+    // it once more, to "cannot be DESTROYED". So the loop no longer routes around damageProp at all: the
+    // blast REGISTERS on an unbreakable prop (its flash, its hit sound and its `damaged` signal) and
+    // damageProp itself is the single place that refuses to break it. THIS build's subject — that an
+    // unbreakable prop still goes flying — is unchanged and asserted below.
     const r = run([P('bunker', 2, { breakable: false }), P('crate', 3)]);
-    eq(r.damaged.join(), 'crate', 'an unbreakable prop takes no damage...');
-    eq(r.shoved.join(), 'bunker,crate', '...and STILL goes flying, which the pre-1405 loop skipped entirely');
+    eq(r.damaged.join(), 'bunker,crate', 'the blast reaches an unbreakable prop (build 1421)...');
+    eq(r.shoved.join(), 'bunker,crate', '...and it STILL goes flying, which the pre-1405 loop skipped entirely');
   }
   {
     const r = run([P('gone', 2, { _shattered: true }), P('static', 3, { phys: null })]);

@@ -1712,6 +1712,73 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The checkbox that turned the target off by asking for it (build 1421)
+
+Reported from play, one message after the shooting-range loop first worked end to end: *"if you don't also
+have Breakable toggled on, it doesn't work."*
+
+`damageProp` opened `if(obj.userData.breakable===false) return false;`. So unticking **Breakable** did not
+stop the plate SHATTERING — it stopped the plate REGISTERING: no health change, no impact flash, no hit
+sound, and no `damaged` signal, which is build 1397's entire feature. And the label beside it reads
+*"shatters when shot"*, so **a creator who wants the one thing a shooting range is made of — score every
+hit, the plate never disappears — switches their target off by asking for it.**
+
+**Five call sites read the flag and all five treated it as immunity**: `damageProp`, `playPropHitSound`,
+both `explodeAt` sweeps, and the restore. It is now ONE rule — *never BREAKS* — read once into a local and
+gating exactly three things: the health, the shatter, and the fuse.
+
+### It is build 1405's narrowing taken one step further
+
+That build moved `breakable:false` from *"skip the prop entirely"* to *"cannot be damaged"* so an
+unbreakable crate beside a grenade still goes flying. This moves it to *"cannot be DESTROYED"*, which is
+what the label has said all along. The health **never drops** rather than draining to a death that can
+never arrive — the truthful reading of invulnerable, and it keeps `#hpf` at 1 for a graph that reads it.
+
+**Nothing that works today regresses, and that is checkable rather than hopeful:** a `brk:false` prop could
+never fire `damaged`, so no level can be relying on it; the flash and the hit sound are feedback on a prop
+that used to eat shots in silence. The serializer is untouched (`brk:false` is still written only when off).
+
+**The fuse is gated too, and that one is not symmetry.** Igniting is how a fused explosive destroys itself,
+so an unbreakable one must never light — otherwise "cannot be destroyed" would be defeated by the one
+branch that returns before the damage.
+
+### Measured, with the same plate as its own control
+
+`tools/probe/unbreakable-target.mjs` — two plates identical but for the one flag, each wired the way a
+creator wires one: prop signal `On hit` → `→ Logic event` → `On event` → `Change variable score +1`.
+
+```
+                    unbreakable                       breakable (control)
+before   3 hits     score 0   hp 100  no flash        score 3   hp 70   flash
+         +30 hits   score 0   hp 100  standing        score 33  shattered
+         a grenade  score 0                           —
+after    3 hits     score 3   hp 100  flash           score 3   hp 70   flash        <- control byte-identical
+         +30 hits   score 33  hp 100  STILL STANDING  score 33  shattered
+         a grenade  score 1   not destroyed
+```
+
+The control is what makes it a finding rather than a broken instrument: a run where neither plate scores is
+the rig, and a run where only the unbreakable one fails is the defect.
+
+### The untick now says what it does
+
+The trap was never the checkbox, it was its **absence of a stated consequence** — it reads as "does not
+shatter" and meant "takes no damage at all". A hint under it names all three things that still fire and the
+case it is for. A control whose consequence is invisible is one nobody can use on purpose (1348's rule).
+
+### A pin defeated by prose THREE TIMES in one build
+
+Once in my own new test (`!/breakable/` matched `playPropHitSound`'s own comment about *"every breakable
+prop in its radius"*), and once in the moved `test-1390` pin (`!/breakable===false\) return false;/` matched
+this build's comment **quoting the line it had just deleted**). Builds 164, 1393, 1395, 1411 and 1412 all
+record this in one direction or the other, and it is now unambiguous: **a pin must match a real STATEMENT —
+`obj.userData.breakable===false`, not the bare phrase — because the most likely thing to collide with a
+source pin is the build's own documentation of what it removed.**
+
+Six pins moved (1305, 1390 ×4, 1405, 482, 340, and my own). Two of them had their assertions **inverted**
+rather than restated, because both were pinning a consequence of the defect: test-1305's *"an unbreakable
+prop is silent"* and test-1390's *"an explicit `breakable:false` still refuses everything"*.
+
 ## The feature shipped switched on and inert (build 1392)
 
 Reported from play, against build 1390, with a screenshot of the panel filled in correctly: *"This isn't

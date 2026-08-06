@@ -7015,7 +7015,6 @@ let _propSndAt = -1e9;
 function _propSndFresh(){ return performance.now() - _propSndAt < 80; }
 function playPropHitSound(obj, pt){
   if(!obj || !obj.userData || !obj.userData.hitSnd) return false;
-  if(obj.userData.breakable===false) return false;   // it takes no damage, so nothing landed on it
   const now = performance.now();
   /* An SMG fires every ~90 ms and a shotgun lands 8 pellets in ONE frame, so without a per-prop gap a
      single trigger pull starts eight copies of the same buffer at the same instant — which is not eight
@@ -31117,18 +31116,21 @@ function explodeAt(pos, R, dmg, byId){
      damage site here uses (`if(!damageProp(...)) pushDynamic(...)`), because a shattered prop's body is
      gone and its debris is its own system.
      `breakable:false` no longer skips the prop entirely: it means "cannot be damaged", not "is not made of
-     matter", so an unbreakable crate beside a grenade still goes flying. */
+     matter", so an unbreakable crate beside a grenade still goes flying.
+     Build 1421 narrowed it once more — to "cannot be DESTROYED" — so the ternary that used to route
+     around `damageProp` is gone: the blast registers on an unbreakable prop (flash, sound, `damaged`) and
+     `damageProp` itself is the one place that decides it does not break. */
   for(const o of dynamicProps.slice()){
     if(!o.userData || o.userData._shattered || !o.userData.phys) continue;
     const d=o.position.distanceTo(pos); if(!(d>0.01 && d<R)) continue;
     const f=1-d/R;
-    const broke = (o.userData.breakable===false) ? false : damageProp(o, dmg*f, null, null, 6, byId);
+    const broke = damageProp(o, dmg*f, null, null, 6, byId);
     if(!broke) _blastShoveProp(o, pos, R, f);
   }
   /* build 1390: static TARGETS are not in `dynamicProps`, so a grenade at the range would have left every
      plate standing while the crates beside them broke. Opt-in, so a level with none pays one flag test. */
   for(const o of propModels){ if(!o || !o.userData || !o.userData.shootable || o.userData.phys) continue;
-    if(o.userData._shattered || o.userData._destroyed || o.userData.breakable===false) continue;
+    if(o.userData._shattered || o.userData._destroyed) continue;
     const d=o.position.distanceTo(pos); if(d>0.01 && d<R) damageProp(o, dmg*(1-d/R), null, null, 6, byId); }
 }
 // ---------- Camera shake ----------
@@ -34003,7 +34005,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1420 · 2026-08-06';
+const BUILD_VERSION = 'build 1421 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36067,19 +36069,35 @@ function damageableProps(){          // reused array (build 1168): a swing must 
 // have made every wall in every level ever saved shootable. `shootable` defaults to undefined, so nothing
 // that exists today changes by one byte.
 function damageProp(obj, dmg, point, dir, power, byId){
-  if(obj.userData.breakable===false) return false;
   if(!obj.userData.phys && !obj.userData.shootable) return false;
+  /* build 1421: `breakable:false` means it never BREAKS — not that nothing lands on it.
+     Reported from play, one message after the range loop first worked: "if you don’t also have Breakable
+     toggled on, it doesn’t work." The first line here used to be `if(breakable===false) return false;`, so
+     unticking the box did not stop the plate SHATTERING, it stopped the plate REGISTERING: no impact flash,
+     no hit sound, and — the reported symptom — no `damaged` signal, which is build 1397’s whole
+     feature. And the checkbox beside it says "shatters when shot", so a creator who wants the one thing a
+     shooting range is made of (score every hit, the plate never disappears) switches the target off by
+     asking for it.
+
+     This is build 1405’s narrowing taken one step further, and the label has meant it all along: that
+     build moved `breakable:false` from "skip the prop entirely" to "cannot be damaged"; it now means
+     "cannot be DESTROYED". Damage LANDS — flash, sound, `damaged` — and the health simply never drops,
+     which is the truthful reading of invulnerable and keeps `#hpf` at 1 rather than counting down to a
+     death that can never arrive. Nothing that works today regresses: a `brk:false` prop could never fire
+     `damaged`, so no level can be relying on it, and the flash and the sound are feedback on a prop that
+     used to eat shots in silence. */
+  const _brk = obj.userData.breakable !== false;
   if(obj.userData.hp==null) obj.userData.hp = defaultHpFor(obj);
   // build 629: a fused explosive that isn't lit yet — the FIRST shot LIGHTS it (then it blows on its own fuse)
   // instead of taking the killing damage, so "shoot the barrel, watch it catch, and run" works even when the shot
   // would otherwise have destroyed it outright. Once lit, further shots fall through below and can pop it early.
-  if(obj.userData.explosive && (+obj.userData.fireFuse||0)>0 && !obj.userData._fireIgnited && obj.userData.hp>0 && typeof igniteProp==='function'){
+  if(_brk && obj.userData.explosive && (+obj.userData.fireFuse||0)>0 && !obj.userData._fireIgnited && obj.userData.hp>0 && typeof igniteProp==='function'){
     igniteProp(obj);
     obj.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive){ o.material.emissive.setHex(0x661a00); o.material.emissiveIntensity = Math.max(o.material.emissiveIntensity||0, 0.8); } });
     obj.userData._flash = performance.now();
     return false;
   }
-  obj.userData.hp -= dmg;
+  if(_brk) obj.userData.hp -= dmg;   /* build 1421: an unbreakable prop takes the hit and keeps its health */
   playPropHitSound(obj, point);   /* build 1305: damageProp is the one place a bullet, a swing, an explosion and a client's relayed propHit all pass through */
   // brief impact flash on the prop
   obj.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive){ o.material.emissive.setHex(0x661a00); o.material.emissiveIntensity = Math.max(o.material.emissiveIntensity||0, 0.8); } });
@@ -36095,7 +36113,7 @@ function damageProp(obj, dmg, point, dir, power, byId){
   if(typeof NET==='undefined' || NET.mode!=='client'){
     try{ _lgPropEvent(obj, 'damaged', _propCtx(obj)); }catch(e){}
   }
-  if(obj.userData.hp <= 0){ shatterProp(obj, point, dir, power, byId); return true; }
+  if(_brk && obj.userData.hp <= 0){ shatterProp(obj, point, dir, power, byId); return true; }
   return false;
 }
 // Step the simulation (fixed timestep) and sync dynamic meshes from their bodies. Host/solo only.
@@ -48479,6 +48497,13 @@ function renderEditorFields(){
           brkcb.onchange=()=>{ pushUndoSnapshot(); sel.userData.breakable=brkcb.checked; renderEditorFields(); };
           const brksp=document.createElement('span'); brksp.innerHTML='<b>Breakable</b> — shatters when shot';
           brk.appendChild(brkcb); brk.appendChild(brksp); pdBody.appendChild(brk);
+          /* build 1421: the UNTICK was the trap. It reads as "does not shatter" and used to mean "takes no
+             damage at all", which silently switched off the On-hit signal on the one prop a range is made
+             of. It says what it does now, because a control whose consequence is invisible is one nobody
+             can use on purpose. */
+          const brkh=document.createElement('div'); brkh.className='hint'; brkh.style.marginTop='3px';
+          brkh.textContent = 'Untick it and shots still land \u2014 the impact, the hit sound and the On hit signal all fire \u2014 it just never breaks. That is the range-target setting: score every hit, the plate never disappears.';
+          pdBody.appendChild(brkh);
           if(sel.userData.breakable!==false){
             const objl=document.createElement('label'); objl.style.cssText='display:flex;align-items:center;gap:7px;color:#ff9bb0;font-size:12px;margin-top:8px;cursor:pointer;';
             const objcb=document.createElement('input'); objcb.type='checkbox'; objcb.checked=!!sel.userData.objective; objcb.style.accentColor='#ff5b6b';

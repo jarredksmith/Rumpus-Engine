@@ -11,7 +11,7 @@ assert(!/fireFuse/.test(onFireToggle), 'toggling On-fire no longer sets a fuse (
 
 // --- damageProp: light-and-survive on the first shot ---
 const dp = extractFunction('damageProp');
-assert(/igniteProp\(obj\);[\s\S]*?return false;\s*\}\s*obj\.userData\.hp -= dmg;/.test(dp), 'the igniting shot returns before applying the killing damage');
+assert(/igniteProp\(obj\);[\s\S]*?return false;\s*\}\s*if\(_brk\) obj\.userData\.hp -= dmg;/.test(dp), 'the igniting shot returns before applying the killing damage');
 
 // --- executable: shooting a fused explosive lights it and it survives; a follow-up shot pops it ---
 const deps = `
