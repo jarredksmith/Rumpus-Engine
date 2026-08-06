@@ -101,8 +101,8 @@ const runVerb = (s, ctxPid, netMode) => {
     'who resolution knows actor');
   assert(/\['actor','The event\\u2019s player'\]/.test(src) || /\['actor','The event’s player'\]/.test(src),
     'the do-node who dropdown offers it');
-  assert(/ifv:\['verb',\['damage','heal','kill','teleport','give','take'\]\]/.test(src),
-    'give/take gained the who field — the earn-the-key case is the whole point');
+  assert(/ifv:\['verb',\['damage','heal','kill','teleport','give','take','view'\]\]/.test(src),
+    'give/take gained the who field — the earn-the-key case is the whole point');   /* build 1404: and `view`, for a per-player security camera */
   const h = extractFunction('_wactToActor');
   assert(/NET\.mode!=='host' \|\| pid===\(NET\.myId\|0\)\) return false;/.test(h),
     'the helper returns false for local/solo so the caller applies locally, true only after a remote send');

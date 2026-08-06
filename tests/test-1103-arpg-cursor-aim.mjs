@@ -11,7 +11,9 @@ import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
 
 // the two gates
-assert(/function chaseCursorOn\(\)\{\n  return typeof gameCfg!=='undefined' && gameCfg\.view==='chase' && !!gameCfg\.chaseCursorAim/.test(src),
+/* build 1404: the chase test asks _viewNow(), the ONE gate deciding the running camera. With nothing armed
+   it IS gameCfg.view, so the opt-in is unchanged. */
+assert(/function chaseCursorOn\(\)\{\n  return _viewNow\(\)==='chase' && typeof gameCfg!=='undefined' && !!gameCfg\.chaseCursorAim/.test(src),
   'chaseCursorOn: chase view + opt-in + live play only');
 assert(/function cursorAimActive\(\)\{ return activeViewMode\(\)!=='fps' \|\| chaseCursorOn\(\); \}/.test(src),
   'cursorAimActive unifies "the cursor aims, not the head"');
@@ -26,7 +28,9 @@ assert(/const cc = \(typeof chaseCursorOn==='function' && chaseCursorOn\(\)\);/.
        /const vm = cc \? 'top' : activeViewMode\(\);/.test(va),
   'the cursor solver reuses the top-down chest-plane path');
 assert(/if\(cc && !_ccWasOn\) _ccYaw = player\.yaw;/.test(va), 'the camera yaw freezes where the player was looking');
-assert(/if\(vm==='top' && !cc\) player\.pitch=0;/.test(va), 'chase-cursor keeps vertical aim for the avatar gun');
+/* build 1404: the branch asks "not the side lane" rather than naming `top` — a generalisation, since top
+   and side were the only two values that reached here. The chase cursor (cc) still keeps its vertical aim. */
+assert(/if\(vm!=='side' && !cc\) player\.pitch=0;/.test(va), 'chase-cursor keeps vertical aim for the avatar gun');
 
 // the camera boom uses the frozen yaw + the Tilt slider (pitch 0)
 const tp = extractFunction('tpCameraPushback');

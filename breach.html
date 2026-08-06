@@ -12820,6 +12820,7 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
   if(typeof _trigState!=='undefined') _trigState.length=0;   // build 1072: trigger volumes re-arm with the match (once-only fires again on a retry)
   if(typeof _lgResetStats==='function') _lgResetStats();     // build 1074: a bent stat springs back to what the level authored
   if(typeof _lgMusic!=='undefined') _lgMusic=null;           // ...and the level's own music track comes back
+  _viewOv=null;                                              // build 1404: ...and so does the level's own camera
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   _lgRunT = performance.now();   // build 1169: the 'time' stat reads seconds since this deploy
   for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
@@ -12977,6 +12978,7 @@ function _lgPulse(id, pin){
         /* build 1402: the four fields that NAME something interpolate — a tag, a prefab, an item, and the
            text a player reads. The rest (clip, sound, etype, pk, who, stat, cmd) are enums or urls. */
         etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:_lgName(p.item), who:p.who||'player', amt:p.amt, at:_lgName(p.at),
+        vmode:p.vmode||'normal', vtag:_lgName(p.vtag), vtrack:(p.vtrack!==false && p.vtrack!==0),   /* build 1404; the tag is a NAME, so it interpolates (1402) — `cam{n}` for a bank of them */
         stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }
       catch(e){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "'+_verb+'" action failed: '+((e&&e.message)||e)); } _lgFollow(id,0); break; }
     case 'toast': { const msg=_lgName(String(p.text||'').slice(0,120));   // {score} interpolates live variables; build 1231: {coins@} reads the event's player; build 1402: through the ONE interpolator, so the syntax cannot drift between the fields that use it
@@ -13365,7 +13367,7 @@ const LG_DEFS = {
        vocabulary (tags, `me`, `start`), which is exactly what _lgPlaceAt accepts. */
     {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist']],listId:'lgPlaceList'},
     {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -13949,7 +13951,7 @@ function _applySignalAction(s, src){
     // HANDLER's source and the DROPDOWN's source and never that a node reaches the handler. test-1277
     // walks the path instead.
     if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'
-       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
+       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'||s.do==='view'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
       if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
       return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
@@ -14234,6 +14236,14 @@ function _applyWorldAction(s){
   if(s.do==='stat'){ const w=LG_STATS[s.stat]?s.stat:'speed', m=Math.max(0.05, Math.min(10, +s.mul||1));
     _lgApplyStat(w, m); _wactSend({ st:[w, m] }); return; }
   if(s.do==='music'){ const u=String(s.sound==null?'':s.sound).trim(); _lgSetMusic(u); _wactSend({ mu:u }); return; }
+  /* build 1404: the camera. `who:'actor'` sends it to the player who tripped the trigger and nobody else,
+     which is what a security camera in a co-op level means; the default reaches everyone, like the other
+     world verbs. A client applies the identical payload through the identical function. */
+  if(s.do==='view'){
+    const vm=String(s.vmode==null?'normal':s.vmode).trim(), vt=String(s.vtag==null?'':s.vtag).trim();
+    const tr=(s.vtrack!==false && s.vtrack!==0 && s.vtrack!=='0');
+    if(who==='actor'){ if(_wactToActor({ vw:[vm, vt, tr?1:0] })) return; }
+    _setViewOverride(vm, vt, tr); _wactSend({ vw:[vm, vt, tr?1:0] }); return; }
   if(s.do==='command'){
     const list=_lgEnemyTargets(s.ewho==='nearest'?'nearest':'enemies'); if(!list.length) return;   // 'the player' is meaningless here
     const cmd=LG_CMDS[s.cmd]?s.cmd:'hunt';
@@ -27829,7 +27839,7 @@ let tpMode = (()=>{ try{ return localStorage.getItem('breach_tp')==='1'; }catch(
 // as 'fps' from activeViewMode() — chase keeps normal mouselook/aim, so every twin-stick cursor path
 // (top/side) must not see it. tpActive() is the one truth for "render third person right now".
 function chaseForced(){
-  return typeof gameCfg!=='undefined' && gameCfg.view==='chase'
+  return _viewNow()==='chase'
     && (typeof gameOn!=='undefined' && gameOn) && !(typeof editorOpen!=='undefined' && editorOpen)
     && !(typeof _cineActive!=='undefined' && _cineActive);
 }
@@ -27837,11 +27847,58 @@ function tpActive(){ return tpMode || chaseForced(); }
 // ---- build 874: per-level camera views (top-down twin-stick / 2.5D side-scroll) ----
 // activeViewMode() is the single gate: it only reports 'top'/'side' during LIVE play (never in the
 // editor, cutscenes or menus), so every other camera/aim path stays untouched in those states.
+// ---- build 1404: the camera can CHANGE during play ----------------------------------------------------
+// `gameCfg.view` is authored once and was the only thing that decided the camera, so a level could not
+// switch to a security camera as the player walked past it, or drop to top-down for one room, or come back.
+// A cinematic could move the camera, but a cinematic TAKES CONTROL — this is a view change you keep playing
+// through, which is the fixed-camera idiom of every survival-horror game ever made.
+//
+// It is an OVERRIDE and never a write to `gameCfg.view`: that is level data, and a runtime verb must not
+// edit the level (build 1170's rule), so a creator who saves mid-play does not bake the security camera in.
+//
+// `var`, not `let` — this file has lost boot to a temporal dead zone three times (1127, 1331, 1350) and a
+// `var` read before its line is `undefined` rather than a throw. `_viewNow` treats that as "no override".
+var _viewOv = null;   // { m:'fps'|'chase'|'top'|'side'|'fixed', tag:'', mount:<prop>, track:bool }
+const VIEW_MODES = ['fps','chase','top','side','fixed'];
+// The effective view mode. ONE function, so the four things that used to read `gameCfg.view` — the mode
+// gate, the chase gate, the chase-cursor gate and the orbit-camera framing — cannot come to different
+// answers about which camera is running. The editor deliberately sees the AUTHORED view, so a creator
+// tuning the framing is never looking through a camera the graph armed.
+function _viewNow(){
+  if(_viewOv && (typeof gameOn!=='undefined' && gameOn) && !(typeof editorOpen!=='undefined' && editorOpen)) return _viewOv.m;
+  return (typeof gameCfg!=='undefined' && gameCfg && gameCfg.view) ? gameCfg.view : 'fps';
+}
+function _viewMountFor(tag){
+  if(!tag || typeof propModels==='undefined') return null;
+  for(const o of propModels){ if(o && o.userData && o.userData.tag===tag) return o; }   // the FIRST wins: a camera is ONE place (build 1394)
+  return null;
+}
+// Arming it. Returns false and REPORTS (build 1214's channel) rather than leaving the player looking at
+// nothing — a camera pointed nowhere is the worst possible failure for this verb.
+function _setViewOverride(mode, tag, track){
+  const m = String(mode==null?'':mode).trim();
+  if(!m || m==='normal'){ _viewOv = null; return true; }
+  if(VIEW_MODES.indexOf(m) < 0){
+    if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "camera" action asks for the view "'+m+'", which is not a view this engine has.');
+    return false;
+  }
+  if(m==='fixed'){
+    const t = String(tag==null?'':tag).trim();
+    const mount = _viewMountFor(t);
+    if(!mount){
+      if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "camera" action mounts on the tag "'+t+'", but no placed prop has that tag.');
+      return false;   // nothing changes: whatever camera was running keeps running, never a camera nowhere
+    }
+    _viewOv = { m:'fixed', tag:t, mount:mount, track: track!==false };
+  } else _viewOv = { m:m, tag:'', mount:null, track:true };
+  return true;
+}
 function activeViewMode(){
-  if(typeof gameCfg==='undefined' || !gameCfg.view || gameCfg.view==='fps') return 'fps';
-  if(gameCfg.view==='chase') return 'fps';   // build 894: chase is first-person CONTROLS with a third-person camera (tpActive)
+  const v = _viewNow();
+  if(!v || v==='fps') return 'fps';
+  if(v==='chase') return 'fps';   // build 894: chase is first-person CONTROLS with a third-person camera (tpActive)
   if(!(typeof gameOn!=='undefined' && gameOn) || (typeof editorOpen!=='undefined' && editorOpen) || (typeof _cineActive!=='undefined' && _cineActive)) return 'fps';
-  return gameCfg.view;
+  return v;
 }
 // ---- build 1103: ARPG cursor aim for the chase view ----
 // Opt-in (gameCfg.chaseCursorAim): the mouse steers the twin-stick cursor instead of the head,
@@ -27850,7 +27907,7 @@ function activeViewMode(){
 // Diablo-style angle. WASD moves relative to the frozen camera, exactly like top-down.
 let _ccYaw = 0, _ccWasOn = false;
 function chaseCursorOn(){
-  return typeof gameCfg!=='undefined' && gameCfg.view==='chase' && !!gameCfg.chaseCursorAim
+  return _viewNow()==='chase' && typeof gameCfg!=='undefined' && !!gameCfg.chaseCursorAim
     && typeof gameOn!=='undefined' && gameOn
     && !(typeof editorOpen!=='undefined' && editorOpen) && !(typeof _cineActive!=='undefined' && _cineActive)
     && !(typeof drivingCar!=='undefined' && drivingCar) && !(typeof mountedTurret!=='undefined' && mountedTurret);
@@ -27893,14 +27950,14 @@ function _updateViewAim(){
   const axis=(gameCfg.viewAxis==='z')?'z':'x';
   if(vm==='side' && _sideLock==null) _sideLock=(axis==='x') ? player.pos.z : player.pos.x;
   let t;
-  if(vm==='top'){ const py=player.pos.y-0.4; t=(Math.abs(d.y)>1e-4) ? (py-o.y)/d.y : 0; }               // chest-height plane
+  if(vm!=='side'){ const py=player.pos.y-0.4; t=(Math.abs(d.y)>1e-4) ? (py-o.y)/d.y : 0; }               // chest-height plane (build 1404: every mode but the side lane — a fixed camera aims on it too)
   else if(axis==='x'){ t=(Math.abs(d.z)>1e-4) ? (_sideLock-o.z)/d.z : 0; }                              // the play plane itself
   else { t=(Math.abs(d.x)>1e-4) ? (_sideLock-o.x)/d.x : 0; }
   if(!(t>0.1 && t<400)) t=60;
   _vAimPt.copy(o).addScaledVector(d, t);
   const dx=_vAimPt.x-player.pos.x, dz=_vAimPt.z-player.pos.z;
   player.yaw=Math.atan2(-dx, -dz);                                    // face the cursor (forward = (-sin,0,-cos))
-  if(vm==='top' && !cc) player.pitch=0;                               // shots resolve through the cursor ray, body stays level
+  if(vm!=='side' && !cc) player.pitch=0;                               // shots resolve through the cursor ray, body stays level
   else { const dh=Math.hypot(dx,dz)||1e-4; player.pitch=Math.max(-1.3, Math.min(1.3, Math.atan2(_vAimPt.y-(player.pos.y-0.2), dh))); }   // chase-cursor keeps the vertical aim so the avatar's gun tracks the point
 }
 const TP_DIST = 4.2, TP_HEIGHT = 0.55, TP_MIN = 1.1;   // chase distance back / lift / closest pull-in past walls
@@ -28259,6 +28316,23 @@ function _tpFrame(pivot, yaw, pitch, blend){
   _TPF.y = pivot.y - fy*dist + height;
   _TPF.z = pivot.z - fz*dist + rz*side;
   return _TPF;
+}
+// build 1404: the mounted camera. Reused scratch vectors, because this runs every frame (build 1168).
+const _vfP = new THREE.Vector3(), _vfQ = new THREE.Quaternion(), _vfD = new THREE.Vector3();
+function _viewCamYaw(){ camera.getWorldDirection(_vfD); return Math.atan2(-_vfD.x, -_vfD.z); }   // the engine's forward is (-sin yaw, -cos yaw)
+function _viewFixedPose(cam){
+  let m = _viewOv && _viewOv.mount;
+  /* the mount can be destroyed mid-round. Re-resolve by tag rather than holding a dead object — and if the
+     tag is gone entirely, drop the override so the player returns to the level's own camera instead of
+     staring at wherever the last frame left them. */
+  if(m && !m.parent) m = _viewOv.mount = _viewMountFor(_viewOv.tag);
+  if(!m){ _viewOv = null; return; }
+  /* WORLD position, so a camera mounted on a lift or a parented prop (build 1309) rides it */
+  m.getWorldPosition(_vfP);
+  cam.position.copy(_vfP);
+  if(_viewOv.track){ cam.lookAt(player.pos.x, player.pos.y - 0.2, player.pos.z); }
+  else { m.getWorldQuaternion(_vfQ); cam.quaternion.copy(_vfQ); }   /* the prop's own facing IS the camera's — both are -Z forward (build 1394) */
+  cam.updateMatrixWorld(true);
 }
 function tpCameraPushback(dt){
   // build 1103: in chase-cursor mode the BODY spins to face the cursor but the camera direction
@@ -29490,6 +29564,7 @@ function handleHostMsg(msg){
     if(msg.tp && typeof _lgPlacePlayer==='function') _lgPlacePlayer({ x:+msg.tp[0]||0, y:+msg.tp[1]||0, z:+msg.tp[2]||0 });
     if(msg.k) try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){}
     else if(msg.d>0) try{ applyEnemyDamageToSelf(+msg.d||0, null, null); }catch(e){}
+    if(msg.vw && typeof _setViewOverride==='function') try{ _setViewOverride(String(msg.vw[0]||''), String(msg.vw[1]||''), !!msg.vw[2]); }catch(e){}   // build 1404: the host's camera change lands here
     if(msg.h>0){ player.hp=Math.min(player.maxHp, player.hp+(+msg.h||0)); if(typeof updateHUD==='function') updateHUD(); }
     if(msg.gi && typeof giveItem==='function') try{ giveItem(String(msg.gi[0]), +msg.gi[1]||1); }catch(e){}      // build 1074
     if(msg.ti && typeof takeItem==='function') try{ takeItem(String(msg.ti[0]), +msg.ti[1]||1); }catch(e){}
@@ -30302,6 +30377,26 @@ function updateFlipbooks(dt){
   }
 }
 
+// build 1405: a blast throws a dynamic PROP. `explodeAt` only ever called damageProp on them, so an
+// explosion beside a stack of crates knocked their health down and left every one of them standing exactly
+// where it was — while the enemy loop three lines above it has thrown actors since build 636.
+//
+// It routes through `pushDynamic`, which is what a SHOT uses, rather than build 1258's push verb. The two
+// have deliberately different semantics and this is the fork: the VERB multiplies by mass so an authored
+// "20" moves a crate and a barrel the same amount, and a SHOT does not, so a heavy crate takes a hit better.
+// A blast is a physical event, not an authored amount, so it takes the shot's.
+//
+// The direction is the full 3D one, which makes the vertical term GEOMETRIC rather than a constant: a charge
+// under a crate lifts it and one above slams it down. Scaled by the same `(8 + R*1.2) * f * launchPower` the
+// actor launch uses, so the one slider a creator already tunes for enemies moves both.
+const _blastDir = new THREE.Vector3();
+function _blastShoveProp(o, pos, R, f){
+  _blastDir.set(o.position.x - pos.x, o.position.y - pos.y, o.position.z - pos.z);
+  if(_blastDir.lengthSq() < 1e-6) return;   // dead centre: nothing to point along, and the caller's d>0.01 gate already covers it
+  _blastDir.normalize();
+  const LP = (typeof worldCfg!=='undefined' && +worldCfg.launchPower) || 1;
+  pushDynamic(o, _blastDir, (8 + R*1.2) * f * LP);
+}
 function _blastLaunch(actor, cx, cy, cz, R, f){   // shove an AI actor (enemy or bot) away from a blast center + pop it up, scaled by falloff f
   const ax = actor.pos ? actor.pos.x : actor.mesh.position.x, az = actor.pos ? actor.pos.z : actor.mesh.position.z;
   const kx=ax-cx, kz=az-cz, kh=Math.hypot(kx,kz)||1, LP=(worldCfg&&+worldCfg.launchPower)||1, kb=(8+R*1.2)*f*LP;
@@ -30397,7 +30492,18 @@ function explodeAt(pos, R, dmg, byId){
   // the local (host) player — environmental hazard hits you too
   { const d=player.pos.distanceTo(pos); if(d<R){ const f=1-d/R, pd=dmg*f, kx=player.pos.x-pos.x, kz=player.pos.z-pos.z, kh=Math.hypot(kx,kz)||1, LP=(worldCfg&&+worldCfg.launchPower)||1, kb=(8+R*1.2)*f*LP; player.extVel.x+=kx/kh*kb; player.extVel.z+=kz/kh*kb; player.vel.y=Math.max(player.vel.y,(5+R*0.6)*f*LP); player.onGround=false; if(!pvpMode()) applyEnemyDamageToSelf(pd, pos.x, pos.z); else if(!duelDead) applyPvpDamage(pd, byId); } }   // explosions launch you too (rocket / prop blasts), on top of the damage
   // chain reaction: damage nearby breakable props (explosive ones detonate; the _shattered guard stops loops)
-  for(const o of dynamicProps.slice()){ if(!o.userData || o.userData._shattered || o.userData.breakable===false || !o.userData.phys) continue; const d=o.position.distanceTo(pos); if(d>0.01 && d<R) damageProp(o, dmg*(1-d/R), null, null, 6, byId); }
+  /* build 1405: damage AND throw. Damage first, and shove only what SURVIVED — the same order every other
+     damage site here uses (`if(!damageProp(...)) pushDynamic(...)`), because a shattered prop's body is
+     gone and its debris is its own system.
+     `breakable:false` no longer skips the prop entirely: it means "cannot be damaged", not "is not made of
+     matter", so an unbreakable crate beside a grenade still goes flying. */
+  for(const o of dynamicProps.slice()){
+    if(!o.userData || o.userData._shattered || !o.userData.phys) continue;
+    const d=o.position.distanceTo(pos); if(!(d>0.01 && d<R)) continue;
+    const f=1-d/R;
+    const broke = (o.userData.breakable===false) ? false : damageProp(o, dmg*f, null, null, 6, byId);
+    if(!broke) _blastShoveProp(o, pos, R, f);
+  }
   /* build 1390: static TARGETS are not in `dynamicProps`, so a grenade at the range would have left every
      plate standing while the crates beside them broke. Opt-in, so a level with none pays one flag test. */
   for(const o of propModels){ if(!o || !o.userData || !o.userData.shootable || o.userData.phys) continue;
@@ -33276,7 +33382,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1403 · 2026-08-05';
+const BUILD_VERSION = 'build 1405 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38530,7 +38636,7 @@ let _vcamPvOn=true; try{ if(localStorage.getItem('breach_vcampv')==='off') _vcam
 let _vcamPvPanel=null, _vcamPvFrame=null, _vcamPvLab=null, _vcamPvCam=null;
 let _vcamPvPos=null; try{ const _s=localStorage.getItem('breach_vcampvpos'); if(_s){ const o=JSON.parse(_s); if(o && typeof o.left==='number' && typeof o.top==='number') _vcamPvPos=o; } }catch(e){}
 const _VCAM_T={ x:0, y:0, z:0 }, _vcamTmp=new THREE.Vector3(), _vcamDir=new THREE.Vector3(), _vcamCbuf=[];
-function _vcamMode(){ const v=(typeof gameCfg!=='undefined' && gameCfg) ? gameCfg.view : ''; return (v==='top'||v==='side') ? v : ''; }
+function _vcamMode(){ const v=_viewNow(); return (v==='top'||v==='side') ? v : ''; }   /* build 1404: 'fixed' yields '' here, so the orbit framing no-ops for it and _viewFixedPose owns that camera */
 // Where the player's camera anchor sits the instant they deploy. deployAt() spawns them at
 // terrainHeightAt + pstart.y + EYE, and the view camera reads player.pos — so this is that point.
 function _vcamTarget(){
@@ -39131,7 +39237,13 @@ function loop(){
   // build 1085: top-down movement is screen-relative, so it has to rotate with the camera. At yaw 0 this is
   // exactly the old (0,0,-1)/(1,0,0). Side keeps the lane basis below — the player runs along the lane no
   // matter where the camera is watching from.
-  if(_vm874==='top'){ const _ya=(typeof _vcamYawRad==='function')?_vcamYawRad('top'):0; forward.set(-Math.sin(_ya),0,-Math.cos(_ya)); right.set(Math.cos(_ya),0,-Math.sin(_ya)); }
+  if(_vm874==='top' || _vm874==='fixed'){
+    /* build 1404: a fixed camera's basis comes from where that CAMERA is looking, not from the authored top
+       yaw and not from the body — the body faces the cursor, so a body-relative WASD under a fixed camera
+       steers differently every time you move the mouse. One frame stale, exactly like the cursor unproject
+       above it, and for a fixed camera the pose barely moves anyway. */
+    const _ya = (_vm874==='fixed') ? _viewCamYaw() : ((typeof _vcamYawRad==='function')?_vcamYawRad('top'):0);
+    forward.set(-Math.sin(_ya),0,-Math.cos(_ya)); right.set(Math.cos(_ya),0,-Math.sin(_ya)); }
   else if(_vm874==='side'){ if(gameCfg.viewAxis==='z'){ right.set(0,0,-1); } else { right.set(1,0,0); } forward.set(0,0,0); }
   else if(typeof chaseCursorOn==='function' && chaseCursorOn()){ forward.set(-Math.sin(_ccYaw),0,-Math.cos(_ccYaw)); right.set(Math.cos(_ccYaw),0,-Math.sin(_ccYaw)); }   // build 1103: WASD relative to the frozen camera, not the cursor-spun body
   const wish = _mvWish.set(0,0,0);
@@ -39561,7 +39673,8 @@ function loop(){
       // build 1085: the framing lives in _vcamPose() now — the same function the editor rig and the preview
       // window use, so what a creator sets up is exactly what ships. `true` = don't touch fov/projection
       // here; the ADS blend above owns those. The orbit target follows the player (or the car they drive).
-      _vcamPose(camera, 0, true, drivingCar ? drivingCar.position : player.pos);
+      if(_vmC==='fixed') _viewFixedPose(camera);   // build 1404: mounted on a prop, not orbiting the player
+      else _vcamPose(camera, 0, true, drivingCar ? drivingCar.position : player.pos);
     } }
   updateOwnAvatar(dt);   // show + place the player's own body in third person (hidden otherwise)
   _updateMuzMarker();   // live gunfire-origin marker when tuning (third-person, opt-in)
@@ -45409,7 +45522,7 @@ function buildSignalsUI(sgBody, store, rerender){
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
     r.appendChild(mkSel([['destroyed','On destroyed'],['damaged','On hit'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));   /* build 1397: On hit — a target that can report a shot without having to be destroyed by it */
-    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies']], s.do, v=>{ s.do=v; }));
+    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view']], s.do, v=>{ s.do=v; }));
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag (or: this)'; ti.value=s.target||'';
     if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagListThis'); }
     ti.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';

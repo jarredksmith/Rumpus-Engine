@@ -2256,6 +2256,143 @@ block. And my replacement pin `/g\.view==='chase'/` silently matched the tail of
 as well — six hits where one was meant. **A short variable name in a source pin is a substring of everything
 that ends with it**; that one asks `extractFunction('_applyGameCfg')` instead.
 
+## An explosion launched nothing it damaged (build 1405)
+
+Found by sweeping the **physics booth** — the third of the three the gauntlet is scoped around ("range +
+physics + AI", "movement & traversal", "logic & interaction") and the only one with no end-to-end coverage.
+Thirteen of fourteen things worked: props fall and settle, crates stack, a stack topples when you shove the
+top one, barrels chain-detonate, a prop can be carried and thrown, a trigger zone scores when a prop rolls
+into it, and a knocked-about prop returns home on Deploy.
+
+The fourteenth: **`explodeAt`'s dynamic-prop loop called `damageProp` and nothing else.** An explosion beside
+a stack of crates knocked their health down and left every one of them standing exactly where it was —
+while the ENEMY loop three lines above it has thrown actors since build 636.
+
+### Which impulse, and why it matters
+
+There are already two impulse writers with **deliberately different semantics**, and picking the right one
+is the whole design decision:
+
+| | |
+|---|---|
+| build 1258's push VERB | multiplies by mass, so an authored "20" moves a crate and a barrel the same amount |
+| `pushDynamic` (a SHOT) | does not, so a heavy crate takes a hit better |
+
+A blast is a physical event, not an authored amount, so it takes the shot's — and therefore the shot's
+existing function. **No third impulse writer.** The vertical term is GEOMETRIC rather than a constant (the
+full 3D direction, normalised), so a charge under a crate lifts it and one above slams it down; the strength
+is the actor launch's own `(8 + R*1.2) * f * launchPower`, so the one slider a creator already tunes for
+enemies moves both.
+
+**Damage first, shove what SURVIVED** — the order every other damage site here already uses
+(`if(!damageProp(...)) pushDynamic(...)`), because a shattered prop's body is gone and its debris is its own
+system. And **`breakable:false` no longer skips the prop entirely**: it means "cannot be damaged", not "is
+not made of matter", so an unbreakable crate beside a grenade still goes flying.
+
+### Measured, A/B'd against the pre-1405 loop pasted back into the same tree
+
+```
+BEFORE        the crate takes 32 damage and moves 0.00 m
+AFTER         2.68 m, hp 1000 -> 969
+mass          a 25x heavier crate 4 m away moves 0.00 and takes 15 damage — the shot's raw-impulse
+              semantics doing exactly what they should, and the reason a blast does NOT use the push verb
+unbreakable   0.92 m, health untouched
+```
+
+### Four instrument faults in the new sweep, and every one read as a broken feature
+
+| it looked like | it was |
+|---|---|
+| a crate that never lands, a blast that moves nothing, a goal that never scores | the booth was built at 700 to be "far from the stock level" and **fell out of the world** — the ground plane stops at ±ARENA (70). Far from the level's geometry, not out of the level |
+| a crate resting *through* the floor | a box primitive is **BASE-at-origin** (build 871), so resting ON the ground is `y = 0`, and the assertion `y > 0` called a correct landing a failure |
+| a goal zone that fires for anything | the trigger field is **`ptag`**; a plain `tag` sanitizes away to blank, which silently means ANY prop |
+| a goal edge that would not re-arm | the check asserted an outcome without reporting whether the ball had actually LEFT the zone. It reports the position at every step now |
+
+### And the rig had been measuring a world with no physics in it
+
+The first run reported `physWorld: false`. `mkprobe` used to stub `__PHYSICS_READY` dead — correctly, when
+Rapier came from a CDN that hangs here. **Build 1389 had already made that stub opt-in** once `rapier3d-compat.js`
+was vendored and the staging started copying it; I re-derived the same finding from scratch because I did not
+read that build first. Worth the line: the note in `mkprobe` is the record, and the check that matters is the
+sweep's own first row — *is the physics world live?* — which is the control that makes every row under it
+mean something.
+
+**Eighteenth container rollback, mid-build.** The tree reverted to 1382 between two commands and the edit
+script's `BUILD_VERSION` assert caught it before writing a byte. Recovery was the documented one — `git log`
+first, then fetch + `reset --hard FETCH_HEAD`. One thing to do differently: I rescued `mkprobe.mjs` from the
+working tree *after* the rollback, so the copy I saved was the STALE one, and restoring it over the recovered
+file silently un-did build 1389's work. `assertFreshStaging` is what caught that, by name. **Rescue untracked
+files; for tracked ones, trust the remote.**
+
+## A trigger can change the camera, and change it back (build 1404)
+
+Asked for from use: *"a player walks into a zone that triggers the camera to be from a single, security
+camera mounted POV, or switch to a top-down angle, and then go back to normal view with a different
+trigger."*
+
+`gameCfg.view` was authored ONCE and was the only thing that decided the camera. A cinematic could move the
+camera, but a cinematic **takes control** — this is a view change you keep playing through, which is the
+fixed-camera idiom of every survival-horror game ever made.
+
+### An override, never a write
+
+`gameCfg.view` is level data, and a runtime verb must not edit the level (build 1170's rule) — a creator who
+saves mid-play must not bake the security camera into their file. So `_viewOv` sits beside it and `_viewNow()`
+decides, and the SERIALIZER and the editor's own view picker deliberately keep reading the authored value:
+a creator choosing the level's camera must never be shown the one the graph armed.
+
+**Four things read `gameCfg.view` to decide which camera was running**, and if the override had reached three
+of them the fourth would have kept placing the old camera — this file's most-repeated defect. They all ask
+`_viewNow()` now: the mode gate, the third-person gate, the chase-cursor gate and the orbit framing.
+
+### The mounted camera
+
+`fixed` mounts on a tagged prop. Four decisions:
+- **World position**, so a camera on a lift or a parented prop (build 1309) rides it.
+- **Tracking by default**, because a security camera watches you. Untracked, it takes the PROP's own
+  orientation — both a prop and a camera are −Z forward, so it is build 1394's identity mapping rather than
+  a conversion, and a creator aims the camera by rotating the prop.
+- **The FIRST prop with the tag wins** (1394 again): a camera is one place.
+- **A refusal changes nothing.** A tag nobody carries, or a view the engine does not have, is reported
+  through build 1214's channel and whatever camera was running keeps running — a camera pointed nowhere is
+  the worst possible failure for this verb, and snapping the player to a view they did not ask for mid-scene
+  is the second worst.
+
+### Two things that had to follow it, and one that did not
+
+- **The cursor plane.** `_updateViewAim` branched on `vm==='top'` where the real question is *"not the
+  side-scroll lane"* — a `fixed` mode would have fallen into the side branch with no lane captured and
+  aimed at NaN. It asks `vm!=='side'` now, which is a generalisation: `top` and `side` were the only two
+  values that reached there before this build.
+- **The movement basis.** WASD under a fixed camera has to be relative to that CAMERA. The body faces the
+  cursor, so a body-relative basis would steer differently every time the mouse moved. One frame stale,
+  exactly like the cursor unproject above it — and a fixed camera barely moves anyway.
+- **`_vcamMode()` returns `''` for `fixed`**, so the orbit framing declines it and `_viewFixedPose` is the
+  only thing placing that camera. Nothing had to be added there.
+
+`who:'actor'` (build 1232) sends it to the player who tripped the trigger and nobody else, which is what a
+security camera in a co-op level means; the default reaches everyone like the other world verbs, and a
+client applies the identical payload through the identical function. The camera tag interpolates (1402), so
+`cam{n}` addresses a bank of them. A deploy clears the override — it is play state.
+
+### Measured live, 16/16 (`tools/probe/camera-view.mjs`)
+
+```
+top-down     armed, and the live camera really is overhead — while gameCfg.view stays 'fps' throughout
+fixed        sits EXACTLY on its mount (delta 0.00 on all three axes) and looks straight at the player
+             (dot 1.0000); keeps tracking as the player walks 20 m with the camera moving 0.000
+untracked    looks along the prop's own facing (dot 1.0000)
+normal       the camera is back on the player's own eye, 0.00 m away
+failures     a missing tag and an unknown view are each refused and reported once
+deploy       clears it;  editor  sees 'fps' while the graph has 'top' armed
+```
+
+### Still open, and stated rather than implied
+
+A fixed camera does not yet CUT between mounts on a timer, blend between them, or avoid geometry between
+itself and the player — each of those is its own build. And the camera does not collide: a mount inside a
+wall shows the inside of that wall, which is the creator's placement to fix.
+
 ## The gauntlet's first booth, built end to end — and the one thing it could not say (build 1403)
 
 Build 1402 was reasoned from a gap. This one was found by **building the booth**: `tools/probe/range-booth.mjs`
