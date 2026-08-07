@@ -1712,6 +1712,40 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The logic booth survives the file, and five invented field names (probe pass, after build 1429)
+
+The third and last of the booths the gauntlet is scoped around. `tools/probe/logic-booth-level.mjs` authors
+a nine-node graph (event, setvar, math, read, branch, do, two list ops, an expression), the four
+persistence flags, four HUD widgets covering all four kinds, a lever with a signal, a locked door and a
+build-1276 trigger watching for a tagged PROP — then serializes, reloads through the real loader, and
+**fires the event so the reloaded graph actually runs. 31/31, no engine change needed.**
+
+That matters because a logic NODE's params travel by a different road from a signal's: `_sanitizeLogic`
+passes `p` through WHOLE, where build 1406 found a hand-kept short-key table that had silently dropped
+fourteen of seventeen signal verbs' parameters. The permissive road turns out to be intact.
+
+### Five invented field names, in two probes, in one afternoon
+
+Every one of them produced a check that failed exactly like an engine bug:
+
+| I wrote | the engine's own name |
+|---|---|
+| `enemyMods.runner.speed` | `spd` |
+| `spawnEnemy({radius, detect, loop})` | `{patrolR, detectR, routeLoop}` — and `descFromMarker(g)` builds it for you |
+| `setvar {mode, amt}` / `branch {cmp}` / `list {dst, min, max}` | `{value}` / `{op}` / `{var, value}` |
+| `math {op:'*'}` | `op:'\u00d7'` — the multiplication SIGN. An ASCII star falls through to modulo, so the node RUNS and computes the wrong number |
+| `userData.lock` | `userData.lockId`, serialized as `lk` |
+
+Build 1427 already recorded this class and it kept happening, so the rule is now sharper than "read the
+serializer": **read the DISPATCH for the thing you are about to author, and prefer calling the engine's own
+constructor over rebuilding its argument object.** `descFromMarker` existed the whole time. And the
+`math` row is the worst shape of all — a wrong key that throws is cheap; a wrong key that silently selects
+a different operator is a fixture quietly measuring something else.
+
+**And when a scripted edit aborts on an anchor, re-run the WHOLE script.** These edits write atomically at
+the end, so an assertion failure on the fourth item means the first three were never written either — I
+re-applied only the failing one, re-ran, and got the identical failure back for a cycle.
+
 ## The AI booth survives the file (probe pass, after build 1429)
 
 `ai-booth.mjs` drives the AI in memory and says nothing about whether any of it survives a save — the gap
