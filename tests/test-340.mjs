@@ -11,9 +11,17 @@ assert(/mkF\('Burn dmg',0,60,1/.test(src), 'On-fire exposes a contact damage/sec
 assert(/mkSlider\('Fuse',0,15,0\.5/.test(src), 'the Explosive section exposes a Fuse slider (shoot-to-light, independent of On-fire so it is not pre-lit at load)');
 
 // serialize + load (carries to MP joiners via applyPropDynState)
-assert(/if\(o\.userData\.onFire\)\{ e\.fire=1; if\(o\.userData\.fireDps!=null\) e\.fdps=o\.userData\.fireDps; if\(o\.userData\.fireFuse!=null\) e\.ffuse=o\.userData\.fireFuse; \}/.test(src), 'burning state serialized with the prop');
+// build 1427 SPLIT THESE. Line 11 above asserts the fuse is “independent of On-fire so it is not
+// pre-lit at load” — and these two pins quoted the code that CONTRADICTED it: `ffuse` was written
+// inside `if(onFire)` and read inside `if(p.fire)`, so an Explosive+Fuse barrel lost its fuse on save.
+// The intent is unchanged; what moved is that the file finally agrees with it.
+assert(/if\(o\.userData\.onFire\)\{ e\.fire=1; if\(o\.userData\.fireDps!=null\) e\.fdps=o\.userData\.fireDps; \}/.test(src), 'burning state serialized with the prop');
 const ap = extractFunction('applyPropDynState');
-assert(/if\(p\.fire\)\{ obj\.userData\.onFire=true; obj\.userData\.fireDps=\(p\.fdps!=null\?\+p\.fdps:12\); if\(p\.ffuse!=null\) obj\.userData\.fireFuse=\+p\.ffuse; \}/.test(ap), 'burning state restored on load');
+assert(/if\(p\.fire\)\{ obj\.userData\.onFire=true; obj\.userData\.fireDps=\(p\.fdps!=null\?\+p\.fdps:12\); \}/.test(ap), 'burning state restored on load');
+assert(/if\(o\.userData\.fireFuse!=null && \+o\.userData\.fireFuse>0\) e\.ffuse=\+o\.userData\.fireFuse;/.test(src),
+  'and the FUSE serializes on its own terms, beside the explosive settings the editor authors it with (build 1427)');
+assert(/if\(p\.ffuse!=null\) obj\.userData\.fireFuse=\+p\.ffuse;/.test(ap),
+  '...and loads outside the p.fire gate, so a barrel that was never set alight keeps its fuse');
 
 // ignition + fuse + cleanup
 const ig = extractFunction('igniteProp');

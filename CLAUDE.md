@@ -1712,6 +1712,61 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The fuse never survived a save (build 1427)
+
+Build 629 moved the Fuse slider **out of On-fire and into the Explosive block** — its own entry says so:
+*"the Fuse lives with Explosive now (NOT gated behind On-fire), so a fused barrel is no longer pre-lit at
+load"*. Every runtime reader agrees; all three ask `explosive && fireFuse > 0` with no mention of `onFire`,
+including the shot that lights it.
+
+**The serializer was never moved with it.** `ffuse` was written inside `if(onFire)` and read inside
+`if(p.fire)`. So a creator who ticks Explosive and sets a Fuse — the authoring the editor lays out for them
+— saved a barrel that **detonates instantly** instead of catching light and giving them time to run. Build
+629's headline feature, lost on the way to disk, since build 629.
+
+It is invisible in play, which is why it survived ~800 builds: author it, test it, and it works. Save,
+reopen, and it silently doesn't. **The editor, the runtime and the file all had to be read together to see
+it**, and only the file disagreed.
+
+The fuse is written and read on its own terms now, in the DAMAGEABLE tier (1398) rather than the body tier
+— because an explosive can be a bolted-down static target (1390) as well as a physics body, and that case
+lost its fuse too. Only-when-set, so no level that never used one grows a key. A level saved BEFORE this
+build is `{fire:1, ffuse:N}`, and that same key is still read, so old files load byte-identically.
+
+### Found by making the booth a level file
+
+`tools/probe/physics-booth-level.mjs` is `range-booth-level.mjs` for the physics station — authored, saved,
+reloaded through the real loader, then **played**. `propEntry` serializes 51 fields and the physics ones are
+most of them, which is why this was the right place to look. **14/14 after the fix**, covering mass, the
+custom grab prompt and reach, all four debris settings, the un-grabbable opt-out, all five explosive
+settings, the intangible decoration, the hinge's axis/anchor/self-centering, byte-stability across three
+cycles, and then a real drop, a real shove and a real ignition on the restored props.
+
+**Three of the six original failures were my fixture, and separating them from the real one was the work:**
+
+| reported | truth |
+|---|---|
+| the anchored block came back unanchored | `anc` is a **build-menu slot field** (928's quick-build ghost), not a prop field — `propEntry` never writes it. For a placed prop, "anchored" is simply not ticking Physics |
+| the hinge lost its tracking | there is no `track` field; the trailer self-centering is `center` (759), and the anchor is `ax/ay/az` not `px/py/pz` |
+| the decoration stayed in `colliders` | by design — 1324 returns early and bypasses 1148's fail-solid fallback, so it keeps its slot with an EMPTY box list and every consumer walks nothing. My assertion was over-strict |
+
+**A fixture that invents field names measures real features as broken**, and three of them did. The rule
+that catches it: enumerate what the serializer actually writes before asserting what should come back —
+`propEntry`'s 51 keys took one script to list.
+
+**And backticks inside a template literal for the fourteenth time**, in the comment explaining the `anc`
+mistake. The difference this time: I ran `tools/probe/lint.mjs` AFTER the last edit rather than before the
+first, so it named the file and line before node ever ran. That ordering is the whole value of the linter
+and it is the third build in a row where getting it right or wrong decided whether this cost ten seconds
+or a run.
+
+**Two pins moved (340), and the file they live in had already caught this and not noticed.** Line 11 of
+`test-340` asserts the Fuse slider is *“independent of On-fire so it is not pre-lit at load”* — the
+intent, correctly. Lines 14 and 16 then pinned, verbatim, the serializer and loader lines that
+**contradicted it**. A test can state a property in one assertion and quote its violation in the next,
+and stay green forever: the quotation only ever checks that the code has not changed, never that it is
+right. Both now assert the split, and line 11's intent is finally true.
+
 ## The frame meter was presenting a residual as a cost (build 1426)
 
 `other` was `totMs - render - phys - net - mini`, and `totMs` is the wall clock from one rAF to the next —
@@ -11093,8 +11148,9 @@ of them was real.** They are kept here because two were wrong in instructive way
 Two of three written from looking at the frame, two of three wrong about the mechanism. The list was worth
 keeping only because each entry named a capture that could settle it.
 
-Also outstanding (user actions): upload `server/api/plays.php` beside lobbies.php (build 1230's flywheel is client-live but counts nothing until then); upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
-for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.
+**Server deployment: DONE (confirmed by the author, after build 1426).** `report.php` and its siblings, `plays.php` and the updated `lobbies.php` are live on the cPanel host, as are `tools/levelgen.mjs` + `fflate.min.js`. So three features that had shipped CLIENT-LIVE AND INERT are now actually running: build 1351's moderation reports have somewhere to go, build 1230's play-count flywheel counts (and its Most-played sort appears, since that menu entry only offers itself once count data exists), and the in-editor **Generate arena** worker can fetch the generator it evaluates. Still outstanding: re-upload the museum GLB, and set `RUMPUS_ICE_JSON` with a paid TURN.
+
+**And every browser pass on the human-verify list is confirmed good** — the 1404/1410 camera bank cutting across three angles, an 1411 sign at 4×2 showing a live `{score}`, the 1418 light-colour round trip on real lights, and 1424's Draco repack end to end (which this sandbox could not verify at all, since gltf-transform only exists behind a CDN here). That closes the deferred-verification backlog for the first time in this session.
 
 ## The broker had no override, and PeerJS was three CDNs (build 1354)
 
