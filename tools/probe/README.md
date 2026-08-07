@@ -44,6 +44,10 @@ once by accident and removed in build 1293's follow-up.
 | `share-link-size.mjs` | how big a share link gets as a level grows — the codec is lossless, so size is the question |
 | `saved-level-boot.mjs` | does a saved level containing EVERY primitive boot? build 1331's rule, checked |
 | `gauntlet-scale.mjs` | what a 959-prop level costs in draw calls and triangles, batched and culled |
+| `range-booth-level.mjs` | the gauntlet's range booth authored, SAVED, reloaded and then shot — the round trip no other probe covers |
+| `unbreakable-target.mjs` | build 1421: an unbreakable prop registers hits and never breaks, with a breakable control |
+| `destroy-objective.mjs` | build 1422: a Destroy mission counts static targets and refuses ones that cannot be destroyed |
+| `objective-check.mjs` | build 1423: Level Check reports an objective that cannot be completed, in the RENDERED panel |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.
@@ -114,6 +118,17 @@ has exercised that shader variant, or it reads 0 and looks like a refutation.
 - **A sampling stride that DIVIDES the period under test measures the boundary, not the behaviour.**
   Sampling every 500 ms against a 2 s dwell put every cut on the exact boundary frame, and float drift in
   `__vnow += (1/60)*1000` decided whether the last one fired.
+
+**A round-trip failure and a probe writing the wrong field look identical.** `range-booth-level.mjs`
+reported "the HUD widget did not survive the save" — the widget had never been authored, because widgets
+live in a top-level `hudWidgets` array and the probe set `hudCfg.widgets`, which nothing serializes. Read
+the SERIALIZER for the field you are about to claim was dropped.
+
+**"Reproduces the first save" is not "is stable", and only the second is worth asserting.** The same probe
+reported the level format non-idempotent. It is, once: `aim.state.ry` differs from `aimWep[curWep].ry` by
+one ULP at boot and the loader makes the global pose adopt the per-weapon one. Cycles 1 onward are
+byte-identical. A value that moves a LITTLE EVERY TIME is a level that degrades on every autosave — that is
+build 1420's subject and the thing to test for; a one-time normalisation is not it.
 
 ## Measuring in the render equation's own space
 

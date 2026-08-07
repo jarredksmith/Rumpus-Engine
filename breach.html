@@ -19303,6 +19303,30 @@ function _ensureGlbCodecs(){
   })();
   return _glbCodecsPromise;
 }
+/* build 1424: A DRACO MODEL COULD BE READ AND NEVER WRITTEN BACK.
+   Reported from play, on a 497,912-triangle ramp: "Please install extension dependency, draco3d.encoder".
+   Build 988 loaded the draco DECODER so the optimizer could READ a Draco-compressed input, and stopped
+   there. gltf-transform keeps `KHR_draco_mesh_compression` attached to the document it read, and its
+   write() then demands the ENCODER to re-compress on the way out — so the bake read the model, simplified
+   it, shrank its textures, and threw at the last step.
+
+   The fix is to DROP the extension rather than to load a second wasm, and that is a design choice, not a
+   shortcut: this optimizer's output format is MESHOPT (build 988, decoded by the game everywhere since
+   918). Re-encoding Draco on the way out would spend another megabyte of decoder on a compression the
+   engine would rather not receive, and would keep the failure one CDN away from returning. Reading Draco
+   in and writing meshopt out is what the bake is FOR.
+
+   Geometry is not lost: `io.readBinary` with the decoder registered has already decoded every Draco
+   primitive into plain accessors by the time this runs. What is disposed is the write-time instruction. */
+function _dropDracoForWrite(doc){
+  let n = 0;
+  try{
+    for(const ex of doc.getRoot().listExtensionsUsed()){
+      if(ex && ex.extensionName === 'KHR_draco_mesh_compression'){ ex.dispose(); n++; }
+    }
+  }catch(e){ /* an older gltf-transform without listExtensionsUsed: the write may still fail, loudly */ }
+  return n;
+}
 const MOBILE_TRI_BUDGET = 40000;   // per-model triangle target for the bake (mirrors CHAR_TRI_BUDGET)
 const MOBILE_TEX_MAX    = 1024;    // longest texture edge on mobile (the 1024 guideline)
 function _fmtMB(b){ return (b/1048576).toFixed(1)+' MB'; }
@@ -19342,6 +19366,7 @@ async function optimizeModelForMobile(input, opts){
   io.registerDependencies(deps);
   const inBytes=(input instanceof Uint8Array)?input:new Uint8Array(input);
   let doc; try{ doc=await io.readBinary(inBytes); }catch(e){ throw new Error('couldn\'t read this model (a compression we can\'t repack yet)'); }
+  _dropDracoForWrite(doc);   /* build 1424: read Draco, write meshopt \u2014 see the helper for why not both */
   const root=doc.getRoot();
   const before={ bytes:inBytes.byteLength, tris:_docTriCount(root), tex:_texApproxBytes(root) };
   const passes=[dedup(), weld()];
@@ -34005,7 +34030,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1423 · 2026-08-06';
+const BUILD_VERSION = 'build 1424 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -53850,6 +53875,7 @@ async function _bakeModelEdits(url, edits, name, say, done){
     if(codecs.meshoptEncoder) deps['meshopt.encoder']=codecs.meshoptEncoder;
     io.registerDependencies(deps);
     let doc; try{ doc=await io.readBinary(new Uint8Array(buf)); }catch(e){ say('✕ couldn’t read this model (a compression we can’t repack yet)'); if(done) done(null); return; }
+    _dropDracoForWrite(doc);   /* build 1424: the part editor repacks through the same door */
     say('Applying edits…');
     const linearOf=(hex)=>{ const c=new THREE.Color(hex); if(c.convertSRGBToLinear) c.convertSRGBToLinear(); return [c.r,c.g,c.b]; };
     const stats=_applyModelEditsToDoc(doc.getRoot(), edits, linearOf);

@@ -1712,6 +1712,115 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## Half a million triangles, and the one tool that could fix it was broken (build 1424)
+
+Reported from play with two screenshots and a .glb: *"the FPS is all over the place and almost unplayable.
+If you jump over, or land on, or come in contact with one of these props, the game basically freezes."*
+
+**The model is 497,912 triangles.** A wooden ramp. Draco-compressed to 1.72 MB, which is the entire trap:
+the file looks like nothing and decompresses to half a million triangles. The reporter's own perf HUD had
+already ruled out the renderer and nobody had read it that way:
+
+```
+FPS 68 (14.6 ms)   render 1.5   phys 0.1   other 13.0   draws  61   tris 15,386k   rung 3 fxOff 66% of native
+FPS 60 (16.7 ms)   render 1.3   phys 0.1   other 15.3   draws 102   tris 29,993k   rung 0 MSAA x4
+```
+
+**Thirty million triangles a frame, at 102 draw calls** — ~294,000 triangles per call, which is the
+signature of a scene built from half-million-triangle props. `other` is total frame time minus render,
+phys, net and minimap, and `render` is the CPU time to QUEUE the draws; the GPU work is asynchronous, so
+the wait lands in `other`. 13-15 ms of a 14.6-16.7 ms frame was the CPU waiting on the GPU. And the two
+shots sit on opposite ends of the adaptive ladder (rung 3 at 15M, rung 0 at 30M), which is exactly what
+*"all over the place"* means: the ladder oscillating as the camera turns and different props enter frame.
+
+**This inverts the general ranking, and that is worth stating plainly** because I had just given the
+opposite advice: draw calls dominate for sanely-built content, and 61-102 draws is nothing. At 30M
+triangles the triangle count IS the frame. Both are true; they live in different regimes, and the file size
+gives no warning about which one you are in.
+
+### The costs that scale with triangles, measured
+
+`tools/probe/heavy-model.mjs`. The reported .glb cannot be loaded here (Draco needs a decoder from a CDN
+this sandbox blocks), so the mesh is SYNTHESIZED at three triangle counts — which is the right measurand
+anyway: the question is what the engine does with half a million triangles.
+
+```
+triangles      refreshPropCollider     Rapier static trimesh
+   497,912           163.9 ms                 625.7 ms
+    40,000            21.8 ms                  60.6 ms
+     2,000             0.9 ms                   2.7 ms
+```
+
+Both linear. **625 ms to build ONE static physics body** is the number that best matches "touching it
+freezes the game", though the CONTACT cost itself was not isolated — the synthesized slab merged into a
+single collider box, so the near-vs-far query comparison it produced is meaningless and is not quoted.
+Recorded as an unproven mechanism rather than dressed up as a finding.
+
+### And the built-in fix could not run on exactly these models
+
+The same session produced `[KHR_draco_mesh_compression] Please install extension dependency,
+"draco3d.encoder"`. Build 988 loaded the draco DECODER so the optimizer could READ a Draco input and
+stopped there — gltf-transform keeps the extension attached to the document it read and its `write()` then
+demands the ENCODER. So the bake read the model, simplified it, shrank its textures, and **threw at the
+last step**. The worst possible place to fail: the models that most need the optimizer are exactly the
+heavy ones people ship Draco-compressed, and `MOBILE_TRI_BUDGET` is 40,000 — a 92% cut on this ramp.
+
+`_dropDracoForWrite(doc)` disposes the extension after the read, at both repack sites (the mobile bake and
+the part editor). **Dropping it rather than loading a second wasm is a decision, not a shortcut:** this
+optimizer's output format is MESHOPT, which the game has decoded everywhere since build 918. Re-encoding
+Draco on the way out would spend another megabyte of decoder on a compression the engine would rather not
+receive, and would leave the failure one CDN outage away from returning. Geometry is not lost — the read
+already decoded every Draco primitive into plain accessors; what is disposed is the write-time instruction.
+
+Only Draco is dropped. `KHR_materials_unlit` and `EXT_texture_webp` are the model's own and dropping them
+would change what it LOOKS like rather than how it is packed; `EXT_meshopt_compression` is what this bake
+writes. All three asserted by execution.
+
+**NOT VERIFIED IN THIS SANDBOX, and stated rather than implied.** gltf-transform exists only behind a CDN
+here, so `test-1424` executes the helper against a fake document and pins the wiring, and the end-to-end
+repack needs a browser. The mechanism is the documented one and the failure mode of a wrong guess is the
+same error the creator already has.
+
+## The booth survives a save (probe pass, after build 1423)
+
+`range-booth.mjs` has built the gauntlet's shooting range in memory and driven it with shots since build
+1403. What no probe did was the thing a creator does every session: **press Save, come back, and play what
+came out.** That gap is where this repo's expensive bugs live — 1398 (a shootable target saved and was never
+read back), 1400 (five game settings written and never loaded), 1401 (thirteen sections a joiner never
+received), 1406 (fourteen of seventeen signal verbs lost every parameter). Builds 1421-1423 had just changed
+what `breakable` means, which props a Destroy mission counts, and what the Level Check says — all of it prop
+and objective state that travels in the file.
+
+`tools/probe/range-booth-level.mjs` authors the whole booth with nothing a creator could not author — three
+bolted-down plates with on-hit signals, an UNBREAKABLE practice plate, an interact lever, a world sign
+showing `{score}`, a HUD widget showing the same variable, a five-node graph, a Destroy objective — then
+`serializeLevel()`, `restoreLevel()` the JSON, and **shoots the restored props**.
+
+**20/20, and no engine change was needed.** That is the result: everything builds 1390-1423 added survives
+the file and works on the other side of it. Worth having as a standing guard precisely because it would not
+have been obvious which of those builds had left something behind.
+
+### The two apparent failures were both the instrument
+
+- **"The HUD widget did not survive."** It never existed: widgets live in a TOP-LEVEL `hudWidgets` array,
+  not on `hudCfg`, and the probe wrote a field nothing serializes. *Read the serializer before believing a
+  round-trip failure* — the symptom of writing to the wrong field is identical to the symptom of a loader
+  that drops it.
+- **"The file is not idempotent."** Real, measured, and **not degradation**: the boot state carries
+  `aim.state.ry` = `…045` while `aimWep.sniper.ry` = `…046`, and the loader makes the global ADS pose adopt
+  the per-weapon one. One ULP, once. Over six cycles: `0 -> 1` differs, `1 -> 2 -> 3 -> 4 -> 5` byte-identical.
+
+  That second one is worth the space because the FIRST assertion was measuring the wrong property. Build
+  1420's subject is *"a value that drifts a little each time is a level that degrades every time the creator
+  presses Save, and this engine autosaves every 20 seconds."* A one-time normalisation is not that, and
+  1420's own guard (`level-roundtrip.mjs`) is still clean for exactly that reason — its fixture has already
+  been through one load. **"Reproduces the first save" and "is stable" are different claims, and only the
+  second one is what anybody cares about.** The probe measures stability over four cycles now.
+
+**And backticks inside a template literal for the THIRTEENTH time**, in a comment naming `hudWidgets`, added
+after the lint had been run. Build 1398 judged this not worth tooling because node reports it instantly and
+unambiguously; that judgement stands, and the count is kept honest here rather than re-litigated.
+
 ## The level check never asked whether the level could be won (build 1423)
 
 Level Check has reported lights, texture memory, missing models, third-party hosts, locks without keys and
