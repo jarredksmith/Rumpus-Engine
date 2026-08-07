@@ -34079,7 +34079,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1425 · 2026-08-06';
+const BUILD_VERSION = 'build 1426 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38925,7 +38925,20 @@ const clock = new THREE.Clock();
 
 // ---- Perf meter: press ` (backquote) to toggle. Shows real frame time + a render/logic phase split. ----
 let perfOn=false, _perfCalls=0, _perfTris=0, _perfFrames=0, _perfNextDraw=0, _perfPrev=0, _perfFrameAcc=0;
-const _prof = { render:0, phys:0, net:0, mini:0 };   // ms accumulated this window
+const _prof = { render:0, phys:0, net:0, mini:0, work:0 };   // ms accumulated this window
+/* build 1426: `other` WAS A RESIDUAL PRESENTED AS A COST, and it misread as one to me in the session that
+   produced this build. It was `totMs - render - phys - net - mini`, and `totMs` is the wall clock from one
+   rAF to the next — which at a capped frame rate is pinned by VSYNC however little work is done. On a
+   healthy frame (61 fps, 0.6 ms of render) it read `other 15.7 ms`, and 15.4 of that was the browser
+   sitting idle. I read the same counter on a reporter’s screenshots and concluded 13 ms of hidden cost.
+
+   So the frame is split at the only boundary that means anything: time inside our own callback, and time
+   outside it. `other` is now un-profiled work we really did; `idle` is everything else.
+
+   `idle` is NOT automatically good, and the label says which it is. At the cap it is the vsync wait. Below
+   the cap it is the browser blocking on a full GPU queue at presentation — WebGL’s `render()` returns
+   immediately, so back-pressure lands here rather than in the render figure. A slow frame that is mostly
+   idle is GPU-bound, which is the single most useful thing this meter can say and it could not say it. */
 function _pnow(){ return (typeof performance!=='undefined'?performance.now():Date.now()); }
 function updatePerfHud(){
   if(!perfOn) return;
@@ -38935,12 +38948,16 @@ function updatePerfHud(){
   if(now < _perfNextDraw) return;
   _perfNextDraw = now + 250;   // redraw ~4x/sec so the meter itself is cheap
   const f = Math.max(1,_perfFrames), totMs = _perfFrameAcc/f, fps = 1000/Math.max(0.001,totMs);
-  const r=_prof.render/f, p=_prof.phys/f, n=_prof.net/f, mi=_prof.mini/f, other=Math.max(0, totMs - r - p - n - mi);
-  _perfFrameAcc=0; _perfFrames=0; _prof.render=0; _prof.phys=0; _prof.net=0; _prof.mini=0;
+  const r=_prof.render/f, p=_prof.phys/f, n=_prof.net/f, mi=_prof.mini/f;
+  const work=_prof.work/f, other=Math.max(0, work - r - p - n - mi), idle=Math.max(0, totMs - work);
+  /* Under the cap AND mostly idle = the browser is waiting on the GPU, not on us. Stated with a question
+     mark because it is a heuristic read of a residual, which is the mistake this build exists to fix. */
+  const idleWhy = (totMs > 20 && idle > totMs*0.5) ? 'GPU-bound?' : 'vsync';
+  _perfFrameAcc=0; _perfFrames=0; _prof.render=0; _prof.phys=0; _prof.net=0; _prof.mini=0; _prof.work=0;
   const mem=renderer.info.memory, el=document.getElementById('perfHud'); if(!el) return;
   el.innerHTML = 'FPS '+fps.toFixed(0)+'  ('+totMs.toFixed(1)+' ms)<br>'
     + 'render '+r.toFixed(1)+'  phys '+p.toFixed(1)+'  net '+n.toFixed(1)+'<br>'
-    + 'minimap '+mi.toFixed(1)+'  other '+other.toFixed(1)+' ms<br>'
+    + 'minimap '+mi.toFixed(1)+'  other '+other.toFixed(1)+'  \u00b7  idle '+idle.toFixed(1)+' ms ('+idleWhy+')<br>'
     + 'draws '+_perfCalls+'   tris '+(_perfTris/1000).toFixed(0)+'k   geom '+mem.geometries+'   tex '+mem.textures+'   lights '+((typeof _lightCensus==='function')?_lightLoad(_lightCensus()):'?')+'<br>'   /* build 1257: the per-pixel light loop, beside the draws it costs as much as */
     + 'enemies '+enemies.length+'   mixers '+mixers.length+(dofEnabled?'   <span style="color:#ffd166">DoF ON</span>':'')
     + '<br>' + _aaReport();
@@ -39783,6 +39800,13 @@ addEventListener('visibilitychange', ()=>{
 addEventListener('blur', ()=>{ if(typeof clearMovementInput==='function') clearMovementInput(); });   // build 843: same for focus loss without a tab switch (e.g. clicking another window)
 function loop(){
   requestAnimationFrame(loop);
+  /* build 1426: how long the FRAME CALLBACK itself takes. A microtask runs the moment the JS stack
+     empties, which is exactly when `loop()` returns — so this brackets every path out of the loop
+     including its early returns, with no refactor and no end-of-function hook to keep in step.
+     Gated on `perfOn`, so a normal session queues nothing. */
+  if(perfOn){ const _w0 = _pnow();
+    const _mark = ()=>{ _prof.work += _pnow() - _w0; };
+    if(typeof queueMicrotask==='function') queueMicrotask(_mark); else Promise.resolve().then(_mark); }
   if(_tabHidden) return;
   try{ renderer.info.reset(); }catch(e){}   // build 1122: one accumulation window per frame   // backgrounded: stop rendering AND stepping physics — a hidden tab simulating is what gets the page killed on mobile
   // build 1120: re-fit the sun's shadow volume to the active camera BEFORE deciding whether the map
