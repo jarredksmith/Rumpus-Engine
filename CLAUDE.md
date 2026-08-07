@@ -1712,6 +1712,80 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## An imported model's data maps arrived sRGB-decoded (build 1429)
+
+Reported with the file: a KTX2 barrel renders **shattered, faceted and blue-green** in Rumpus while every
+preview tool shows it correctly. **I offered two explanations from READING the file and both were wrong**,
+and the reporter's own control is what killed the second: they re-exported with a different compression
+(ktx2/MIX instead of ETC1S) and the artifact was IDENTICAL. Same artifact across different texture data
+rules the texture data out. That is what forced this to be measured.
+
+The chain, verified at both ends and then measured on their actual file:
+
+```
+KTX2Loader:256   texture.encoding = dfdTransferFn === KHR_DF_TRANSFER_SRGB ? sRGBEncoding : LinearEncoding
+GLTFLoader:4935  if ( encoding !== undefined ) texture.encoding = encoding;      <- ASSIGNS, never CLEARS
+```
+
+`assignTexture` is passed an encoding for **`map` and `emissiveMap` alone**. For every other slot, whatever
+the FILE declared survives — and KTX2Loader takes that from the container's own DFD transfer function,
+which the KTX2 encoders creators actually use set to sRGB on all four images. So the normal, roughness and
+metalness maps were being decoded through an sRGB curve. **A normal map's 0.5-centred XY lands at 0.21**,
+so every normal on a flat face is violently skewed — which is exactly a faceted, blue-green barrel.
+
+Measured, same camera, same frame, only the three data maps' `encoding` changed:
+
+```
+                       moved     mean delta     barrel mean RGB
+whole window control    0.00%        0.00
+BARREL control          0.00%        0.00        61,90,77   <- green-dominant, as reported
+BARREL fixed           98.44%       35.79        39,70,50
+```
+
+**98.4% of the model's own pixels, against a control of exactly zero.** The fix forces every DATA slot back
+to linear in the one imported-material pass, and re-running the probe against the fixed engine the repair
+**has become a no-op** — 0.00% moved, the maps already linear — which is the strongest confirmation this rig
+can produce.
+
+Three things about it are deliberate:
+- **`DATA_MAP_SLOTS` names the data slots ONCE**, and names them by exclusion of the colour ones. The
+  dangerous direction is the other way: a colour map dragged to linear renders washed and pale, so `map`,
+  `emissiveMap`, `lightMap`, `sheenColorMap` and `specularColorMap` must never appear in it. The test
+  asserts BOTH directions.
+- **It runs BEFORE build 1095's lightmap adoption**, which moves `aoMap` into `lightMap` and sets it sRGB
+  on purpose (the bake IS sRGB-authored). Repairing afterwards would drag every generated level's interior
+  bake to linear.
+- **A correctly-authored model triggers no recompile at all** — the loop only writes when the value is
+  wrong, so this is free for everyone whose textures were already right, which is every PNG/webp import.
+
+**This was never about the reporter's file or their settings.** I sent them to re-export twice on
+hypotheses formed from reading code instead of measuring it. The general rule, which this file already
+states about frames and now states about materials: *when a report and your reading of the source
+disagree, build the instrument.* And the corollary earned here — **a reporter's control is evidence.**
+Theirs was correct and mine was not.
+
+### The rig, and the two instrument failures that came before any number
+
+KTX2 could not be measured headlessly at all: the loader and the Basis transcoder both come from CDNs the
+browser cannot reach. `tools/probe/stage-ktx2.mjs` copies them out of `tests/node_modules` and shims the
+bare `three` import to the UMD global.
+
+- **A hand-kept file list missed `libs/zstddec.module.js`**, a transitive import two levels down — three
+  lines below a comment congratulating this script for deriving the shim's export list so a hand-kept list
+  could not drift. Chromium reports that as *"Failed to fetch dynamically imported module"* against
+  **`KTX2Loader.js`** — the url I had just rewritten — so it reads exactly like the rewrite being wrong,
+  and the loader stayed silently unavailable for a whole cycle. The staging FOLLOWS the import graph now.
+- **The first A/B had a control that moved 59% of the frame**, i.e. no instrument. Two temporal terms:
+  build 1238's motion blur reprojects against the camera's PREVIOUS rotation, so two renders of one pose
+  legitimately differ, and `postGrain` is stochastic. Both are DERIVED by `applyWorldCfg`, so the zeroing
+  I had written — `worldCfg.postGrain = 0` with no `applyWorldCfg()` — **was itself a no-op**. With them
+  actually off and a warm-up shot discarded, the control returns 0.000 and the numbers above mean something.
+
+And the first readback, taken while the loader was still unavailable, reported `patched: true` on the
+material — build 1379's albedo-detail patch. That looked like a lead and was the system working correctly:
+with no maps present the mesh legitimately qualifies. With the maps loaded it reads `patched: false`.
+**A measurement taken through a broken instrument produces a plausible finding, not an obvious error.**
+
 ## Decoration only did not mean the physics (build 1428)
 
 Spotted while answering a question about triangle budgets — *does decoration get a free pass on the

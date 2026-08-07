@@ -16,12 +16,16 @@
 //
 // Sharpening a texture and adopting a bake have nothing to do with each other. Only the first depends on
 // the capability.
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { extractConst, gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- executed, at both capabilities
 // The pass lives inside the model-load path, so the block is lifted out and driven directly with a fake
 // mesh at MAX_ANISO 1 and at 8. A source pin cannot tell you which branch a nested `if` guards.
+// build 1429 put a SECOND repair inside this same pass (data maps forced back to linear). This harness
+// is about the BAKE ADOPTION's gating and says nothing about encodings, so the new dependency is supplied
+// inert — and lifted from the source rather than retyped, so it cannot drift from the list the engine uses.
+const DATA_MAP_SLOTS = new Function('return ' + extractConst('DATA_MAP_SLOTS'))();
 const BLOCK = (() => {
   const m = src.match(/\{ const ms = Array\.isArray\(o\.material\) \? o\.material : \[o\.material\];[\s\S]*?\n      \} \}/);
   assert(m, 'the imported-material pass is one readable block');
@@ -33,7 +37,7 @@ function run(maxAniso){
   const mat = { userData: { rumpusLightmap: 0.8 }, aoMap: tex('bake'), lightMap: null,
     map: tex('albedo'), normalMap: tex('nrm'), lightMapIntensity: 1, needsUpdate: false };
   const o = { material: mat };
-  new Function('o', 'MAX_ANISO', 'THREE', BLOCK)(o, maxAniso, { SRGBColorSpace: 'srgb' });
+  new Function('o', 'MAX_ANISO', 'THREE', 'DATA_MAP_SLOTS', BLOCK)(o, maxAniso, { SRGBColorSpace: 'srgb', NoColorSpace: '' }, DATA_MAP_SLOTS);
   return mat;
 }
 
@@ -56,7 +60,7 @@ function run(maxAniso){
 {
   // a model with no bake is untouched in that slot — an ordinary creator import must not gain a lightMap
   const plain = { userData: {}, aoMap: { name: 'ao', anisotropy: 1 }, lightMap: null, lightMapIntensity: 1, needsUpdate: false };
-  new Function('o', 'MAX_ANISO', 'THREE', BLOCK)({ material: plain }, 8, { SRGBColorSpace: 'srgb' });
+  new Function('o', 'MAX_ANISO', 'THREE', 'DATA_MAP_SLOTS', BLOCK)({ material: plain }, 8, { SRGBColorSpace: 'srgb', NoColorSpace: '' }, DATA_MAP_SLOTS);
   eq(plain.lightMap, null, 'a plain import keeps its aoMap as an aoMap');
   eq(plain.aoMap && plain.aoMap.name, 'ao', '...and does not lose it');
 }
@@ -64,7 +68,7 @@ function run(maxAniso){
   // an already-adopted bake is not adopted twice (re-entry through a reload or a material swap)
   const again = { userData: { rumpusLightmap: 1 }, aoMap: { name: 'ao2', anisotropy: 1 }, lightMap: { name: 'already' },
     lightMapIntensity: 0.5, needsUpdate: false };
-  new Function('o', 'MAX_ANISO', 'THREE', BLOCK)({ material: again }, 8, { SRGBColorSpace: 'srgb' });
+  new Function('o', 'MAX_ANISO', 'THREE', 'DATA_MAP_SLOTS', BLOCK)({ material: again }, 8, { SRGBColorSpace: 'srgb', NoColorSpace: '' }, DATA_MAP_SLOTS);
   eq(again.lightMap.name, 'already', 'an existing lightMap is left alone');
   eq(again.lightMapIntensity, 0.5, '...at its existing intensity');
 }
@@ -72,7 +76,7 @@ function run(maxAniso){
   // multi-material meshes: every material in the array, not just the first
   const mk = () => ({ userData: { rumpusLightmap: 1 }, aoMap: { name: 'b', anisotropy: 1 }, lightMap: null, lightMapIntensity: 1, needsUpdate: false });
   const a = mk(), b = mk();
-  new Function('o', 'MAX_ANISO', 'THREE', BLOCK)({ material: [a, b] }, 8, { SRGBColorSpace: 'srgb' });
+  new Function('o', 'MAX_ANISO', 'THREE', 'DATA_MAP_SLOTS', BLOCK)({ material: [a, b] }, 8, { SRGBColorSpace: 'srgb', NoColorSpace: '' }, DATA_MAP_SLOTS);
   assert(a.lightMap && b.lightMap, 'both materials of a multi-material mesh adopt their bake');
 }
 {
@@ -80,7 +84,7 @@ function run(maxAniso){
   const ok = mkSafe();
   function mkSafe(){
     const good = { userData: { rumpusLightmap: 1 }, aoMap: { name: 'b', anisotropy: 1 }, lightMap: null, lightMapIntensity: 1, needsUpdate: false };
-    new Function('o', 'MAX_ANISO', 'THREE', BLOCK)({ material: [null, good, undefined] }, 8, { SRGBColorSpace: 'srgb' });
+    new Function('o', 'MAX_ANISO', 'THREE', 'DATA_MAP_SLOTS', BLOCK)({ material: [null, good, undefined] }, 8, { SRGBColorSpace: 'srgb', NoColorSpace: '' }, DATA_MAP_SLOTS);
     return good;
   }
   assert(ok.lightMap, 'a null entry beside a real material is skipped rather than thrown on');

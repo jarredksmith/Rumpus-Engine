@@ -19,6 +19,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
 const out = path.resolve(process.argv[2] || path.join(repo, 'probe-out'));
 
+fs.mkdirSync(out, { recursive: true });
 let src = fs.readFileSync(path.join(repo, 'breach.html'), 'utf8');
 const sub = (needle, replacement, why) => {
   const n = src.split(needle).length - 1;
@@ -55,6 +56,15 @@ if (process.env.PROBE_PROF) {
     ' eval(__n + " = __w"); }catch(e){ window.__PROF[__n] = { err: String(e).slice(0,60) }; } } })();',
     'profiler');
 }
+
+// build 1429: a LOCAL KTX2 pipeline, when tools/probe/stage-ktx2.mjs has staged one. The loader comes from
+// esm.sh and the Basis transcoder from jsdelivr, and the headless browser can reach neither — so a
+// KTX2/Basis model could not be reproduced here at all. Optional: with nothing staged, both URLs are left
+// exactly as they ship and the probe behaves as it always did.
+if (fs.existsSync(path.join(out, 'jsm', 'loaders', 'KTX2Loader.js')))
+  sub("'https://esm.sh/three@0.149.0/examples/jsm/loaders/KTX2Loader.js'", "'/jsm/loaders/KTX2Loader.js'", 'ktx2 loader url');
+if (fs.existsSync(path.join(out, 'basis', 'basis_transcoder.wasm')))
+  sub("'https://cdn.jsdelivr.net/npm/three@0.149.0/examples/jsm/libs/basis/'", "'/basis/'", 'basis transcoder path');
 
 // 3) Rapier is fetched from a CDN and is not needed for anything a probe asks about; a pending promise
 //    here stalls the boot behind a network timeout.
