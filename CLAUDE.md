@@ -1712,6 +1712,53 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## Decoration only did not mean the physics (build 1428)
+
+Spotted while answering a question about triangle budgets — *does decoration get a free pass on the
+physics cost?* — which is the kind of question that is cheaper to check than to answer from memory.
+
+Build 1324 gave a prop `noCol`: a real, serialized **decoration only**, so a bush cannot block a doorway.
+It empties the collider box list and neutralises the raycast. `addStaticColliderFor` never heard about it.
+
+Measured (`tools/probe/nocol-physics.mjs`), with an identical prop without the flag as the control:
+
+```
+                     collider boxes   physics body   build
+ordinary primitive          1             yes
+ordinary model (4k tris)    1             yes        11.1 ms
+noCol primitive             0             YES
+noCol model (4k tris)       0             YES         5-12 ms
+```
+
+So the flag removed the engine's own collision and left Rapier's. Every branch of that function attaches a
+**real** collider, so the body is solid to dynamic props — an intangible bush a crate can rest on. Same
+shape as the bug build 1194 recorded, where `hideprop` removed a prop from the query list and left its
+Rapier body behind as an invisible physics wall.
+
+**The guard sits after the vehicle and kinematic branches, not beside build 1250's `fx` guard, and that is
+a decision.** Those branches are for props that MOVE, and a drivable car or a moving platform is not
+"decoration only" in any useful sense — skipping their bodies would stop a car driving and a platform
+carrying. Only the two STATIC paths are skipped. A moving noCol prop keeping its kinematic body is a
+**stated limit** written at the site, not an oversight; changing it would need its own evidence.
+
+### The half I could not prove, and did not claim
+
+Whether that body was SOLID IN PLAY is **not** established. Crates dropped onto the decoration fell
+through — and so did the CONTROL, dropped onto an ordinary wall model, and a second run had the primitive
+case not fall at all (`restedY` 0 in one run, 6 in the next). **A null with a failed control is an
+instrument, not a finding**, so those two checks were demoted from assertions to printed observations with
+the reason beside them, and the build rests on what is directly readable: the body is created, and every
+branch creating it attaches a collider.
+
+That is the difference between this and a tidier-sounding entry. The wasted build time is measured. The
+invisible-wall consequence is *inferred from the code* and stated as such.
+
+`test-1428` drives the real `addStaticColliderFor` against a stub Rapier and counts bodies and colliders —
+including that the vehicle, kinematic, parented, emitter and idempotence branches all still behave, which
+is what makes a guard this early in a function safe to add.
+
+Zero pins moved.
+
 ## The fuse never survived a save (build 1427)
 
 Build 629 moved the Fuse slider **out of On-fire and into the Explosive block** — its own entry says so:
