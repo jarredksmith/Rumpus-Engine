@@ -1879,6 +1879,21 @@ freezes the game", though the CONTACT cost itself was not isolated — the synth
 single collider box, so the near-vs-far query comparison it produced is meaningless and is not quoted.
 Recorded as an unproven mechanism rather than dressed up as a finding.
 
+**CLOSED BY THE FIX, NOT BY THE DIAGNOSIS — and the distinction is the point.** The reporter optimized the
+model (497,912 triangles to ~10,000, per the settings in this entry) and confirms the freeze is gone. So
+the symptom is closed and **the mechanism never was**. What the evidence supports: a ~50x triangle
+reduction removed it, which is consistent with every cost measured here being linear in triangles. What it
+does NOT support: which of them it was. The 625 ms body build, the 164 ms collider-grid derivation and the
+per-contact narrowphase against a half-million-triangle trimesh all fell by the same factor at the same
+moment, and nothing separated them.
+
+The repro is gone with the model, so this is unlikely to be settled unless somebody hits it again. If they
+do, the missing instrument is a fixture that yields a REALISTIC COLLIDER BOX COUNT — the synthesized slab
+that failed here merged into one box, which is exactly why the near-vs-far query comparison said nothing.
+Build the fixture from a real imported .glb, or from geometry with gaps and separate parts. Writing that
+down is worth more than a tidy claim of victory: the next reader inherits an open question rather than a
+false certainty.
+
 ### And the built-in fix could not run on exactly these models
 
 The same session produced `[KHR_draco_mesh_compression] Please install extension dependency,
