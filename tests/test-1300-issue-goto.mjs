@@ -98,8 +98,10 @@ const mkGo = (props, resolveTo) => {
   // specific prop to go and fix. The intent is unchanged and is what the exact count guards — only the
   // checks with somewhere to send you are clickable; the level-wide ones (a light budget, a missing key
   // pad, a Destroy mission with no targets at all) stay plain rows, which is this build's own rule.
-  eq((li.match(/_issueAt\(/g) || []).length, 8,
-    'eight raise-sites point somewhere (both cutscene faults among them); the rest are level-wide — a light budget or a missing key pad has no single prop to blame');
+  // build 1425 added the NINTH: a model over the optimizer's triangle budget, which has one specific prop
+  // to go and fix. Its LEVEL-TOTAL sibling deliberately stays a plain row — there is nothing to point at.
+  eq((li.match(/_issueAt\(/g) || []).length, 9,
+    'nine raise-sites point somewhere (both cutscene faults among them); the rest are level-wide — a light budget or a missing key pad has no single prop to blame');
 }
 
 // ---------------------------------------------------------------- the row

@@ -9653,6 +9653,55 @@ function _texCensus(){
   }catch(e){}
   return { count:n, mb: Math.round(bytes/1048576), largest: big, largestMb: Math.round(bigB/1048576) };
 }
+/* build 1425: THE THIRD CENSUS. Build 1257 made the light budget visible on the grounds that it is the
+   number a creator "most needs and could least discover", and 1353 did the same for texture memory. The
+   whole time, GEOMETRY — the third of the three things content grows — was reported NOWHERE a creator
+   would look. `levelIssues` mentioned triangles zero times.
+
+   Reported from play, and it cost somebody an evening: a wooden ramp at 497,912 triangles, Draco-
+   compressed to 1.72 MB. The FILE SIZE is the trap — it looks like nothing and decompresses to half a
+   million triangles — and their level reached THIRTY MILLION triangles a frame at 102 draw calls. The
+   perf HUD had the number all along (`tris 29993k`), but that is a debug overlay behind a backtick, read
+   after you already know something is wrong. Level Check is where you look BEFORE you publish.
+
+   Per-prop, so the row can name the offender and take you to it. The per-model threshold is not invented:
+   `MOBILE_TRI_BUDGET` is the number this engine’s own optimizer already simplifies down to, so a model
+   above it is precisely one the bake would cut. */
+function _geoCensus(){
+  const out = { tris:0, props:0, worst:null, worstTris:0, over:0, overTris:0 };
+  const count = (root)=>{ let t = 0;
+    root.traverse(m=>{ if(!m.isMesh || !m.geometry) return;
+      const g = m.geometry, idx = g.index ? g.index.count : (g.attributes && g.attributes.position ? g.attributes.position.count : 0);
+      /* an InstancedMesh draws its geometry once per instance, and that is what the GPU is asked for */
+      t += (idx/3) * ((m.isInstancedMesh && m.count>0) ? m.count : 1); });
+    return t; };
+  try{
+    for(const o of propModels){
+      if(!o || !o.parent) continue;
+      const t = count(o); if(!(t>0)) continue;
+      out.tris += t; out.props++;
+      if(t > out.worstTris){ out.worstTris = t; out.worst = _geoName(o); }
+      if(t > MOBILE_TRI_BUDGET){ out.over++; out.overTris += t; }
+    }
+  }catch(e){}
+  out.tris = Math.round(out.tris); out.worstTris = Math.round(out.worstTris); out.overTris = Math.round(out.overTris);
+  return out;
+}
+function _geoName(o){
+  try{
+    const u = o.userData || {};
+    if(u.name) return String(u.name).slice(0,40);
+    if(u.tag) return String(u.tag).slice(0,40);
+    const src = String(u.src||'');
+    if(src && typeof assetShortName==='function') return assetShortName(src);
+    if(src) return src.split('/').pop().slice(0,40);
+  }catch(e){}
+  return 'a prop';
+}
+/* Between the largest level this repo has MEASURED running well (524,582 triangles across 959 props,
+   tools/probe/gauntlet-scale.mjs) and the 15-30 million measured struggling in the report above. Stated
+   as the gap it is rather than as a law: 4x the known-good, an order of magnitude under the known-bad. */
+const LEVEL_TRI_SOFT_CAP = 2000000;
 function _lightCensus(){
   const c = { point:0, spot:0, dir:0, hemi:0, shadow:0, emitters:(typeof emitterLights!=='undefined')?emitterLights.length:0, total:0 };
   try{ scene.traverseVisible(o=>{
@@ -34030,7 +34079,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1424 · 2026-08-06';
+const BUILD_VERSION = 'build 1425 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45986,6 +46035,27 @@ function levelIssues(){
           + (t.largestMb>=16 ? (' \u2014 the largest alone is ~'+t.largestMb+' MB ('+t.largest+')') : '')
           + '. This is GPU memory, not download size: a 4096\u00d74096 image costs ~64 MB however small the file is. '
           + 'Phones commonly have 256\u2013512 MB to spend on everything. Lower "Model texture cap" before importing, or re-export the big ones smaller.');
+    }
+    /* build 1425: geometry, the third census. Reported per PROP so the row names the offender and takes
+       you to it (build 1300) \u2014 "your level is heavy" is not actionable; "this ramp is 497,912 triangles"
+       is, and the fix is one button away in Files \u2192 Optimize. */
+    if(typeof _geoCensus==='function'){
+      const g = _geoCensus();
+      if(g.over > 0)
+        issues.push(_issueAt(g.over+' model'+(g.over>1?'s are':' is')+' over the '+MOBILE_TRI_BUDGET.toLocaleString()
+          + '-triangle budget this engine\u2019s own optimizer targets'
+          + (g.worst ? (' \u2014 the heaviest is '+g.worstTris.toLocaleString()+' triangles ('+g.worst+')') : '')
+          + '. File size does not warn you about this: a model can compress to under 2 MB and still be half a '
+          + 'million triangles. Run Files \u2192 Optimize on them, or re-export at a lower density.',
+          ()=>propModels.filter(o=>{ if(!o || !o.parent) return false;
+            let t=0; o.traverse(m=>{ if(m.isMesh && m.geometry){ const gg=m.geometry;
+              t += ((gg.index?gg.index.count:(gg.attributes&&gg.attributes.position?gg.attributes.position.count:0))/3)
+                   * ((m.isInstancedMesh && m.count>0)?m.count:1); } });
+            return t > MOBILE_TRI_BUDGET; })));
+      else if(g.tris > LEVEL_TRI_SOFT_CAP)
+        issues.push('This level draws about '+Math.round(g.tris/1000).toLocaleString()+'k triangles across '
+          + g.props+' props. No single model is oversized, so this is the total \u2014 fewer or simpler props, or '
+          + 'raise Cull below (px) from 0 in World \u2192 Camera & view.');
     }
     // build 1274: culling is opt-in (1273); when it IS on, say what it is removing. A subsystem that can
     // DELETE THINGS FROM THE SCREEN must be able to account for itself — build 1273 shipped this feature

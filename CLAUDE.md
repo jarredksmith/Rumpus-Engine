@@ -1712,6 +1712,61 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The third census (build 1425)
+
+Build 1257 made the LIGHT budget visible because it is *"the number a creator most needs and could least
+discover"*. Build 1353 did the same for TEXTURE memory. **Geometry — the third thing content grows — was
+reported nowhere a creator would look**: `levelIssues` mentioned triangles zero times.
+
+Build 1424 is what found it. A creator shipped a 497,912-triangle ramp and a level reaching 30 million
+triangles a frame, and nothing in the product said a word — while it would happily have warned them about a
+41st point light. The perf HUD had the number the whole time (`tris 29993k`), but that is a debug overlay
+behind a backtick, read *after* you already know something is wrong. **Level Check is where you look
+before you publish.**
+
+### Both thresholds are derived, not chosen
+
+- **Per model: `MOBILE_TRI_BUDGET` (40,000)** — the number this engine's own optimizer already simplifies
+  down to. A model above it is *precisely* one the bake would cut, so the row can never argue with the tool
+  it recommends in the same sentence.
+- **Per level: 2,000,000** — the gap between the largest level this repo has MEASURED running well (524,582
+  triangles across 959 props, `gauntlet-scale.mjs`) and the 15-30M measured struggling in the report. Four
+  times the known-good, an order of magnitude under the known-bad, and recorded at the constant *as that
+  gap* rather than as a law.
+
+**The per-model row wins, and the total is the `else`.** A level with one monstrous model is told about the
+model — which is actionable and one button from fixed — not about a sum it cannot act on. One row fires,
+never two.
+
+**It names the offender and takes you to it** (build 1300's locator, now nine sites), because *"your level
+is heavy"* is a scolding and *"Wooden Ramp is 497,912 triangles"* is a task. And it says why the file size
+gave no warning, since that is the whole trap.
+
+**An `InstancedMesh` counts once PER INSTANCE.** A batch is a draw-call saving, not a triangle one — build
+1420's probe already recorded instancing TRIPLING the triangle count while cutting draws 36%, and a census
+that counted the shared geometry once would have quietly under-reported exactly the levels most at risk.
+
+### I wrote a control that does not exist
+
+The level-total row first said *"turn on Cull small props in World → Camera & view"*. The section was
+right; **the label was invented** — the real slider is `Cull below (px)` (builds 1267/1273). Caught by
+grepping for the string before shipping it, which is the only reason it did not become a UI that lies about
+its own engine — the defect builds 1310 and 1348 exist to remove. The test now pins BOTH ends: the row
+names that control, and that control is really there.
+
+Measured (`tools/probe/geo-census.mjs`, 17/17) with the stock level as a control that returns to silence:
+
+```
+stock level        452 tris / 11 props / 0 over        panel SILENT
++ the ramp         498,364 tris, 1 over, "Wooden Ramp" 497,912   -> row, clickable, resolves to the prop
+60 x 39k props     2,340,452 tris, 0 over              -> the LEVEL TOTAL row instead
+remove them        panel silent again
+```
+
+One pin moved (1300), the count of clickable rows: eight to nine. The level-total sibling deliberately
+stays a plain row, which is that build's own rule — an issue with nowhere to send you must not look
+clickable.
+
 ## Half a million triangles, and the one tool that could fix it was broken (build 1424)
 
 Reported from play with two screenshots and a .glb: *"the FPS is all over the place and almost unplayable.
