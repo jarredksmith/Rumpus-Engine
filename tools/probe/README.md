@@ -45,6 +45,10 @@ once by accident and removed in build 1293's follow-up.
 | `saved-level-boot.mjs` | does a saved level containing EVERY primitive boot? build 1331's rule, checked |
 | `gauntlet-scale.mjs` | what a 959-prop level costs in draw calls and triangles, batched and culled |
 | `range-booth-level.mjs` | the gauntlet's range booth authored, SAVED, reloaded and then shot — the round trip no other probe covers |
+| `physics-booth-level.mjs` | the physics booth through the same round trip — found build 1427's lost fuse |
+| `heavy-model.mjs` | what a half-million-triangle prop costs: collider derivation and Rapier trimesh build, at three counts |
+| `geo-census.mjs` | build 1425: Level Check names the heaviest model, in the RENDERED panel |
+| `perf-idle.mjs` | build 1426: work inside the frame callback vs waiting outside it |
 | `unbreakable-target.mjs` | build 1421: an unbreakable prop registers hits and never breaks, with a breakable control |
 | `destroy-objective.mjs` | build 1422: a Destroy mission counts static targets and refuses ones that cannot be destroyed |
 | `objective-check.mjs` | build 1423: Level Check reports an objective that cannot be completed, in the RENDERED panel |

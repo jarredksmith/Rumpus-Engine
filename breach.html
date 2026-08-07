@@ -34079,7 +34079,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1426 · 2026-08-06';
+const BUILD_VERSION = 'build 1427 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35270,7 +35270,7 @@ function applyPropDynState(obj, p){
     if(p.ng) obj.userData.noGrab=true;
     if(p.glbl) obj.userData.grabLabel = String(p.glbl).slice(0,80);   // build 679: custom grab prompt label
     if(p.grng>0) obj.userData.grabRange = +p.grng;   // build 683: per-prop grab distance
-    if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse; }
+    if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); }
     if(p.mass!=null) obj.userData.mass = p.mass;
   }
   // ---- tier 3: being DAMAGEABLE, which a bolted-down target is too --------------------------------
@@ -35280,6 +35280,10 @@ function applyPropDynState(obj, p){
   if(!p.dyn && !p.sht) return;
   if(p.hsn) obj.userData.hitSnd = String(p.hsn).slice(0,300);   // build 1305
   if(p.bsn) obj.userData.breakSnd = String(p.bsn).slice(0,300);   // build 1314
+    /* build 1427: read beside the explosive settings it belongs to, and OUTSIDE `if(p.fire)`. A level
+       saved before this build wrote `ffuse` only alongside `fire:1`, and that same key is still read here
+       — so old files load byte-identically and new ones finally keep a fuse without being set alight. */
+  if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse;
   if(p.brk===false){ obj.userData.breakable = false; }
   else { obj.userData.breakable = true; if(p.obj) obj.userData.objective=true; if(p.hp!=null){ obj.userData.maxHp = p.hp; obj.userData.hp = p.hp; } obj.userData.breakStyle = (p.bst==='puff') ? 'puff' : 'shatter';
     if(p.fc!=null) obj.userData.fragCount = p.fc;
@@ -43387,7 +43391,7 @@ function propEntry(o){
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
     if(o.userData.grabRange>0 && o.userData.noGrab!==true) e.grng = +o.userData.grabRange;   // build 683: per-prop grab distance
-    if(o.userData.onFire){ e.fire=1; if(o.userData.fireDps!=null) e.fdps=o.userData.fireDps; if(o.userData.fireFuse!=null) e.ffuse=o.userData.fireFuse; }
+    if(o.userData.onFire){ e.fire=1; if(o.userData.fireDps!=null) e.fdps=o.userData.fireDps; }
   }
   /* build 1390: everything below describes being DESTROYED, which a static target does too — so it sits
      outside the physics gate. Written first, this block was INSIDE it, and a target serialized neither its
@@ -43407,7 +43411,17 @@ function propEntry(o){
       if(o.userData.fragCount!=null) e.fc=o.userData.fragCount;
       if(o.userData.fragSize!=null && Math.abs(o.userData.fragSize-DEBRIS_SIZE_FRAC)>1e-6) e.fz=o.userData.fragSize;
       if(o.userData.debrisShape==='cubes') e.dsh='cubes';   // shards is the default; only store cubes
-      if(o.userData.explosive){ e.exp=1; if(o.userData.blastRadius!=null) e.br=o.userData.blastRadius; if(o.userData.blastDmg!=null) e.bd=o.userData.blastDmg; if(o.userData.impactVel!=null) e.iv=o.userData.impactVel; }
+      /* build 1427: THE FUSE IS A PROPERTY OF BEING EXPLOSIVE, and the file was the only thing that
+       disagreed. Build 629 moved the Fuse slider OUT of On-fire and into the Explosive block — its own
+       entry says so: "the Fuse lives with Explosive now (NOT gated behind On-fire)" — and every runtime
+       reader agrees, all three asking `explosive && fireFuse > 0` with no mention of `onFire`. The
+       SERIALIZER was never moved with it: `ffuse` was written inside `if(onFire)` and read inside
+       `if(p.fire)`. So ticking Explosive and setting a Fuse, without also ticking On fire, authored a
+       barrel that catches light and gives you time to run — and saved one that detonates instantly.
+       Build 629’s headline feature, lost on the way to disk, since build 629.
+       Written only when set, so no level that never used it grows a key. */
+    if(o.userData.fireFuse!=null && +o.userData.fireFuse>0) e.ffuse=+o.userData.fireFuse;
+    if(o.userData.explosive){ e.exp=1; if(o.userData.blastRadius!=null) e.br=o.userData.blastRadius; if(o.userData.blastDmg!=null) e.bd=o.userData.blastDmg; if(o.userData.impactVel!=null) e.iv=o.userData.impactVel; }
     }
   }
   const m=propMaterialDesc(o); if(m) e.mat=m;
