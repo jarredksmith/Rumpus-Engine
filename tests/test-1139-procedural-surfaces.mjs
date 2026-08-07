@@ -201,7 +201,13 @@ const src = gameSource();
 // ---------------------------------------------------------------- 3. instanced props keep their material
 {
   const fn = extractFunction('buildInstancing');
-  assert(/const key = _instKey\(o\);/.test(fn), 'the batch key comes from one function');
+  // build 1430 appends a spatial CELL so a batch's volume is small enough for a frustum to reject
+  // (measured: the dominant batch spanned the whole map before it). The intent here is untouched — the
+  // MATERIAL identity still comes from the one function rather than being rebuilt inline — so that is
+  // what is asserted, instead of the exact text of the concatenation.
+  assert(/const key = _instKey\(o\)/.test(fn), 'the batch key comes from one function');
+  assert(!/\bkey\b[^\n]*userData\.(col|shine|op)/.test(fn),
+    '...and no material property is spelled out inline beside it');
   assert(!/new THREE\.MeshStandardMaterial\(\{ color:parseInt\(colStr,10\), roughness:\.65, metalness:\.35/.test(fn),
     'the batch material is NOT rebuilt from scratch at the engine defaults any more');
   assert(/const src0 = \(list\[0\]\.isMesh && list\[0\]\.material\) \? list\[0\]\.material : null;/.test(fn),

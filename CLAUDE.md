@@ -1712,6 +1712,67 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## A batch of duplicated props is never culled (build 1430)
+
+Asked from use: *"is there a way to lessen the CPU and graphics load when props are duplicated? Is there a
+way to avoid doubling the tris if it's a duplicate?"* The first half of the answer is that MEMORY is
+already free — three shares geometry and materials by reference and the engine caches models by url, so
+fifty copies of a barrel is one mesh and one set of textures in VRAM. Triangles are inherently per-copy:
+each copy is somewhere different on screen. What an engine avoids is submitting the ones you **cannot
+see** — and that is exactly what this one was failing to do.
+
+Measured, 24 duplicated boxes, control returning byte-exactly:
+
+```
+camera turned AWAY from them      draw calls    triangles
+un-batched                            18            96
+batched (every build before this)     26           528
+batched, 1430                         18            96
+```
+
+**Batching made them UN-CULLABLE**, which is build 1420's unexplained tripling. Two causes, both verified
+in the vendored r149 rather than reasoned about:
+
+- `InstancedMesh`'s constructor sets `this.frustumCulled = false` **itself**, and the class carries no
+  `boundingSphere` and no `computeBoundingSphere` at all. `Frustum.intersectsObject` reads
+  `object.geometry.boundingSphere` transformed by `object.matrixWorld` — which for a batch is ONE UNMOVED
+  COPY's bounds. Three is right to decline: there is nothing correct to test.
+- Batches group by shape and colour, so **every grey box in a level is one batch**. Measured on a
+  scattered 120-prop level, the dominant batch spanned **127.9 × 123.8 in a 140-wide arena** — the whole
+  map, whose sphere no frustum can ever reject.
+
+**Neither half works alone, and that is the whole design.** Bounds without the split would have been a
+measurable no-op — the outcome build 1420 predicted and correctly declined to ship. The split without
+bounds changes nothing at all.
+
+Three decisions:
+
+- **The bounds live on a per-batch geometry that SHARES the source's attribute objects.** Three's
+  `WebGLAttributes` is keyed on the attribute instance, so one buffer serves both and the wrapper costs no
+  GPU memory. `test-1430` asserts the sharing by reference identity rather than by size.
+- **Culling by hand with `.visible` was rejected**, and it was the simpler option. Sun shadows come from
+  off-screen geometry constantly, so hiding a batch outside the camera frustum would delete the shadow of
+  every caster behind the player. Giving three real bounds gets the camera pass and the shadow pass culled
+  **separately, against their own frustums**, for free.
+- **`INST_CELL = 24` m.** Smaller cells reject more and cost more batches. In the fixture the batch count
+  went 10 → 32 and the spans went from map-wide to ~20 × 22, while AWAY triangles fell 5.5×. For the
+  content this was asked about — a level reported at 30 million triangles across 102 draw calls — trading
+  draw calls for triangles is enormously the right direction.
+
+### The instrument failed three times, and every failure looked like a finding
+
+| # | it reported | why |
+|---|---|---|
+| 1 | batched and un-batched byte-identical, and a control that could not return | the stock level is **already deployed**, so the "un-batched" baseline was batched. `teardownInstancing()` has to run first |
+| 2 | the same scene reading 197 draw calls, then 104 | build 1093 leaves `shadowMap.autoUpdate` false and build 1270's dirty flag is a **counter**, not a boolean — a shadow pass was present in one render and absent in the other. Reading exactly like the teardown losing props |
+| 3 | it *still* would not return after settling six renders at each pose | build 1261 refits the sun's shadow volume when the camera moves past a deadband, and a refit dirties the map — so the FIRST visit to a pose carries a pass the second does not. Warming both poses before reading either is what closed it |
+
+All three produced plausible numbers. The only reason none of them shipped is that the control did not
+return, which is the single check this repo keeps being saved by.
+
+One pin moved (1139), and its intent is untouched — the batch key still comes from the one function; the
+assertion no longer quotes the exact text of a concatenation the cell now extends.
+
 ## The logic booth survives the file, and five invented field names (probe pass, after build 1429)
 
 The third and last of the booths the gauntlet is scoped around. `tools/probe/logic-booth-level.mjs` authors
