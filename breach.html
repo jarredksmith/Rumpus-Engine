@@ -34079,7 +34079,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1427 · 2026-08-06';
+const BUILD_VERSION = 'build 1428 · 2026-08-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35008,6 +35008,21 @@ function addStaticColliderFor(o){
     o.userData._kbody = rb;
     return;
   }
+  /* build 1428: DECORATION ONLY MEANS THE PHYSICS TOO. Build 1324 gave a prop `noCol` so a bush cannot
+     block a doorway — it empties the collider box list and neutralises the raycast — and this function
+     never heard about it. Measured: a noCol prop still got a fixed Rapier body, on both the primitive and
+     the model path, costing 5-12 ms of build for a 4,000-triangle decoration (`tools/probe/nocol-physics`).
+     Every branch below creates a REAL collider, so that body is solid to dynamic props: an intangible bush
+     that a crate rests on. Same shape as build 1194's recorded bug, where `hideprop` left a body behind and
+     made an invisible physics wall.
+
+     Placed HERE, not beside build 1250's `fx` guard, and that is deliberate: the vehicle and the
+     kinematic (xa / parented) branches above are for props that MOVE, and a drivable car or a moving
+     platform is not "decoration only" in any useful sense. Skipping their bodies would stop them driving
+     and carrying. Only the STATIC paths are skipped, which is exactly what the flag is for. A moving
+     noCol prop keeping its kinematic body is a stated limit, not an oversight; changing it needs its own
+     evidence. */
+  if(o.userData && o.userData.noCol) return;
   if(o.userData && isShapePrimitive(o.userData.src)){
     o.updateMatrixWorld(true);
     const info = propShapeInfo(o), q = o.quaternion;

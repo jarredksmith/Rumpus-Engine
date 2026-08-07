@@ -46,6 +46,7 @@ once by accident and removed in build 1293's follow-up.
 | `gauntlet-scale.mjs` | what a 959-prop level costs in draw calls and triangles, batched and culled |
 | `range-booth-level.mjs` | the gauntlet's range booth authored, SAVED, reloaded and then shot — the round trip no other probe covers |
 | `physics-booth-level.mjs` | the physics booth through the same round trip — found build 1427's lost fuse |
+| `nocol-physics.mjs` | build 1428: does a decoration-only prop still get a Rapier body (it did) |
 | `heavy-model.mjs` | what a half-million-triangle prop costs: collider derivation and Rapier trimesh build, at three counts |
 | `geo-census.mjs` | build 1425: Level Check names the heaviest model, in the RENDERED panel |
 | `perf-idle.mjs` | build 1426: work inside the frame callback vs waiting outside it |
