@@ -49,6 +49,7 @@ once by accident and removed in build 1293's follow-up.
 | `stage-ktx2.mjs` | not a probe — stages a LOCAL KTX2 loader + Basis transcoder so KTX2 can be measured headless |
 | `ktx2-barrel.mjs` | what material the engine actually builds from a reported KTX2 model |
 | `ktx2-encoding.mjs` | the A/B that found build 1429: data maps arriving sRGB-decoded |
+| `ai-booth-level.mjs` | the AI booth authored, SAVED, reloaded and then played — 12 marker fields, mods, manifest |
 | `nocol-physics.mjs` | build 1428: does a decoration-only prop still get a Rapier body (it did) |
 | `heavy-model.mjs` | what a half-million-triangle prop costs: collider derivation and Rapier trimesh build, at three counts |
 | `geo-census.mjs` | build 1425: Level Check names the heaviest model, in the RENDERED panel |

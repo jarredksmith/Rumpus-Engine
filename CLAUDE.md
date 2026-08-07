@@ -1712,6 +1712,35 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The AI booth survives the file (probe pass, after build 1429)
+
+`ai-booth.mjs` drives the AI in memory and says nothing about whether any of it survives a save — the gap
+that produced builds 1398, 1400, 1401, 1406 and 1427, every one a serializer/loader asymmetry that an
+in-memory test passes straight through. A spawn marker carries **twelve fields**, three of them added in
+the last two hundred builds (1087's height, 1226's friendly, 1355's faction), so it is exactly the shape
+that goes wrong.
+
+`tools/probe/ai-booth-level.mjs` authors six markers covering every field, plus build 1191's per-type
+tuning and 1179's wave manifest, then `serializeLevel()` -> `restoreLevel()` -> **spawns from the restored
+markers and drives 240 real frames**. **34/34, and no engine change was needed.**
+
+```
+serialize     6 markers · fac/fr/y all ABSENT at their defaults (pre-1226 levels stay byte-identical)
+reload        all 8 types survive · mode, radius, detect, facing, 3-point route in order, ping-pong,
+              per-marker wave, friendly, faction 2, height 5.5 · enemyMods and the manifest read back
+stability     byte-identical across three save cycles
+PLAY          the reloaded detect radius and mode reach the LIVE enemy, a reloaded friendly is friendly,
+              a reloaded faction lands, a friendly does not hold the wave open, and the patrol WALKS
+              its reloaded route (4.4 m in 4 s with the player 120 m away, so it is patrol not pursuit)
+```
+
+**Both of its failures were the fixture, and both are build 1427's lesson repeating.** The enemy-mod speed
+key is `spd`; I wrote `speed`, the sanitizer correctly dropped it, and that reads exactly like the loader
+losing it. And I hand-built the spawn descriptor with `{radius, detect, loop}` when the real keys are
+`{patrolR, detectR, routeLoop}` — so the live enemy read `undefined` for its sight range. The fix for the
+second is the better rule: **call the engine's own `descFromMarker(g)`** rather than reconstructing what it
+already builds, which tests the real path instead of a guess about it.
+
 ## An imported model's data maps arrived sRGB-decoded (build 1429)
 
 Reported with the file: a KTX2 barrel renders **shattered, faceted and blue-green** in Rumpus while every
