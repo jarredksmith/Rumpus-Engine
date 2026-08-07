@@ -1712,6 +1712,74 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The frame meter was presenting a residual as a cost (build 1426)
+
+`other` was `totMs - render - phys - net - mini`, and `totMs` is the wall clock from one rAF to the next —
+which at a capped frame rate is **pinned by vsync however little work is done**. Reported from play on a
+perfectly healthy frame after build 1424's optimization landed:
+
+```
+FPS 61 (16.4 ms)   render 0.6   phys 0.0   net 0.0   minimap 0.1   other 15.7 ms
+```
+
+15.4 of that 15.7 was the browser sitting idle waiting for the next vblank. **The engine was using 4% of
+its frame budget and the meter read like it was drowning.**
+
+**This is not a cosmetic complaint: I read the same counter wrong, in the same session, about the same
+creator's level.** Their first screenshots showed `other 13.0` and I concluded there were 13 ms of hidden
+cost in the frame. There were not — a good part of it was idle too, and the real signal was `tris 29993k`
+sitting beside `rung 3 fxOff 66% of native`. A meter that misleads the person reading it hardest is worse
+than no meter, and this one had exactly one reader who cared.
+
+### The split is at the only boundary that means anything
+
+Time **inside our own frame callback**, and time **outside it**. `other` is now un-profiled work we really
+did; `idle` is everything else.
+
+The work figure is stamped at the top of `loop()` and closed by a **microtask**, which runs the moment the
+JS stack empties — i.e. exactly when `loop()` returns. That brackets every path out of the loop *including
+its early returns*, with no end-of-function hook to keep in step and no refactor. Gated on `perfOn`, so a
+normal session queues nothing.
+
+**`idle` is NOT automatically good, and the label says which it is.** At the cap it is the vsync wait.
+Below the cap it is the browser blocking on a full GPU queue at presentation — WebGL's `render()` returns
+immediately, so back-pressure lands here rather than in the render figure. **A slow frame that is mostly
+idle is GPU-bound, which is the single most useful thing this meter can say and it could not say it.** The
+label carries a question mark because it is a heuristic read of a residual, which is the mistake this build
+exists to fix.
+
+### Measured
+
+The vsync half cannot be measured headless — SwiftShader runs this scene at 2-4 fps with no frame cap, so
+there is no slack for `idle` to be holding. It is arithmetic and is executed in `test-1426` instead; what
+the probe CAN prove is the load-bearing claim, that work lands in `other` and not in `idle`:
+
+```
+                    other      idle     (SwiftShader, GPU-bound throughout)
+no burn             14.9      399.3
++60 ms in-callback  61.1      212.6     <- the burn lands in `other`, exactly
+back to no burn      1.1      205.2     <- control returns
+```
+
+And the `GPU-bound?` label fires correctly on this renderer for real: 2 fps, 399 ms of a 420 ms frame spent
+outside the callback. The heuristic's first live case is a true positive.
+
+**Two instrument failures, both mine, and the first is the funnier one.** The probe's initial burn ran
+inside the PROBE's own `requestAnimationFrame` await — outside the measured callback entirely — so it
+measured pure noise and I nearly filed the feature as broken. And it asserted "the frame interval barely
+moves while `other` grows", which is only true when vsync HAD slack; here every burned millisecond
+genuinely lengthens the frame, so the assertion was measuring the absence of a frame cap. Both are now
+stated in the probe as things this environment cannot test, rather than faked.
+
+**And a line-count regex in my own test**, slicing the split arithmetic by counting `\n` — the line form of
+the character-budget trap this file records under 1149 and 1341, which goes stale the moment a comment
+lands inside the block. It slices between named anchors, both asserted.
+
+**Rollback #24** landed mid-build (tree reverted to 1382). `git log` first, `git fetch` + `reset --hard
+FETCH_HEAD`, re-run the scripted edit: free, for the twenty-fourth time.
+
+Zero pins moved.
+
 ## The third census (build 1425)
 
 Build 1257 made the LIGHT budget visible because it is *"the number a creator most needs and could least
