@@ -1712,6 +1712,36 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The movement booth survives the file — the last of the four (probe pass, after build 1430)
+
+`tools/probe/movement-booth-level.mjs` completes the set the gauntlet is scoped around. Its state is the
+ZONE serializers, which are the most hand-kept structure left in the file: eight zone types, each written
+out as an explicit field list in `serializeLevel` and read by its own migrator — the shape build 1326
+found THREE disagreeing copies of, and the shape builds 1398/1400/1401/1406/1427 each lost a field
+through. Water alone carries ten fields, two of them a current.
+
+Every field is authored at a NON-DEFAULT value, because a field that happens to equal its default cannot
+tell a working loader from a missing one. **22/22, no engine change needed.**
+
+```
+serialize/reload   pad power 31 · ladder face 1.25 / h 7 / r 1.4 · water flowDir 1.1, flowSpd 2.4,
+                   wave 1.7, op 0.55, colour · all five effect kinds with amt 17 and who 'both' ·
+                   death band 5 · walk/run/jump/grav/crouch/jumpCut/launchPower/eyeHeight
+stability          byte-stable across three save cycles
+WALKED             pad: vy 22.33, launched to y 10.02   ·   current: carried 4.62 m in 1 s
+                   death zone: hp 100 -> dead
+CONTROL, clear of every zone:  drift 0.00 · hp 100 · vy 0.00
+```
+
+That last line is the point: without it, "the player moved" proves nothing about whether a ZONE moved
+them. Three positives and one negative from the same rig in the same run.
+
+**All four booths are now covered end to end** — range (1403/1423-era), physics (1427), AI and logic
+(after 1429), movement (here). Between them they cover the prop entry's 51 keys, twelve spawn-marker
+fields, the logic graph's pass-through params, four HUD widget kinds, five zone types and the world's
+movement block. Every one passed, which is the useful result: builds 1390-1430 all left their state in
+the file correctly, and it would not have been obvious which of them had not.
+
 ## A batch of duplicated props is never culled (build 1430)
 
 Asked from use: *"is there a way to lessen the CPU and graphics load when props are duplicated? Is there a
