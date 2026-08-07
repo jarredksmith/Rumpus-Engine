@@ -334,6 +334,16 @@ Tiles for every imported model in the level, most-used first, with live thumbnai
 | **Edit model parts** (996/998/999; direct http(s) .glb only) | Per part (first 40): click the name to flash it, recolor, ✕ delete / ↩ restore. **+ Box / + Cylinder / + Sphere** kitbash primitives onto the model (offset, size, color). **Save as new model** bakes edits into a new hosted .glb; **Reset** clears staged edits. |
 | **Model credits** | Collapsible list of every attribution to show when you publish. |
 
+**Texture compression (KTX2/Basis) — nothing to configure, and one fixed bug.** Rumpus loads KTX2 models,
+and KTX2 is the right choice: a 1024² texture costs ~5.3 MB of GPU memory as PNG/webp and a fraction of that
+as KTX2, which is what the Level Check's texture census counts. Up to build 1428, however, an imported
+model's **normal, roughness and metalness** maps were decoded as if they were colour whenever the KTX2 file
+declared them sRGB — which most encoders do for every image they write. Those maps are not colour; they are
+numbers the shader reads directly, and an sRGB decode turns a flat surface's 0.5 into 0.21, which renders as
+shattered, faceted, blue-green shading. Measured on a reported model: 98.4% of its pixels were wrong.
+**Build 1429 fixes this in the engine** — no re-export needed, no setting to change, and correctly-authored
+models are untouched. If you are on an older build, exporting textures as webp or png avoids it.
+
 ### Animation
 | Control | What it does |
 |---|---|

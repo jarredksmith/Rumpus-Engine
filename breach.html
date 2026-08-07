@@ -20131,6 +20131,14 @@ function releaseModelLights(obj){
    on _glbPending, so a burst that starts later is still coalesced. */
 let _physRebuildT = 0;
 const PHYS_DEBOUNCE_MS = 350, PHYS_DEBOUNCE_FAST_MS = 60, PHYS_WAIT_MAX = 20;   // 20 x 300 ms = 6 s, then go ahead regardless
+// build 1429: the map slots that carry DATA, never colour. A normal map's 0.5-centred XY, a roughness
+// value and a metalness mask are numbers the shader reads directly — run them through an sRGB->linear
+// decode and 0.5 becomes 0.21, which skews every normal on a flat face into a hard facet. Named once,
+// here, because the repair and any future consumer must not keep two lists (builds 1320/1326).
+// Deliberately NOT here: map, emissiveMap, lightMap, sheenColorMap, specularColorMap — those ARE colour.
+const DATA_MAP_SLOTS = ['normalMap','roughnessMap','metalnessMap','aoMap','alphaMap','bumpMap',
+  'displacementMap','clearcoatMap','clearcoatRoughnessMap','clearcoatNormalMap','iridescenceMap',
+  'iridescenceThicknessMap','sheenRoughnessMap','specularIntensityMap','transmissionMap','thicknessMap'];
 function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   obj.position.set(t[0], t[1], t[2]);   // provisional; the terrain lift is applied below once the footprint is known
   obj.rotation.set(t[3], t[4], t[5]);
@@ -20164,6 +20172,19 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
         // build 1095: sharpen every imported texture at grazing angles (floors especially)
         if(typeof MAX_ANISO !== 'undefined' && MAX_ANISO > 1)
           for(const k of ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap']) if(m[k]) m[k].anisotropy = MAX_ANISO;
+        // build 1429: force every DATA map back to linear. GLTFLoader's assignTexture only ever ASSIGNS
+        // sRGB — `if(encoding !== undefined) texture.encoding = encoding;` — and it passes an encoding for
+        // `map` and `emissiveMap` alone, so for every other slot whatever the FILE declared survives.
+        // KTX2Loader reads that from the container's own DFD transfer function, and the KTX2 encoders
+        // creators actually use mark all four images sRGB. Measured on a reported barrel: 98.4% of the
+        // model's pixels move when this is corrected, mean delta 35.8 code values, against a control of
+        // exactly 0. That is the "shattered, faceted, blue-green" report, and no re-export fixes it —
+        // the reporter's own control changed the compression and got an identical artifact.
+        // A correctly-authored map is already linear, so this is a no-op on everything else.
+        for(const k of DATA_MAP_SLOTS){ const t = m[k]; if(!t) continue;
+          if('colorSpace' in t){ if(t.colorSpace !== THREE.NoColorSpace){ t.colorSpace = THREE.NoColorSpace; t.needsUpdate = true; m.needsUpdate = true; } }
+          else if(t.encoding !== 3000){ t.encoding = 3000; t.needsUpdate = true; m.needsUpdate = true; }   // 3000 = LinearEncoding
+        }
         // build 1095: a generated level can mark its bake as a full RGB radiance lightmap (glTF
         // material extras.rumpusLightmap). Move it from aoMap (darkens ambient only) to lightMap
         // (ADDS colored indirect light: sky-blue shade, warm sun bounce) — the AAA split: baked GI
@@ -34079,7 +34100,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1428 · 2026-08-06';
+const BUILD_VERSION = 'build 1429 · 2026-08-07';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

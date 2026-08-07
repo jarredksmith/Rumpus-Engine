@@ -46,6 +46,9 @@ once by accident and removed in build 1293's follow-up.
 | `gauntlet-scale.mjs` | what a 959-prop level costs in draw calls and triangles, batched and culled |
 | `range-booth-level.mjs` | the gauntlet's range booth authored, SAVED, reloaded and then shot — the round trip no other probe covers |
 | `physics-booth-level.mjs` | the physics booth through the same round trip — found build 1427's lost fuse |
+| `stage-ktx2.mjs` | not a probe — stages a LOCAL KTX2 loader + Basis transcoder so KTX2 can be measured headless |
+| `ktx2-barrel.mjs` | what material the engine actually builds from a reported KTX2 model |
+| `ktx2-encoding.mjs` | the A/B that found build 1429: data maps arriving sRGB-decoded |
 | `nocol-physics.mjs` | build 1428: does a decoration-only prop still get a Rapier body (it did) |
 | `heavy-model.mjs` | what a half-million-triangle prop costs: collider derivation and Rapier trimesh build, at three counts |
 | `geo-census.mjs` | build 1425: Level Check names the heaviest model, in the RENDERED panel |
@@ -134,6 +137,20 @@ reported the level format non-idempotent. It is, once: `aim.state.ry` differs fr
 one ULP at boot and the loader makes the global pose adopt the per-weapon one. Cycles 1 onward are
 byte-identical. A value that moves a LITTLE EVERY TIME is a level that degrades on every autosave — that is
 build 1420's subject and the thing to test for; a one-time normalisation is not it.
+
+**"Failed to fetch dynamically imported module" names the module you asked for, not the one that is
+missing.** `stage-ktx2.mjs` copied three files by a hand-written list and missed `libs/zstddec.module.js`, a
+transitive import two levels down. Chromium reported the failure against `KTX2Loader.js` — the url I had
+just rewritten — so it read exactly like the rewrite being wrong, and the loader silently stayed
+unavailable for a whole measurement cycle. The staging FOLLOWS the import graph now. A hand-kept list of
+anything in this repo is a defect waiting (builds 1320, 1326), including in the instruments.
+
+**Zeroing a `worldCfg` field is not zeroing the effect.** `applyWorldCfg()` DERIVES the module vars the
+render path reads (`_postMotion`, `_postGrain`), so a probe that sets `worldCfg.postGrain = 0` and renders
+has changed nothing. The A/B for build 1429 first measured a control that moved 59% of the frame for this
+reason, compounded by build 1238's motion blur, which reprojects against the camera's PREVIOUS rotation and
+therefore makes two renders of one pose legitimately differ. Zero them, CALL `applyWorldCfg()`, and take a
+warm-up shot; the control then returns exactly 0 and the measurement is worth reading.
 
 ## Measuring in the render equation's own space
 
