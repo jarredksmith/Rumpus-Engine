@@ -334,6 +334,27 @@ Tiles for every imported model in the level, most-used first, with live thumbnai
 | **Edit model parts** (996/998/999; direct http(s) .glb only) | Per part (first 40): click the name to flash it, recolor, ✕ delete / ↩ restore. **+ Box / + Cylinder / + Sphere** kitbash primitives onto the model (offset, size, color). **Save as new model** bakes edits into a new hosted .glb; **Reset** clears staged edits. |
 | **Model credits** | Collapsible list of every attribution to show when you publish. |
 
+**Level of detail — what happens automatically.** Five things get cheaper with distance, none of which you
+configure: **animation** (a character's skeleton updates every frame within ~15 m, every other frame to
+~40 m, every fourth beyond — time is accumulated so nothing plays slow); **geometry** (build 1431 — an
+imported model over 4,000 triangles draws a simplified mesh once it covers fewer than ~55 screen pixels and
+is past 40 m; measured at 62.3% fewer triangles for identical draw calls, and a shot at that range still
+hits the full mesh, not the simplified one); **shadows** (a prop stops casting well before it stops
+drawing); **frustum culling** (anything off screen, including batched duplicates as of build 1430); and the
+**adaptive quality ladder** under load. The one thing that is opt-in is **Cull below (px)**, which removes
+small props entirely — off by default.
+
+**Duplicating a prop — what it costs, and what it does not.** Copies **share** their geometry and textures:
+fifty barrels is one mesh and one set of textures in GPU memory, so duplication is close to free in
+memory. **Triangles are per-copy** and always will be — each copy is somewhere different on screen, so
+the GPU transforms and shades it separately. What the engine can do is skip the copies you cannot see,
+and from **build 1430** it does: at deploy, 3+ eligible copies are batched into one draw call **per 24 m
+cell**, and each batch carries real bounds so it is frustum-culled like any other object (including in
+the shadow pass). Before 1430 a batch was never culled at all — measured on 24 duplicated props with the
+camera turned away, 528 triangles became 96. Watch the triangle count on the perf HUD (backtick key) and
+the Level Check's geometry census; if a level is heavy, the levers are **fewer triangles per model**
+(the optimizer's simplify budget is 40,000) and **Cull below (px)** in World → Camera & view.
+
 **Texture compression (KTX2/Basis) — nothing to configure, and one fixed bug.** Rumpus loads KTX2 models,
 and KTX2 is the right choice: a 1024² texture costs ~5.3 MB of GPU memory as PNG/webp and a fraction of that
 as KTX2, which is what the Level Check's texture census counts. Up to build 1428, however, an imported

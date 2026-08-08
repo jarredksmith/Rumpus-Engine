@@ -63,6 +63,11 @@ if (process.env.PROBE_PROF) {
 // exactly as they ship and the probe behaves as it always did.
 if (fs.existsSync(path.join(out, 'jsm', 'loaders', 'KTX2Loader.js')))
   sub("'https://esm.sh/three@0.149.0/examples/jsm/loaders/KTX2Loader.js'", "'/jsm/loaders/KTX2Loader.js'", 'ktx2 loader url');
+// build 1431's simplifier, same reason as the KTX2 pair: it is a CDN import the headless browser cannot
+// reach, so a probe of geometric LOD measures nothing at all without it.
+if (fs.existsSync(path.join(out, 'meshopt_simplifier.module.js')))
+  sub("'https://cdn.jsdelivr.net/npm/meshoptimizer@0.20.0/meshopt_simplifier.module.js'",
+      "'/meshopt_simplifier.module.js'", 'meshopt simplifier url');
 if (fs.existsSync(path.join(out, 'basis', 'basis_transcoder.wasm')))
   sub("'https://cdn.jsdelivr.net/npm/three@0.149.0/examples/jsm/libs/basis/'", "'/basis/'", 'basis transcoder path');
 

@@ -1712,6 +1712,266 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## What 1430 and 1431 are worth on a DENSE level, and the trade batching still makes (probe pass)
+
+Asked from use: *"should these new builds make the game run smoother with a lot of props?"* Everything
+measured for 1430 and 1431 was a small fixture aimed at isolating one mechanism. `dense-level-cost.mjs`
+asks the creator's question instead — 584 props, eight shapes at varied scales and colours, camera at eye
+height in the middle of it — and asks the downside too, since 1430 splits batches per cell and could end
+up costing draw calls.
+
+```
+                                 draw calls   triangles
+every prop its own object            262        35,228
+batched, culling OFF (pre-1430)      246        66,248
+batched, culling ON (shipped)        216        45,368
+```
+Control returns byte-exactly. **1430 is worth 31.5% of the triangles and 12.2% of the draw calls** on this
+level, and the cell split did NOT cost draw calls — it saved them, because the batches it fragments are
+still fewer calls than the props they replace.
+
+**The finding worth recording is the third comparison, which nobody had made.** Against the UN-BATCHED
+scene, batching still costs **+28.8% triangles** for **−17.6% draw calls**. A batch draws every instance in
+its cell when any part of that cell is visible, where individual props are rejected one at a time. Build
+1430 cut that penalty from +88% to +28.8%; it did not remove it.
+
+So **batching is a draw-call optimization that costs triangles**, and it is only favourable when a level is
+draw-call bound. That is worth knowing because the report that started this stretch — 30 million triangles
+across 102 draw calls — is the opposite regime, and the natural follow-up is either a smaller `INST_CELL`
+or per-instance culling within a batch.
+
+Only 216 of 584 props batched at all; the rest are singletons in their cell and stay per-object, which is
+the healthy outcome rather than a miss — a lone prop gets exact per-object culling, which is strictly
+better than being in a batch.
+
+**Frame TIME is deliberately absent.** SwiftShader's noise floor exceeds every effect here (build 1414), so
+draw calls and triangles are the only trustworthy instruments; a creator's own machine is the only place
+the wall clock means anything, which is what the perf HUD's `other` / `idle` split (1426) is for.
+
+## Geometric LOD — the fifth kind, and the one a heavy import hits (build 1431)
+
+Asked from use: *"What is LOD? Do we do that?"* Four kinds were already here and worth naming, because the
+answer is not "no":
+
+| | |
+|---|---|
+| **animation LOD** | a mixer updates every frame inside ~15 m, every other to ~40 m, every fourth beyond — accumulating the skipped time so motion stays time-correct, and tightening under adaptive pressure |
+| **shadow LOD** (1270) | a prop stops CASTING at 4× the size where it stops drawing — a cheaper version before it disappears |
+| **screen-size culling** (1267/1273/1274) | `lodPx`, off by default since a report that could not be reproduced |
+| **the quality ladder** (1141/1342/1350) | motion blur → MSAA+SSAO → resolution → the sun's shadow map |
+
+The fifth was missing, and it is the one a heavy import actually hits: **a 497,912-triangle model submitted
+all 497,912 triangles whether it filled the screen or covered forty pixels.** Zero uses of `THREE.LOD`; the
+only simplification anywhere was the optimizer's one-shot import pass. The build-1253 audit named
+"LOD/occlusion" as one of six ceilings and it had not moved.
+
+**What makes this small is `_autoSimplifyChar`'s own discovery, reused.** meshopt simplifies by rewriting
+the **INDEX** and leaving the vertex buffer alone — so a level of detail is one extra index buffer, not a
+second mesh. The geometry that carries it SHARES the source's attribute objects (build 1430's trick, where
+three's `WebGLAttributes` is keyed on the attribute instance), so a whole level costs one small buffer and
+nothing else. `test-1431` asserts that by reference identity, because a `clone()` here would silently
+double every heavy mesh in GPU memory and measure as a win anyway.
+
+Measured, one heavy mesh, control returning byte-exactly:
+
+```
+                       draw calls   triangles
+far, no levelling          87        63,800
+far, levelled              87        24,044     <- 62.3%, identical draw calls
+up close                   the full mesh, and the near pose returns EXACTLY
+```
+
+Four decisions:
+
+- **It has its OWN threshold rather than riding `lodPx`.** Build 1273 turned culling off by default after
+  an unreproducible report, on the grounds that a perf feature which DELETES a creator's prop does not get
+  to be on by default. This one never deletes anything — same prop, same size, same place, a slightly
+  smoother silhouette — so that argument does not transfer, and a feature nobody switches on helps nobody.
+- **Raycasting stays on the FULL geometry.** The player's shots raycast real triangles (build 1159), so a
+  swapped-down mesh would quietly move where a distant bullet lands — build 1263's rule, which this build
+  would otherwise have broken in exactly the way that rule exists to catch. And it **chains** build 1097's
+  BVH raycast rather than replacing it, which is build 1286's lesson one layer along.
+- **Bounds are COPIED, never recomputed.** Simplification cannot grow a mesh, and a frustum that rejected
+  the full level must reject the simplified one identically or the prop pops at the culling boundary.
+- **Built at DEPLOY**, beside the pools builds 1153/1155/1257 seat there — the one moment in a session when
+  a hitch is expected and free. Doing it at load would stall the first frame of every level.
+
+Skinned meshes are excluded (their bones move the vertices), primitives are excluded (already trivial), and
+anything under 4,000 triangles is excluded because the swap costs more than it saves. No simplifier —
+offline, or the CDN unreachable — means full geometry everywhere, silently.
+
+**Still open, and named rather than implied:** an INSTANCED batch picks no level, because build 1430's
+batches carry their own wrapper geometry. A duplicated decorative prop at 3+ copies therefore still draws
+at full detail however far away it is. That is the natural follow-up and it composes — a batch already has
+a bounding volume and a screen size.
+
+### The probe could not measure this at all until the simplifier was staged
+
+meshopt arrives by dynamic `import()` from a CDN the headless browser cannot reach, so the first run
+reported *"no level built"* — the same wall build 1429 hit with KTX2, and the same fix: fetch it in Node
+(which CAN reach it) and have `mkprobe` rewrite the url. **Two of the last three builds have been
+unmeasurable until their dependency was staged locally**; anything reached by `import()` should be assumed
+unreachable in a probe until proven otherwise.
+
+And the shadow counter bit a third time. Six renders per pose was enough for build 1430 and not for this
+one — a geometry swap dirties the map too, so the first read carried a shadow pass and the near pose read
+125,788 triangles then 63,028 for the identical scene. Twenty renders settles it and the control returns
+exactly. **The number to trust is the one whose control came back.**
+
+## The movement booth survives the file — the last of the four (probe pass, after build 1430)
+
+`tools/probe/movement-booth-level.mjs` completes the set the gauntlet is scoped around. Its state is the
+ZONE serializers, which are the most hand-kept structure left in the file: eight zone types, each written
+out as an explicit field list in `serializeLevel` and read by its own migrator — the shape build 1326
+found THREE disagreeing copies of, and the shape builds 1398/1400/1401/1406/1427 each lost a field
+through. Water alone carries ten fields, two of them a current.
+
+Every field is authored at a NON-DEFAULT value, because a field that happens to equal its default cannot
+tell a working loader from a missing one. **22/22, no engine change needed.**
+
+```
+serialize/reload   pad power 31 · ladder face 1.25 / h 7 / r 1.4 · water flowDir 1.1, flowSpd 2.4,
+                   wave 1.7, op 0.55, colour · all five effect kinds with amt 17 and who 'both' ·
+                   death band 5 · walk/run/jump/grav/crouch/jumpCut/launchPower/eyeHeight
+stability          byte-stable across three save cycles
+WALKED             pad: vy 22.33, launched to y 10.02   ·   current: carried 4.62 m in 1 s
+                   death zone: hp 100 -> dead
+CONTROL, clear of every zone:  drift 0.00 · hp 100 · vy 0.00
+```
+
+That last line is the point: without it, "the player moved" proves nothing about whether a ZONE moved
+them. Three positives and one negative from the same rig in the same run.
+
+**All four booths are now covered end to end** — range (1403/1423-era), physics (1427), AI and logic
+(after 1429), movement (here). Between them they cover the prop entry's 51 keys, twelve spawn-marker
+fields, the logic graph's pass-through params, four HUD widget kinds, five zone types and the world's
+movement block. Every one passed, which is the useful result: builds 1390-1430 all left their state in
+the file correctly, and it would not have been obvious which of them had not.
+
+## A batch of duplicated props is never culled (build 1430)
+
+Asked from use: *"is there a way to lessen the CPU and graphics load when props are duplicated? Is there a
+way to avoid doubling the tris if it's a duplicate?"* The first half of the answer is that MEMORY is
+already free — three shares geometry and materials by reference and the engine caches models by url, so
+fifty copies of a barrel is one mesh and one set of textures in VRAM. Triangles are inherently per-copy:
+each copy is somewhere different on screen. What an engine avoids is submitting the ones you **cannot
+see** — and that is exactly what this one was failing to do.
+
+Measured, 24 duplicated boxes, control returning byte-exactly:
+
+```
+camera turned AWAY from them      draw calls    triangles
+un-batched                            18            96
+batched (every build before this)     26           528
+batched, 1430                         18            96
+```
+
+**Batching made them UN-CULLABLE**, which is build 1420's unexplained tripling. Two causes, both verified
+in the vendored r149 rather than reasoned about:
+
+- `InstancedMesh`'s constructor sets `this.frustumCulled = false` **itself**, and the class carries no
+  `boundingSphere` and no `computeBoundingSphere` at all. `Frustum.intersectsObject` reads
+  `object.geometry.boundingSphere` transformed by `object.matrixWorld` — which for a batch is ONE UNMOVED
+  COPY's bounds. Three is right to decline: there is nothing correct to test.
+- Batches group by shape and colour, so **every grey box in a level is one batch**. Measured on a
+  scattered 120-prop level, the dominant batch spanned **127.9 × 123.8 in a 140-wide arena** — the whole
+  map, whose sphere no frustum can ever reject.
+
+**Neither half works alone, and that is the whole design.** Bounds without the split would have been a
+measurable no-op — the outcome build 1420 predicted and correctly declined to ship. The split without
+bounds changes nothing at all.
+
+Three decisions:
+
+- **The bounds live on a per-batch geometry that SHARES the source's attribute objects.** Three's
+  `WebGLAttributes` is keyed on the attribute instance, so one buffer serves both and the wrapper costs no
+  GPU memory. `test-1430` asserts the sharing by reference identity rather than by size.
+- **Culling by hand with `.visible` was rejected**, and it was the simpler option. Sun shadows come from
+  off-screen geometry constantly, so hiding a batch outside the camera frustum would delete the shadow of
+  every caster behind the player. Giving three real bounds gets the camera pass and the shadow pass culled
+  **separately, against their own frustums**, for free.
+- **`INST_CELL = 24` m.** Smaller cells reject more and cost more batches. In the fixture the batch count
+  went 10 → 32 and the spans went from map-wide to ~20 × 22, while AWAY triangles fell 5.5×. For the
+  content this was asked about — a level reported at 30 million triangles across 102 draw calls — trading
+  draw calls for triangles is enormously the right direction.
+
+### The instrument failed three times, and every failure looked like a finding
+
+| # | it reported | why |
+|---|---|---|
+| 1 | batched and un-batched byte-identical, and a control that could not return | the stock level is **already deployed**, so the "un-batched" baseline was batched. `teardownInstancing()` has to run first |
+| 2 | the same scene reading 197 draw calls, then 104 | build 1093 leaves `shadowMap.autoUpdate` false and build 1270's dirty flag is a **counter**, not a boolean — a shadow pass was present in one render and absent in the other. Reading exactly like the teardown losing props |
+| 3 | it *still* would not return after settling six renders at each pose | build 1261 refits the sun's shadow volume when the camera moves past a deadband, and a refit dirties the map — so the FIRST visit to a pose carries a pass the second does not. Warming both poses before reading either is what closed it |
+
+All three produced plausible numbers. The only reason none of them shipped is that the control did not
+return, which is the single check this repo keeps being saved by.
+
+One pin moved (1139), and its intent is untouched — the batch key still comes from the one function; the
+assertion no longer quotes the exact text of a concatenation the cell now extends.
+
+## The logic booth survives the file, and five invented field names (probe pass, after build 1429)
+
+The third and last of the booths the gauntlet is scoped around. `tools/probe/logic-booth-level.mjs` authors
+a nine-node graph (event, setvar, math, read, branch, do, two list ops, an expression), the four
+persistence flags, four HUD widgets covering all four kinds, a lever with a signal, a locked door and a
+build-1276 trigger watching for a tagged PROP — then serializes, reloads through the real loader, and
+**fires the event so the reloaded graph actually runs. 31/31, no engine change needed.**
+
+That matters because a logic NODE's params travel by a different road from a signal's: `_sanitizeLogic`
+passes `p` through WHOLE, where build 1406 found a hand-kept short-key table that had silently dropped
+fourteen of seventeen signal verbs' parameters. The permissive road turns out to be intact.
+
+### Five invented field names, in two probes, in one afternoon
+
+Every one of them produced a check that failed exactly like an engine bug:
+
+| I wrote | the engine's own name |
+|---|---|
+| `enemyMods.runner.speed` | `spd` |
+| `spawnEnemy({radius, detect, loop})` | `{patrolR, detectR, routeLoop}` — and `descFromMarker(g)` builds it for you |
+| `setvar {mode, amt}` / `branch {cmp}` / `list {dst, min, max}` | `{value}` / `{op}` / `{var, value}` |
+| `math {op:'*'}` | `op:'\u00d7'` — the multiplication SIGN. An ASCII star falls through to modulo, so the node RUNS and computes the wrong number |
+| `userData.lock` | `userData.lockId`, serialized as `lk` |
+
+Build 1427 already recorded this class and it kept happening, so the rule is now sharper than "read the
+serializer": **read the DISPATCH for the thing you are about to author, and prefer calling the engine's own
+constructor over rebuilding its argument object.** `descFromMarker` existed the whole time. And the
+`math` row is the worst shape of all — a wrong key that throws is cheap; a wrong key that silently selects
+a different operator is a fixture quietly measuring something else.
+
+**And when a scripted edit aborts on an anchor, re-run the WHOLE script.** These edits write atomically at
+the end, so an assertion failure on the fourth item means the first three were never written either — I
+re-applied only the failing one, re-ran, and got the identical failure back for a cycle.
+
+## The AI booth survives the file (probe pass, after build 1429)
+
+`ai-booth.mjs` drives the AI in memory and says nothing about whether any of it survives a save — the gap
+that produced builds 1398, 1400, 1401, 1406 and 1427, every one a serializer/loader asymmetry that an
+in-memory test passes straight through. A spawn marker carries **twelve fields**, three of them added in
+the last two hundred builds (1087's height, 1226's friendly, 1355's faction), so it is exactly the shape
+that goes wrong.
+
+`tools/probe/ai-booth-level.mjs` authors six markers covering every field, plus build 1191's per-type
+tuning and 1179's wave manifest, then `serializeLevel()` -> `restoreLevel()` -> **spawns from the restored
+markers and drives 240 real frames**. **34/34, and no engine change was needed.**
+
+```
+serialize     6 markers · fac/fr/y all ABSENT at their defaults (pre-1226 levels stay byte-identical)
+reload        all 8 types survive · mode, radius, detect, facing, 3-point route in order, ping-pong,
+              per-marker wave, friendly, faction 2, height 5.5 · enemyMods and the manifest read back
+stability     byte-identical across three save cycles
+PLAY          the reloaded detect radius and mode reach the LIVE enemy, a reloaded friendly is friendly,
+              a reloaded faction lands, a friendly does not hold the wave open, and the patrol WALKS
+              its reloaded route (4.4 m in 4 s with the player 120 m away, so it is patrol not pursuit)
+```
+
+**Both of its failures were the fixture, and both are build 1427's lesson repeating.** The enemy-mod speed
+key is `spd`; I wrote `speed`, the sanitizer correctly dropped it, and that reads exactly like the loader
+losing it. And I hand-built the spawn descriptor with `{radius, detect, loop}` when the real keys are
+`{patrolR, detectR, routeLoop}` — so the live enemy read `undefined` for its sight range. The fix for the
+second is the better rule: **call the engine's own `descFromMarker(g)`** rather than reconstructing what it
+already builds, which tests the real path instead of a guess about it.
+
 ## An imported model's data maps arrived sRGB-decoded (build 1429)
 
 Reported with the file: a KTX2 barrel renders **shattered, faceted and blue-green** in Rumpus while every
