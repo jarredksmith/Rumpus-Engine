@@ -1712,6 +1712,42 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## What 1430 and 1431 are worth on a DENSE level, and the trade batching still makes (probe pass)
+
+Asked from use: *"should these new builds make the game run smoother with a lot of props?"* Everything
+measured for 1430 and 1431 was a small fixture aimed at isolating one mechanism. `dense-level-cost.mjs`
+asks the creator's question instead — 584 props, eight shapes at varied scales and colours, camera at eye
+height in the middle of it — and asks the downside too, since 1430 splits batches per cell and could end
+up costing draw calls.
+
+```
+                                 draw calls   triangles
+every prop its own object            262        35,228
+batched, culling OFF (pre-1430)      246        66,248
+batched, culling ON (shipped)        216        45,368
+```
+Control returns byte-exactly. **1430 is worth 31.5% of the triangles and 12.2% of the draw calls** on this
+level, and the cell split did NOT cost draw calls — it saved them, because the batches it fragments are
+still fewer calls than the props they replace.
+
+**The finding worth recording is the third comparison, which nobody had made.** Against the UN-BATCHED
+scene, batching still costs **+28.8% triangles** for **−17.6% draw calls**. A batch draws every instance in
+its cell when any part of that cell is visible, where individual props are rejected one at a time. Build
+1430 cut that penalty from +88% to +28.8%; it did not remove it.
+
+So **batching is a draw-call optimization that costs triangles**, and it is only favourable when a level is
+draw-call bound. That is worth knowing because the report that started this stretch — 30 million triangles
+across 102 draw calls — is the opposite regime, and the natural follow-up is either a smaller `INST_CELL`
+or per-instance culling within a batch.
+
+Only 216 of 584 props batched at all; the rest are singletons in their cell and stay per-object, which is
+the healthy outcome rather than a miss — a lone prop gets exact per-object culling, which is strictly
+better than being in a batch.
+
+**Frame TIME is deliberately absent.** SwiftShader's noise floor exceeds every effect here (build 1414), so
+draw calls and triangles are the only trustworthy instruments; a creator's own machine is the only place
+the wall clock means anything, which is what the perf HUD's `other` / `idle` split (1426) is for.
+
 ## Geometric LOD — the fifth kind, and the one a heavy import hits (build 1431)
 
 Asked from use: *"What is LOD? Do we do that?"* Four kinds were already here and worth naming, because the
