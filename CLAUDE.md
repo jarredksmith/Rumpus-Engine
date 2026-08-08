@@ -1743,6 +1743,65 @@ working. The rule from the logic booth stands: **read the object before authorin
 Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
 `explodeAt + _blastProps` now, every assertion unchanged in intent.
 
+## The frame meter had one door, and it was a key no phone has (build 1436)
+
+Asked from use: *"Can there be a way to open the dev hud on a touch device? I want to see FPS but I can't
+click a backtick on a phone."* Verified: the meter's only door was `e.code==='Backquote'`. On a phone or a
+tablet the perf HUD did not exist.
+
+**A checkbox alone is half an answer, and the measurement is what says so.** `#perfHud` is pinned
+bottom-left with `white-space:nowrap` — bottom-left on a phone is where the movement stick sits, and the
+six-line profiler dump is 170px of overlay across the play view of a 390px screen.
+
+### The occupancy map, which chose the placement instead of a third guess
+
+Measured at 390 x 844 with the engine's own touch layout, 6 x 12 cells:
+
+```
+rows 0-1   ######   the HUD cluster (minimap, ammo, wave panel, score, pause)
+rows 2-7   ......   free
+rows 8-11  ##.###   the touch controls
+```
+
+The first placement — top-left — was measured **covering 14 HUD elements**, which is worse than the
+thumbstick it was moved away from. The band under the cluster is where there is actually room:
+
+```
+placed   {x:8, y:148, w:154, h:47}   on screen, no clipping, overlaps: NONE
+```
+
+**A phone gets the NUMBERS, not the profiler** — FPS, frame time, draws, triangles — keyed on the same
+`body.touch` class the placement uses, so the content and the layout cannot come to different conclusions
+about which device this is. The desktop readout is untouched.
+
+### The occupancy scan was wrong first, and the reason generalises
+
+Its first run painted the entire screen occupied. `#touchUI` is `inset:0` and `#tLook` is a 226 x 844 look
+pad — **full-screen transparent INPUT layers**, and the meter is `pointer-events:none`, so neither is an
+obstruction to it. An element only occupies space here if it actually DRAWS: a background above 5% alpha,
+a visible border, or its own text. *An input surface is not an obstruction to something that cannot be
+touched* — and a scan that cannot tell them apart returns a solid wall and no information.
+
+### One writer
+
+`setPerfHud(on)` owns `perfOn` (which gates the per-frame profiling), the element's `hidden` class and the
+checkbox together. The key and the checkbox both ask it, and the whole engine contains exactly **two**
+assignments to `perfOn`: the declaration and that function. The key's controller-diagnostic half is
+untouched.
+
+The binding **syncs from the flag rather than from storage**, which does three jobs with one line: it
+unhides the element for a restored session (the markup ships hidden), it shows the true state after the
+key, and it is idempotent across `bindPauseMenu`'s boot call and every later open.
+
+### Container rollback #28, mid-build
+
+The tree reverted to build 1431 between two commands; the edit script's `assert "build 1435" in s` caught
+it before writing a byte, which is what those asserts are for. `git log` first, then
+`git fetch origin <branch> && git reset --hard FETCH_HEAD`. **What did not survive was `probe-out/arch.glb`
+and the original upload**, so `bvh-interleaved.mjs` and `selbox-stale.mjs` cannot re-run without the file
+being supplied again. Their findings are committed; the fixtures are not. Anything a probe needs twice has
+to be in a commit — recorded before under builds 1378 and 1405, and it cost the fixture anyway.
+
 ## The selection outline was drawing a box it did not have (build 1435)
 
 The other half of build 1434's report — *"if I press 'p' and open the editor, it shows a huge bounding box

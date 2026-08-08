@@ -633,6 +633,10 @@
   #perfHud { position:fixed; bottom:8px; left:8px; z-index:80; background:rgba(4,10,12,.82); border:1px solid rgba(var(--accent-rgb),.4);
     color:#9fe6cf; font:12px/1.45 'Courier New',monospace; padding:7px 10px; border-radius:6px; pointer-events:none; white-space:nowrap; }
   #perfHud.hidden { display:none; }
+  /* build 1436: bottom-left is where the movement stick lives on a phone, and `nowrap` runs a 55-character
+     line straight off a 390px screen. On touch the meter moves to the top and wraps. */
+  body.touch #perfHud { top:calc(148px + env(safe-area-inset-top,0px)); bottom:auto;
+    white-space:normal; max-width:min(300px,72vw); font-size:11px; line-height:1.4; }
   /* hitmarker */
   #hitmarker { position: absolute; top:50%; left:50%; transform: translate(-50%,-50%) scale(.6);
     font-size: 30px; color:#fff; opacity:0; font-weight:700; }
@@ -1565,6 +1569,7 @@
     <div class="pauseAudio">
       <label class="paLbl"><input type="checkbox" id="postFxCb"> Visual effects (bloom · motion blur)</label>
       <label class="paLbl"><input type="checkbox" id="adaptResCb"> Adaptive resolution (trades sharpness for fps)</label>
+      <label class="paLbl"><input type="checkbox" id="perfHudCb"> Performance overlay &#183; FPS, draw calls, triangles (or press <b>`</b>)</label>
     </div>
     </div>
     <div class="pPanel" data-ppanel="controls">
@@ -22177,7 +22182,7 @@ addEventListener('keydown', e=>{
   // Ctrl+A (select all). Swallow those so moving while crouched doesn't trigger them. Ctrl+W (close tab)
   // is browser-reserved and can't be cancelled here — the beforeunload guard below catches that one.
   if(e.ctrlKey && (e.code==='KeyW'||e.code==='KeyA'||e.code==='KeyS'||e.code==='KeyD')) e.preventDefault();
-  if(e.code==='Backquote'){ const el=$('padDebug'); let show=false; if(el){ show = el.style.display!=='block'; el.style.display = show?'block':'none'; if(show) el.textContent = 'RUMPUS ENGINE  ' + BUILD_VERSION + '\nCONTROLLER DEBUG  (` hide · ] switch pad)'; } perfOn = el ? show : !perfOn; const ph=document.getElementById('perfHud'); if(ph) ph.classList.toggle('hidden', !perfOn); e.preventDefault(); return; }   // ` toggles the controller diagnostic + the perf meter
+  if(e.code==='Backquote'){ const el=$('padDebug'); let show=false; if(el){ show = el.style.display!=='block'; el.style.display = show?'block':'none'; if(show) el.textContent = 'RUMPUS ENGINE  ' + BUILD_VERSION + '\nCONTROLLER DEBUG  (` hide · ] switch pad)'; } setPerfHud(el ? show : !perfOn); e.preventDefault(); return; }   // ` toggles the controller diagnostic + the perf meter
   if(e.code==='BracketRight'){   // manually switch which detected gamepad is used
     const ps = navigator.getGamepads ? navigator.getGamepads() : [];
     const idxs = []; for(const p of ps){ if(p) idxs.push(p.index); }
@@ -34301,7 +34306,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1435 · 2026-08-08';
+const BUILD_VERSION = 'build 1436 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39218,7 +39223,9 @@ let paused = false, _pbShow = null;   // pause overlay state + cached pause-butt
 const clock = new THREE.Clock();
 
 // ---- Perf meter: press ` (backquote) to toggle. Shows real frame time + a render/logic phase split. ----
-let perfOn=false, _perfCalls=0, _perfTris=0, _perfFrames=0, _perfNextDraw=0, _perfPrev=0, _perfFrameAcc=0;
+/* build 1436: restored at boot, beside the declaration rather than in a start-up block, so the flag and
+   the thing that remembers it cannot drift apart. Reading storage cannot throw the boot. */
+let perfOn=(function(){ try{ return localStorage.getItem('breach_perfhud')==='on'; }catch(e){ return false; } })(), _perfCalls=0, _perfTris=0, _perfFrames=0, _perfNextDraw=0, _perfPrev=0, _perfFrameAcc=0;
 const _prof = { render:0, phys:0, net:0, mini:0, work:0 };   // ms accumulated this window
 /* build 1426: `other` WAS A RESIDUAL PRESENTED AS A COST, and it misread as one to me in the session that
    produced this build. It was `totMs - render - phys - net - mini`, and `totMs` is the wall clock from one
@@ -39233,6 +39240,16 @@ const _prof = { render:0, phys:0, net:0, mini:0, work:0 };   // ms accumulated t
    the cap it is the browser blocking on a full GPU queue at presentation — WebGL’s `render()` returns
    immediately, so back-pressure lands here rather than in the render figure. A slow frame that is mostly
    idle is GPU-bound, which is the single most useful thing this meter can say and it could not say it. */
+// build 1436: the perf meter had exactly one door — the ` key — so on a phone or a tablet it did not
+// exist. `perfOn` gates the per-frame profiling AND the element's visibility, and the key handler set both
+// by hand; a second setter would be a second chance for them to disagree, which is the defect this file
+// records more than any other. One writer, asked by the key and by the pause-menu checkbox.
+function setPerfHud(on){
+  perfOn = !!on;
+  const el = document.getElementById('perfHud'); if(el) el.classList.toggle('hidden', !perfOn);
+  const cb = document.getElementById('perfHudCb'); if(cb) cb.checked = perfOn;   // the menu may be open
+  return perfOn;
+}
 function _pnow(){ return (typeof performance!=='undefined'?performance.now():Date.now()); }
 function updatePerfHud(){
   if(!perfOn) return;
@@ -39249,6 +39266,15 @@ function updatePerfHud(){
   const idleWhy = (totMs > 20 && idle > totMs*0.5) ? 'GPU-bound?' : 'vsync';
   _perfFrameAcc=0; _perfFrames=0; _prof.render=0; _prof.phys=0; _prof.net=0; _prof.mini=0; _prof.work=0;
   const mem=renderer.info.memory, el=document.getElementById('perfHud'); if(!el) return;
+  /* build 1436: a phone gets the NUMBERS, not the profiler. The six-line dump below is a desktop
+     diagnostic — on a 390px screen it is 170px of overlay across the play view, and what was asked for
+     is the frame rate. Keyed on the same `body.touch` class the placement uses, so the content and the
+     layout cannot disagree about which device this is. */
+  if(document.body && document.body.classList.contains('touch')){
+    el.innerHTML = 'FPS '+fps.toFixed(0)+'  ('+totMs.toFixed(1)+' ms)<br>'
+      + 'draws '+_perfCalls+'   tris '+(_perfTris/1000).toFixed(0)+'k'+(dofEnabled?'   DoF':'');
+    return;
+  }
   el.innerHTML = 'FPS '+fps.toFixed(0)+'  ('+totMs.toFixed(1)+' ms)<br>'
     + 'render '+r.toFixed(1)+'  phys '+p.toFixed(1)+'  net '+n.toFixed(1)+'<br>'
     + 'minimap '+mi.toFixed(1)+'  other '+other.toFixed(1)+'  \u00b7  idle '+idle.toFixed(1)+' ms ('+idleWhy+')<br>'
@@ -53762,6 +53788,12 @@ function bindPauseMenu(){
   const pfx=document.getElementById('postFxCb'); if(pfx){ pfx.checked=_postOn; pfx.onchange=()=>{ _postOn=pfx.checked; _postFail=false; try{ localStorage.setItem('breach_postfx', _postOn?'on':'off'); }catch(e){} if(!_postOn && typeof disposePost==='function') disposePost(); if(typeof toast==='function') toast(_postOn?'Visual effects on':'Visual effects off'); }; }
   // build 872: adaptive resolution gets a visible switch (it was on-by-default with only a localStorage
   // escape hatch since build 810). Turning it OFF also snaps back to full resolution immediately.
+  /* build 1436: the meter's only door was a key no touchscreen has. Persisted like its two neighbours, so
+     a creator watching frame rate on a phone does not re-enable it every session. This SYNCS from `perfOn`
+     rather than from storage, which does three jobs at once: it unhides the element for a restored
+     session (the markup ships hidden), it shows the true state after the ` key, and it is idempotent —
+     bindPauseMenu runs at boot and again on every open. */
+  const phc=document.getElementById('perfHudCb'); if(phc){ setPerfHud(perfOn); phc.onchange=()=>{ setPerfHud(phc.checked); try{ localStorage.setItem('breach_perfhud', perfOn?'on':'off'); }catch(e){} if(typeof toast==='function') toast(perfOn?'Performance overlay on':'Performance overlay off'); }; }
   const arc=document.getElementById('adaptResCb'); if(arc){ arc.checked=_adaptOn; arc.onchange=()=>{ _adaptOn=arc.checked; try{ localStorage.setItem('breach_adaptres', _adaptOn?'on':'off'); }catch(e){} if(!_adaptOn){ _prStepI=0; _prScale=1; _applyPixelRatio(); /* build 883/1126: full quality — the FX rung's strike-out is cleared too */ _hiFxOn=true; _hiFxFails=0; _mbShed=false; _mbFails=0; /* build 1342 */ } if(typeof toast==='function') toast(_adaptOn?'Adaptive resolution on':'Adaptive resolution off \u2014 full sharpness'); }; }
   const vM=document.getElementById('volMaster'); if(vM){ vM.value=Math.round(audioSettings.master*100); vM.oninput=()=>{ audioSettings.master=(+vM.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vMu=document.getElementById('volMusic'); if(vMu){ vMu.value=Math.round(audioSettings.music*100); vMu.oninput=()=>{ audioSettings.music=(+vMu.value)/100; applyAudioSettings(); saveAudioSettings(); }; }

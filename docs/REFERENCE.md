@@ -351,7 +351,7 @@ the GPU transforms and shades it separately. What the engine can do is skip the 
 and from **build 1430** it does: at deploy, 3+ eligible copies are batched into one draw call **per 24 m
 cell**, and each batch carries real bounds so it is frustum-culled like any other object (including in
 the shadow pass). Before 1430 a batch was never culled at all — measured on 24 duplicated props with the
-camera turned away, 528 triangles became 96. Watch the triangle count on the perf HUD (backtick key) and
+camera turned away, 528 triangles became 96. Watch the triangle count on the perf HUD (backtick key, or **Performance overlay** in the pause menu's Game tab — build 1436, the only way in on a phone) and
 the Level Check's geometry census; if a level is heavy, the levers are **fewer triangles per model**
 (the optimizer's simplify budget is 40,000) and **Cull below (px)** in World → Camera & view.
 
@@ -453,6 +453,8 @@ See World & Scene Settings for the eight zone tools and the terrain sculpt/paint
 **Undo/redo**: 60 snapshots; **Ctrl+Z**, **Ctrl+Shift+Z / Ctrl+Y**; selection preserved; editing after undo forks the redo branch.
 
 **Autosave**: on by default — every 20 s while editing and on page close. **Ctrl+S** saves any time.
+
+**Performance overlay** (pause menu → Game, or the backtick key): frame rate and frame time, draw calls, triangles, geometry/texture counts, the light budget, and what is antialiasing the frame. On a touch device it shows a compact form — FPS, frame time, draws, triangles — placed clear of the on-screen controls, because the full profiler dump covers a phone's play view. The choice is remembered per device, and it costs nothing while it is off.
 
 **Level Check**: bottom of the Save section — "⚠ Level check — N things worth a look (saving still works)": failed model loads (URL tail), logic failures from last run, `local:` device-only models, lock/key mismatches, pickups off with spots placed, audio zones without URLs, cutscenes with <2 path points, signals targeting missing tags, contact filters on missing tags, untargeted mechanisms, Sketchfab models with no attribution, models over the 40,000-triangle optimizer budget (build 1425 — names the heaviest and jumps to it; file size does not warn you, a 1.7 MB Draco model can be 500,000 triangles) or a level total over 2M triangles, and (build 1423) an objective that cannot be completed — a **Destroy** mission with no usable target, a **Puzzle** with no Win level / Go to level action anywhere, a **Race** with no Start line piece. Rows with a specific prop to fix are clickable and jump to it.
 
