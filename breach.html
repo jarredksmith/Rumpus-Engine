@@ -11240,13 +11240,45 @@ function _bakeTick(){
     }
     const it = J.meshes[J.mi], mesh = it.mesh;
     if(J.vi === 0){
-      if(!mesh.geometry.userData._bakeOwn){                      /* copies of one GLB SHARE geometry — bake into a private clone */
-        mesh.geometry = mesh.geometry.clone(); mesh.geometry.userData._bakeOwn = true; }
-      if(!mesh.geometry.attributes.color || mesh.geometry.attributes.color.count !== mesh.geometry.attributes.position.count)
-        mesh.geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(mesh.geometry.attributes.position.count * 3).fill(1), 3));
+      /* build 1432: bake the AUTHORED geometry, and HOLD the reference for the life of the job. This job
+         is resumable across frames, and build 1431 swaps `mesh.geometry` between a full and a simplified
+         level between frames — so reading `mesh.geometry` on every resume read a geometry the bake had
+         never set up and threw on `attributes.color` every frame. Reported from play, 750 times. */
+      let g = mesh.userData._lodHi || mesh.geometry;
+      if(!g.userData._bakeOwn){                                  /* copies of one GLB SHARE geometry — bake into a private clone */
+        g = g.clone(); g.userData._bakeOwn = true;
+        /* the clone REPLACES what the mesh draws, so the level of detail must follow it or 1431 would keep
+           swapping in a level derived from the geometry this one just superseded. Merely DROPPING the
+           level was the first fix and it made build 1431 a near no-op: baking is on by default (1370), so
+           every static model is cloned here and would lose its level for the rest of the session. A clone
+           has identical topology, so the decimated INDEX is still valid — it is rebuilt against the new
+           attributes below, once the colour attribute exists so the level shares that too. */
+        if(mesh.userData._lodHi){ mesh.userData._lodHi = g; mesh.userData._lodOn = false; }
+        mesh.geometry = g;
+      }
+      if(!g.attributes.color || g.attributes.color.count !== g.attributes.position.count)
+        g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3).fill(1), 3));
+      /* re-seat build 1431's level onto whatever geometry this mesh now draws from, keeping its index */
+      const _oldLo = mesh.userData._lodLo;
+      if(_oldLo && _oldLo.index && _oldLo.attributes.position !== g.attributes.position){
+        const nlo = new THREE.BufferGeometry();
+        for(const k in g.attributes) nlo.setAttribute(k, g.attributes[k]);   // incl. the colour just made
+        nlo.setIndex(_oldLo.index);
+        if(_oldLo.groups && _oldLo.groups.length) for(const gr of _oldLo.groups) nlo.addGroup(gr.start, gr.count, gr.materialIndex);
+        if(!g.boundingSphere) g.computeBoundingSphere();
+        if(!g.boundingBox) g.computeBoundingBox();
+        nlo.boundingSphere = g.boundingSphere.clone(); nlo.boundingBox = g.boundingBox.clone();
+        mesh.userData._lodLo = nlo;
+      }
+      it.geo = g;
       mesh.updateMatrixWorld(true); _bkNM.getNormalMatrix(mesh.matrixWorld);
     }
-    const pos = mesh.geometry.attributes.position, nrm = mesh.geometry.attributes.normal, col = mesh.geometry.attributes.color;
+    const geo = it.geo || mesh.geometry;
+    const pos = geo.attributes.position, nrm = geo.attributes.normal, col = geo.attributes.color;
+    /* and a hard guard, because the failure mode of getting this wrong is a THROW INSIDE THE FRAME LOOP,
+       once per frame, forever — which is what a creator actually experienced. Skipping a mesh loses some
+       ambient shading; throwing loses the game. */
+    if(!pos || !nrm || !col){ J.mi++; J.vi = 0; return; }
     const n = pos.count;
     while(J.vi < n && performance.now() - t0 < budget){
       const i = J.vi++;
@@ -11257,6 +11289,12 @@ function _bakeTick(){
     }
     if(J.vi >= n){
       col.needsUpdate = true;
+      /* build 1432: the simplified level shares this geometry's VERTICES, so the baked colours are valid
+         for it unchanged — and it must have them, because the material is about to get vertexColors=true
+         and a mesh with no colour attribute samples (0,0,0) and renders BLACK. That is build 1195's own
+         shared-material invariant, arriving through a door 1195 could not have known about. */
+      const _lo = mesh.userData && mesh.userData._lodLo;
+      if(_lo && _lo.attributes && _lo.attributes.color !== col) _lo.setAttribute('color', col);
       const ms = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for(const m of ms){ if(m){ m.vertexColors = true; _bakeOccludeIndirect(m); m.needsUpdate = true; _bakeMats.add(m); } }
       J.mi++; J.vi = 0;
@@ -11884,7 +11922,9 @@ function _lodGeoTick(){
     const sp = (d > 0.01) ? ((u0._lodR||1) / d) * k : 1e9;
     const wantLo = (d >= LOD_NEAR_KEEP) && (sp < LOD_GEO_PX);
     o.traverse(m=>{
-      const u = m.userData; if(!u || !u._lodHi) return;
+      /* build 1432: _lodLo can be NULLED when the bake supersedes the geometry it was derived from, and
+         assigning null here would hand the renderer a mesh with no geometry at all. */
+      const u = m.userData; if(!u || !u._lodHi || !u._lodLo) return;
       if(wantLo && !u._lodOn){ m.geometry = u._lodLo; u._lodOn = true; }
       else if(!wantLo && u._lodOn && sp > LOD_GEO_PX * LOD_HYST){ m.geometry = u._lodHi; u._lodOn = false; }
     });
@@ -34214,7 +34254,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1431 · 2026-08-08';
+const BUILD_VERSION = 'build 1432 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

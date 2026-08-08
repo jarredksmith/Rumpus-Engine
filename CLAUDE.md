@@ -1712,6 +1712,55 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## The bake was reading a geometry it never set up (build 1432)
+
+Reported from play, on the live site, with the console overlay build 1330 exists to produce:
+
+```
+Uncaught TypeError: Cannot read properties of undefined (reading 'setXYZ')
+  at _bakeTick   (breach.html:11256)
+  at loop        (breach.html:40065)
+(+749 more errors since — the FIRST one is shown, it is usually the cause)
+```
+
+**A throw INSIDE THE FRAME LOOP, once per frame, forever, and it is build 1431's fault.** Build 1195's
+per-vertex bake is RESUMABLE across frames (`J.mi` / `J.vi`) and read `mesh.geometry` on every resume,
+while creating the colour attribute only at `J.vi === 0`. Build 1431 swaps `mesh.geometry` between a full
+and a simplified level BETWEEN FRAMES. So the job set itself up on geometry A, 1431 swapped in B, and the
+next resume read `B.attributes.color` — which does not exist.
+
+That is **build 1263's rule** — *a perf change may not remove work something else relies on* — and build
+1431's own entry congratulates itself on honouring it for RAYCASTING while missing it for the bake. The
+two systems were probed separately and never together.
+
+Three changes, all measured in the running game with the level swapped on EVERY frame:
+- **The job HOLDS the geometry it set up** (`it.geo`), so nothing can move it mid-flight.
+- **A missing attribute SKIPS the mesh** rather than throwing. Losing some ambient shading beats losing
+  the game, and this class of fault must never take the frame loop down again.
+- **The bake's clone re-seats the level rather than dropping it.** That is the half the probe caught and
+  reading could not: the first fix simply nulled `_lodLo`, and since baking is ON by default (build 1370)
+  every static model is cloned here — so build 1431 would have been a **near no-op in the shipped
+  configuration**. A clone has identical topology, so the decimated INDEX is still valid; the level is
+  rebuilt against the new attributes, AFTER the colour attribute exists so it shares that too (without
+  which it renders BLACK under `vertexColors` — build 1195's own invariant, through a door 1195 could not
+  have known about).
+
+```
+                     ticks   swaps   threw   level survives   shares baked colours
+before                 —       —      YES          —                  —
+first fix               80      66     no          NO                 no
+shipped                 80      80     no          yes                yes
+```
+
+**The reporter found this, not the probes.** Build 1431's own probe exercised the LOD swap, and build
+1195's tests exercise the bake; neither ran them together, and the cell-size sweep running when the report
+arrived would not have found it either. **Two subsystems that each pass alone is not evidence about the
+pair** — and the pairs worth testing are the ones that write to the SAME field, which here is
+`mesh.geometry`.
+
+One pin moved (1195), intent untouched — the clone is still private and marker-guarded, now through a
+local because the job has to hold it.
+
 ## What 1430 and 1431 are worth on a DENSE level, and the trade batching still makes (probe pass)
 
 Asked from use: *"should these new builds make the game run smoother with a lot of props?"* Everything
