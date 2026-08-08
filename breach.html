@@ -15047,8 +15047,20 @@ const _ncNoRay = function(){};   // build 1093: raycast no-op stamped onto "noco
 // budget in raycasts alone; that is the "60 fps until bots join" cliff. Each big static mesh
 // gets a median-split triangle BVH built once at load, and mesh.raycast walks it instead —
 // same intersection records (distance/point/face/faceIndex), 10-50x fewer triangle tests.
+// A glTF POSITION attribute is very often INTERLEAVED — gltfpack, meshopt and most of the "optimize my
+// glTF" pipelines creators are pointed at pack position, normal, tangent and uv into ONE buffer — so
+// `attribute.array` is not a tight run of xyz triples and reading it with a stride of 3 walks normals and
+// UVs as if they were coordinates. It can also be quantized (normalized ints). Pack once through the
+// attribute API, the way three's own Mesh.raycast reads, and the tree describes the real triangles
+// whatever the file did. Costs 12 bytes per VERTEX for the life of the tree; the build below already
+// allocates 36 per TRIANGLE as scratch.
+function _bvhPackPos(pa){
+  const n = pa.count, out = new Float32Array(n * 3);
+  for(let i = 0; i < n; i++){ out[i*3] = pa.getX(i); out[i*3+1] = pa.getY(i); out[i*3+2] = pa.getZ(i); }
+  return out;
+}
 function _buildTriBVH(geo){
-  const posA = geo.attributes.position.array, idx = geo.index, ia = idx ? idx.array : null;
+  const posA = _bvhPackPos(geo.attributes.position), idx = geo.index, ia = idx ? idx.array : null;
   const triCount = ((idx ? idx.count : geo.attributes.position.count) / 3) | 0;
   const mins = new Float32Array(triCount * 3), maxs = new Float32Array(triCount * 3), cent = new Float32Array(triCount * 3);
   for(let t = 0; t < triCount; t++){
@@ -34284,7 +34296,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1433 · 2026-08-08';
+const BUILD_VERSION = 'build 1434 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

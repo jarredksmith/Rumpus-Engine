@@ -1743,36 +1743,76 @@ working. The rule from the logic booth stands: **read the object before authorin
 Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
 `explodeAt + _blastProps` now, every assertion unchanged in intent.
 
-## The decal ghost: DIAGNOSED, NOT FIXED (open, after build 1433)
+## The decal ghost was an interleaved buffer read with a stride of 3 (build 1434)
 
 Reported with a screenshot and the model: bullet decals land in mid-air, metres from the prop, on an
-invisible barrier. A decal is stamped at the shot ray's hit point, so this is a raycast that disagrees
-with the geometry — and the A/B is decisive.
+invisible barrier. A decal is stamped at the shot ray's hit point and every shot in this engine raycasts
+real triangles (1159), so this was a raycast disagreeing with the geometry.
 
-The reported arch spans **z 39.3–40.7**. A ray along +Z at x=40, y=3 reports a hit at **z = 33.01** — six
-metres in front of it, at a height ABOVE the model (max y 2.53), and a ray at x=46 "hits" a model whose
-max x is 44.
+**The tell recorded as the next place to look was the answer, and it was arithmetic.** The BVH held
+*13,104 vertices for a 3,276-vertex mesh*. Read out of the reported GLB in Node:
 
 ```
-build 1097's BVH raycast installed   phantom hits at z 33.01 and 37.14
-the same rays with it removed        no hit at all — they pass over and reach the wall at z 69
+POSITION   count 3276   FLOAT   byteStride 48   =  TWELVE floats per vertex
+           attrs: POSITION, NORMAL, TANGENT, TEXCOORD_0        3 + 3 + 4 + 2 = 12
 ```
 
-**Eliminated, each by measurement, and worth recording so they are not re-run:**
-- **NOT build 1431's geometric LOD** — the hits are byte-identical with levelling active and neutered,
-  even though this model (4,058 triangles) is over the threshold and gets a level.
-- **NOT staleness.** The reporter's own observation was that the editor shows a huge bounding box which a
-  gizmo drag snaps correct — so `refreshPropCollider` was the obvious suspect. Calling it does **not**
-  change the ray, and a full `delete __bvh; _installRaycastBVH()` rebuild reproduces the identical wrong
-  hit. The drag fixes the drawn BOX; the ray stays wrong. **Two symptoms, two causes.**
+So `attributes.position.array` is the **shared interleaved buffer** of 3,276 x 12 = 39,312 floats, and
+39,312 / 3 is exactly 13,104. Not a mismatched mesh and not a stale tree — the signature of interleaving.
+Build 1097 reads `posA[vertexIndex*3 + k]`, so it walked normals, tangents and UVs as though they were
+coordinates and built a tree over triangles that are nowhere near the model.
 
-The one live tell: the BVH holds **13,104 vertices for a 3,276-vertex mesh**, and the prop is scaled **8×**.
-That is where the next session should start — `_buildTriBVH` against a SCALED fixture, checking whether the
-node bounds and the triangle array agree with the geometry.
+**gltfpack, meshopt and essentially every "optimize my glTF" pipeline emit this layout**, which is what
+the creators this engine points at are told to run their models through. The reported file is a Meshy AI
+export. So this is not one bad asset.
 
-Shipping a guess here was declined deliberately. The one time this session a plausible mechanism shipped
-without proof (1431's bake interaction) it cost a live crash, and the decal fault is cosmetic — collision,
-damage and shooting are unaffected; only the hit POINT is wrong.
+### Measured on the reported file, 60 rays through the arch's own footprint
+
+```
+                       hits   OUTSIDE the mesh's own bbox   worst
+shipped (pre-1434)      60             60                   7.22 m
+packed                   1              0                      -
+three's brute force      1              0                      -      <- the reference
+```
+
+The packed tree agrees with **three's own `Mesh.raycast` exactly** — same count, same point to 2 dp —
+which is the strongest confirmation this rig can produce, because that path reads through the attribute
+API and cannot be fooled by interleaving.
+
+### Why the fix is "always pack" rather than a fast path
+
+`_bvhPackPos` copies through `getX/getY/getZ` unconditionally. A predicate for "is this one tightly
+packed" would have to be right about interleaving *and* quantization (KHR_mesh_quantization ships
+normalized ints, which read as 0..65535 through the raw array) *and* itemSize — three ways to be subtly
+wrong for a saving of 12 bytes per vertex. The build already allocates **36 bytes per TRIANGLE** as
+scratch, so the retained copy is small beside what was there.
+
+Build 1431's `_lodGeoSimplify` had already hit this and says so at the line — *"tight copy: gltfpack
+interleaves"* — three builds before this one. **The rule was known and applied in one of the two places
+that read imported geometry.** `test-1434` asserts both.
+
+### The fixture has to be THIN, or the bug hides
+
+The first test fixture was a 2x2x2 cube and the pre-1434 reading measured **0.00 m out** — a clean null
+against code that is definitely broken. A cube's own bounds already contain every normal (+-1), tangent
+and uv, so the garbage triangles stay inside it and nothing looks wrong. The reported arch is thin (local
+extent 1.00 x 0.64 x 0.18), so a normal read into a position slot lands an order of magnitude outside —
+and at the prop's 8x scale that is the 7.22 m the probe measured. The fixture now carries those
+proportions, and the test states why.
+
+### The second symptom is NOT this, and that was measured too
+
+The same report noted *"the editor shows a huge bounding box, and dragging a gizmo handle resizes it
+correct a second later."* `userData.box` is **already exact at load** and `refreshPropCollider` does not
+change it by a single value, so the oversized box is neither this bug nor a stale collider:
+
+```
+boxAtLoad     [[36,-2.55,39.3],[44,2.53,40.7]]
+boxAfterDrag  [[36,-2.55,39.3],[44,2.53,40.7]]     changed: false
+```
+
+`selBox` is a `THREE.BoxHelper`, whose `setFromObject` also reads through the attribute API. So that one
+is still open and needs its own build; what this closes is the ray, which is what the decals follow.
 
 ## The bake was reading a geometry it never set up (build 1432)
 
