@@ -15,6 +15,12 @@
 // An empty Group is exactly what an un-landed model prop looks like to Box3, so the mechanism is isolated
 // without racing the loader — and a fully loaded prop is the control in the same run.
 import { withGame } from './driver.mjs';
+import { ensureFixture } from './fixture-glb.mjs';
+
+// The reported model is not in the tree, and a container rollback already took the copy that was —
+// so the fixture is GENERATED: interleaved at stride 48, and thin. Those two properties are what
+// make this measurable at all; fixture-glb.mjs records why each one matters.
+console.log('  fixture'.padEnd(28) + JSON.stringify(ensureFixture()));
 
 const say = (k, v) => console.log('  ' + String(k).padEnd(26) + JSON.stringify(v));
 
