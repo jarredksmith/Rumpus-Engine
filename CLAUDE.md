@@ -1743,6 +1743,66 @@ working. The rule from the logic booth stands: **read the object before authorin
 Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
 `explodeAt + _blastProps` now, every assertion unchanged in intent.
 
+## The selection outline was drawing a box it did not have (build 1435)
+
+The other half of build 1434's report — *"if I press 'p' and open the editor, it shows a huge bounding box
+on the prop; if I drag one of the gizmo handles, after a second it resizes to the correct size"* — which
+1434 measured and correctly declined to attribute to the collider (`userData.box` is exact at load and a
+refresh does not change it by a value).
+
+**It is three's own `BoxHelper.update()`, and the line is unambiguous:**
+
+```js
+if ( _box.isEmpty() ) return;      // <- KEEPS its previous geometry rather than clearing
+```
+
+So pointing a helper at something with nothing to measure — a prop whose model has not landed — and then
+setting `.visible = true` outlines it with whatever the helper last held. And `ensureSelBoxes` built the
+pooled helpers as **`new THREE.BoxHelper(scene)`**, so for those "whatever it last held" was the entire
+level.
+
+### Measured, with a fully loaded prop as the control in the same run
+
+```
+                                   drawn box                      shown
+control, a loaded prop             8 x 5.08 x 1.4  (exact)        yes
+single helper, nothing to measure  8 x 5.08 x 1.4  <- the PREVIOUS prop, 80 m away
+pooled helper, same case           142 x 28 x 142  <- THE WHOLE SCENE            yes
+after the fix                      neither is drawn; control and recovery unchanged
+```
+
+The fix is that the box is **measured first and the helper shown only if there is one** — `_selOutline`,
+the single writer both paths go through. Hiding stays freely allowed; that is the safe direction.
+
+Three things worth keeping:
+- **A stale box nobody draws is harmless**, so the fix is about `.visible`, not about clearing geometry.
+  Writing the eight corners ourselves would duplicate three's own vertex ORDER, which is exactly the kind
+  of coupling that breaks silently on an upgrade.
+- **The pooled seed is now an empty `Group`.** `new THREE.BoxHelper(x)` measures `x` on the spot, so
+  seeding from the scene walked every object in the level *once per pooled helper* — a real cost on a big
+  multi-select, and the reason the stale box was map-sized rather than merely wrong.
+- **`finalizeProp` refreshes the highlight**, or the outline for a prop selected while its model was still
+  in flight would only appear on the creator's next nudge — which is the "drag a handle and it fixes
+  itself" half of the report, left in place. `editorOpen` is declared near the top of the file for exactly
+  this class of boot-time callback and is false for every boot-time call, which keeps it out of `selBox`'s
+  temporal dead zone.
+
+`test-1435` pins the premise **against the real three build** (`BoxHelper.prototype.update.toString()`), so
+if an upgrade ever makes the helper clear itself the reason for this build fails loudly instead of quietly
+becoming untrue.
+
+### Two instrument faults, and the readout named both
+
+The first run reported the control disagreeing with the prop it had just selected — `loaded` was a
+16 x 1.6 x 16 slab at the origin against a `trueA` 80 m away. Two causes, both mine:
+**`selectedSceneObject()` reads `editorTargets.props.idx`, not `selProps`** (which is the *multi*-selection),
+so the probe had been measuring a stock-level prop the whole time; and **`spawnProp`'s callback fires only
+after the model lands**, so the "still loading" window it was trying to catch had already closed
+(`emptyAtSelect: false` said so). An empty `Group` is that condition exactly, with no async to race.
+
+*A control that disagrees with the thing it is controlling for is the instrument, not the finding* — and it
+is the only reason the first run was not written up as "the outline is correct, the report is elsewhere".
+
 ## The decal ghost was an interleaved buffer read with a stride of 3 (build 1434)
 
 Reported with a screenshot and the model: bullet decals land in mid-air, metres from the prop, on an
