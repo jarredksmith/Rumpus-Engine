@@ -1712,6 +1712,76 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## Geometric LOD — the fifth kind, and the one a heavy import hits (build 1431)
+
+Asked from use: *"What is LOD? Do we do that?"* Four kinds were already here and worth naming, because the
+answer is not "no":
+
+| | |
+|---|---|
+| **animation LOD** | a mixer updates every frame inside ~15 m, every other to ~40 m, every fourth beyond — accumulating the skipped time so motion stays time-correct, and tightening under adaptive pressure |
+| **shadow LOD** (1270) | a prop stops CASTING at 4× the size where it stops drawing — a cheaper version before it disappears |
+| **screen-size culling** (1267/1273/1274) | `lodPx`, off by default since a report that could not be reproduced |
+| **the quality ladder** (1141/1342/1350) | motion blur → MSAA+SSAO → resolution → the sun's shadow map |
+
+The fifth was missing, and it is the one a heavy import actually hits: **a 497,912-triangle model submitted
+all 497,912 triangles whether it filled the screen or covered forty pixels.** Zero uses of `THREE.LOD`; the
+only simplification anywhere was the optimizer's one-shot import pass. The build-1253 audit named
+"LOD/occlusion" as one of six ceilings and it had not moved.
+
+**What makes this small is `_autoSimplifyChar`'s own discovery, reused.** meshopt simplifies by rewriting
+the **INDEX** and leaving the vertex buffer alone — so a level of detail is one extra index buffer, not a
+second mesh. The geometry that carries it SHARES the source's attribute objects (build 1430's trick, where
+three's `WebGLAttributes` is keyed on the attribute instance), so a whole level costs one small buffer and
+nothing else. `test-1431` asserts that by reference identity, because a `clone()` here would silently
+double every heavy mesh in GPU memory and measure as a win anyway.
+
+Measured, one heavy mesh, control returning byte-exactly:
+
+```
+                       draw calls   triangles
+far, no levelling          87        63,800
+far, levelled              87        24,044     <- 62.3%, identical draw calls
+up close                   the full mesh, and the near pose returns EXACTLY
+```
+
+Four decisions:
+
+- **It has its OWN threshold rather than riding `lodPx`.** Build 1273 turned culling off by default after
+  an unreproducible report, on the grounds that a perf feature which DELETES a creator's prop does not get
+  to be on by default. This one never deletes anything — same prop, same size, same place, a slightly
+  smoother silhouette — so that argument does not transfer, and a feature nobody switches on helps nobody.
+- **Raycasting stays on the FULL geometry.** The player's shots raycast real triangles (build 1159), so a
+  swapped-down mesh would quietly move where a distant bullet lands — build 1263's rule, which this build
+  would otherwise have broken in exactly the way that rule exists to catch. And it **chains** build 1097's
+  BVH raycast rather than replacing it, which is build 1286's lesson one layer along.
+- **Bounds are COPIED, never recomputed.** Simplification cannot grow a mesh, and a frustum that rejected
+  the full level must reject the simplified one identically or the prop pops at the culling boundary.
+- **Built at DEPLOY**, beside the pools builds 1153/1155/1257 seat there — the one moment in a session when
+  a hitch is expected and free. Doing it at load would stall the first frame of every level.
+
+Skinned meshes are excluded (their bones move the vertices), primitives are excluded (already trivial), and
+anything under 4,000 triangles is excluded because the swap costs more than it saves. No simplifier —
+offline, or the CDN unreachable — means full geometry everywhere, silently.
+
+**Still open, and named rather than implied:** an INSTANCED batch picks no level, because build 1430's
+batches carry their own wrapper geometry. A duplicated decorative prop at 3+ copies therefore still draws
+at full detail however far away it is. That is the natural follow-up and it composes — a batch already has
+a bounding volume and a screen size.
+
+### The probe could not measure this at all until the simplifier was staged
+
+meshopt arrives by dynamic `import()` from a CDN the headless browser cannot reach, so the first run
+reported *"no level built"* — the same wall build 1429 hit with KTX2, and the same fix: fetch it in Node
+(which CAN reach it) and have `mkprobe` rewrite the url. **Two of the last three builds have been
+unmeasurable until their dependency was staged locally**; anything reached by `import()` should be assumed
+unreachable in a probe until proven otherwise.
+
+And the shadow counter bit a third time. Six renders per pose was enough for build 1430 and not for this
+one — a geometry swap dirties the map too, so the first read carried a shadow pass and the near pose read
+125,788 triangles then 63,028 for the identical scene. Twenty renders settles it and the control returns
+exactly. **The number to trust is the one whose control came back.**
+
 ## The movement booth survives the file — the last of the four (probe pass, after build 1430)
 
 `tools/probe/movement-booth-level.mjs` completes the set the gauntlet is scoped around. Its state is the

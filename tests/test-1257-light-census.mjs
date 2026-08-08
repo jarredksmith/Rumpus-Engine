@@ -71,8 +71,16 @@ function capRig(n, coarse = false) {
 }
 
 // --- wiring pins ------------------------------------------------------------------------------------------
-assert(/if\(typeof enforceEmitterCap==='function'\) enforceEmitterCap\(\); warmFlipbookShaders\(\);/.test(src),
-  'the cap runs at DEPLOY, before the shaders compile against the count — never mid-match (the recompile rule)');
+{
+  // build 1431 seated its LOD build between these two calls, which is where things that must happen at
+  // deploy go. The intent here is the ORDER, not adjacency — quoting a whole line is a pin against the
+  // line rather than against what it says (the character-budget trap in its other costume).
+  const pre = extractFunction('preloadVfx');
+  assert(/enforceEmitterCap\(\)/.test(pre) && /warmFlipbookShaders\(\)/.test(pre),
+    'both the cap and the shader warm run at DEPLOY');
+  assert(pre.indexOf('enforceEmitterCap()') < pre.indexOf('warmFlipbookShaders()'),
+    'the cap runs BEFORE the shaders compile against the count — never mid-match (the recompile rule)');
+}
 {
   const li = extractFunction('levelIssues');
   assert(/Heavy lighting: '\+load\+' point\/spot lights/.test(li), 'Level Check reports the real number');

@@ -53,6 +53,7 @@ once by accident and removed in build 1293's follow-up.
 | `logic-booth-level.mjs` | the logic booth through the same round trip — graph params, widgets, persistence, then RUN |
 | `instanced-culling.mjs` | whether duplicated props cost triangles off screen — found build 1430 |
 | `movement-booth-level.mjs` | the movement booth through the round trip — five zone types, the world block, then WALKED |
+| `geo-lod.mjs` | does a simplified mesh at range buy triangles, and cost nothing up close (1431) |
 | `nocol-physics.mjs` | build 1428: does a decoration-only prop still get a Rapier body (it did) |
 | `heavy-model.mjs` | what a half-million-triangle prop costs: collider derivation and Rapier trimesh build, at three counts |
 | `geo-census.mjs` | build 1425: Level Check names the heaviest model, in the RENDERED panel |

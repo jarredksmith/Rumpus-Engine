@@ -11701,6 +11701,7 @@ function lodReport(){
   return { px:_lodPxNow(), culled, noShadow, eligible, minR:(minR===Infinity?0:minR), minName };
 }
 function _lodRestoreAll(){
+  _lodGeoRestoreAll();   // build 1431: the editor shows the authored mesh, never a decimated one
   if(!_lodAnyCulled) return;
   for(const o of propModels){
     if(!o || !o.userData) continue;
@@ -11725,8 +11726,94 @@ function _lodRemeasure(o){
   }
   return r;
 }
+// build 1431: GEOMETRIC LOD — the ceiling the build-1253 audit named and the one a heavy import actually
+// hits. Until now a 497,912-triangle model submitted all 497,912 triangles whether it filled the screen or
+// covered forty pixels; the only simplification in the engine was the optimizer's one-shot import pass.
+//
+// What makes this small is `_autoSimplifyChar`'s own discovery, reused: meshopt simplifies by rewriting the
+// INDEX and leaving the vertex buffer alone. So a level of detail is one extra index buffer, not a second
+// mesh — and the geometry that carries it SHARES the source's attribute objects (build 1430's trick, where
+// three's WebGLAttributes is keyed on the attribute instance), so a whole LOD level costs one small buffer
+// and nothing else.
+//
+// It has its OWN threshold rather than riding `lodPx`, and that is deliberate. Build 1273 turned culling
+// off by default after a report it could not reproduce, because a perf feature that DELETES a creator's
+// prop does not get to be on by default. This one never deletes anything — the prop is still there, the
+// same size, in the same place, with a slightly smoother silhouette — so the argument that made culling
+// opt-in does not apply to it, and a feature nobody switches on helps nobody.
+const LOD_GEO_PX = 55;        // a prop covering fewer CSS pixels than this draws its simplified mesh
+const LOD_GEO_TRI_MIN = 4000; // below this a level of detail is not worth an index buffer or a swap
+const LOD_GEO_RATIO = 0.35;   // target index count of the simplified level
+let _lodGeoReady = false, _lodGeoN = 0;
+// The simplified geometry: the SAME attributes (so one vertex buffer serves both levels) with a decimated
+// index of its own. Bounds are copied rather than recomputed — simplification never grows a mesh, and a
+// frustum that rejected the full one must reject this one identically or a prop would pop at the boundary.
+function _lodGeoSimplify(S, g){
+  const pa = g.attributes.position, idx = g.index;
+  if(!pa || !idx) return null;
+  const n = pa.count;
+  const P = new Float32Array(n*3);
+  for(let i=0;i<n;i++){ P[i*3]=pa.getX(i); P[i*3+1]=pa.getY(i); P[i*3+2]=pa.getZ(i); }   // tight copy: gltfpack interleaves
+  const idx32 = (idx.array instanceof Uint32Array) ? idx.array : new Uint32Array(idx.array);
+  const target = Math.max(3, Math.floor(idx32.length*LOD_GEO_RATIO/3)*3);
+  let out = null;
+  try{ out = S.simplify(idx32, P, 3, target, 0.05, [])[0]; }catch(e){ return null; }
+  if(!out || !out.length || out.length >= idx32.length*0.9) return null;   // a mesh that will not decimate keeps ONE level
+  const lo = new THREE.BufferGeometry();
+  for(const k in g.attributes) lo.setAttribute(k, g.attributes[k]);        // BY REFERENCE — no second vertex buffer
+  lo.setIndex(new THREE.BufferAttribute(n<=65535 ? new Uint16Array(out) : new Uint32Array(out), 1));
+  if(g.groups && g.groups.length) for(const gr of g.groups) lo.addGroup(gr.start, gr.count, gr.materialIndex);
+  if(!g.boundingSphere) g.computeBoundingSphere();
+  if(!g.boundingBox) g.computeBoundingBox();
+  lo.boundingSphere = g.boundingSphere.clone(); lo.boundingBox = g.boundingBox.clone();
+  return lo;
+}
+// Built at DEPLOY, beside the pools build 1153/1155/1257 seat there, because that is the one moment in the
+// session when a hitch is expected and free. Doing it at load would stall the first frame of every level.
+function buildGeoLOD(){
+  if(_lodGeoReady || typeof propModels==='undefined') return;
+  _lodGeoReady = true;
+  const want = [];
+  for(const o of propModels){
+    if(!o || !o.userData || !o.userData.src || !isModelSrc(o.userData.src)) continue;   // primitives are already trivial
+    o.traverse(m=>{
+      if(!m.isMesh || m.isSkinnedMesh || !m.geometry || !m.geometry.index) return;      // a skin's bones move the vertices
+      if(m.userData._lodHi) return;                                                     // already levelled
+      if(m.geometry.index.count/3 < LOD_GEO_TRI_MIN) return;
+      want.push(m); });
+  }
+  if(!want.length) return;
+  _ensureSimplifier().then(S=>{
+    if(!S) return;   // offline or the CDN is unreachable: every mesh keeps its full geometry, silently
+    for(const m of want){
+      const lo = _lodGeoSimplify(S, m.geometry);
+      if(!lo) continue;
+      m.userData._lodHi = m.geometry; m.userData._lodLo = lo; _lodGeoN++;
+      /* build 1263's rule: a perf change may not remove work something else relies on. The PLAYER'S SHOTS
+         raycast real triangles (build 1159), so a swapped-down mesh would quietly move where a distant
+         bullet lands. Raycasting stays on the FULL geometry — and this CHAINS build 1097's BVH raycast
+         rather than replacing it, the way build 1286 had to chain onBeforeCompile. */
+      const prev = m.raycast;
+      m.raycast = function(rc, out){
+        const g = this.geometry; this.geometry = this.userData._lodHi || g;
+        try{ prev.call(this, rc, out); } finally { this.geometry = g; }
+      };
+    }
+  }).catch(()=>{});
+}
+// Every level of detail goes back to full: the editor must show the mesh the creator authored, and a
+// teardown must not leave a decimated silhouette behind.
+function _lodGeoRestoreAll(){
+  if(!_lodGeoN || typeof propModels==='undefined') return;
+  for(const o of propModels){ if(!o) continue; o.traverse(m=>{
+    if(m.userData && m.userData._lodHi && m.geometry !== m.userData._lodHi){ m.geometry = m.userData._lodHi; m.userData._lodOn = false; } }); }
+}
 function _lodTick(){
   const px = _lodPxNow();
+  /* The geometry rung runs on its OWN threshold, so it works with culling off — which is the default.
+     Skipped entirely while authoring, for build 1267's reason: the editor shows the level, not the frame. */
+  if(_lodGeoN && !(typeof editorOpen!=='undefined' && editorOpen) && typeof propModels!=='undefined') _lodGeoTick();
+  else if(_lodGeoN) _lodGeoRestoreAll();
   // Never while AUTHORING: a prop that vanishes because it is small on screen is indistinguishable from a
   // prop you failed to place. The editor shows the level, the game shows the frame.
   if(!px || (typeof editorOpen!=='undefined' && editorOpen) || typeof propModels==='undefined'){ _lodRestoreAll(); return; }
@@ -11776,6 +11863,33 @@ function _lodTick(){
   // something else silently needs either.
   if(_lodDirty && typeof _dirtyShadows==='function') _dirtyShadows();
   _lodCursor = (_lodCursor + lim) % n;
+}
+// The geometry rung. Same measurement as the rungs above it — screen size from the geometry's own centre,
+// the same near floor, the same hysteresis band so a prop sitting on the boundary cannot flicker between
+// two silhouettes. It never hides anything and never touches what casts, so it needs no shadow refresh.
+let _lodGeoCursor = 0;
+function _lodGeoTick(){
+  const n = propModels.length; if(!n) return;
+  const _vh = renderer.domElement.clientHeight || renderer.domElement.height || 720;
+  const k = (_vh * 0.5) / Math.tan(camera.fov * Math.PI / 360);
+  const cam = camera.position, lim = Math.min(n, LOD_BUDGET);
+  for(let i = 0; i < lim; i++){
+    const o = propModels[(_lodGeoCursor + i) % n];
+    if(!o || !o.userData || o.userData._shattered) continue;
+    const u0 = o.userData;
+    const dx = (o.position.x + (u0._lodCx||0)) - cam.x,
+          dy = (o.position.y + (u0._lodCy||0)) - cam.y,
+          dz = (o.position.z + (u0._lodCz||0)) - cam.z;
+    const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    const sp = (d > 0.01) ? ((u0._lodR||1) / d) * k : 1e9;
+    const wantLo = (d >= LOD_NEAR_KEEP) && (sp < LOD_GEO_PX);
+    o.traverse(m=>{
+      const u = m.userData; if(!u || !u._lodHi) return;
+      if(wantLo && !u._lodOn){ m.geometry = u._lodLo; u._lodOn = true; }
+      else if(!wantLo && u._lodOn && sp > LOD_GEO_PX * LOD_HYST){ m.geometry = u._lodHi; u._lodOn = false; }
+    });
+  }
+  _lodGeoCursor = (_lodGeoCursor + lim) % n;
 }
 // Animation LOD: update each mixer at a rate that falls off with distance from the camera. Near models animate
 // every frame; mid-range every other frame; far ones every 4th — accumulating the skipped time so motion stays
@@ -31016,7 +31130,7 @@ function loadVfxTexture(kind){
     undefined,
     ()=>{ console.warn('[VFX] no '+kind+' sheet at '+cfg.url+' — using the built-in procedural one'); });   // keep the procedural sheet
 }
-function preloadVfx(){ for(const k in VFX) loadVfxTexture(k); _ensureBlastLights(); _ensureMuzzleLights(); if(typeof _ensureChestLights==='function') _ensureChestLights(); if(typeof enforceEmitterCap==='function') enforceEmitterCap(); warmFlipbookShaders(); }   /* build 1257: the surplus is refused BEFORE the shaders compile against the count */   // build 1153: the loot-box beam pool is seated here too, so the count is final before warmFlipbookShaders compiles against it   // build 636: seat the pooled lights + warm all combat shaders at LOAD (behind the loading screen), so the first explosion can't trigger a multi-second recompile freeze
+function preloadVfx(){ for(const k in VFX) loadVfxTexture(k); _ensureBlastLights(); _ensureMuzzleLights(); if(typeof _ensureChestLights==='function') _ensureChestLights(); if(typeof enforceEmitterCap==='function') enforceEmitterCap(); if(typeof buildGeoLOD==='function') buildGeoLOD(); warmFlipbookShaders(); }   /* build 1257: the surplus is refused BEFORE the shaders compile against the count */   // build 1153: the loot-box beam pool is seated here too, so the count is final before warmFlipbookShaders compiles against it   // build 636: seat the pooled lights + warm all combat shaders at LOAD (behind the loading screen), so the first explosion can't trigger a multi-second recompile freeze
 // build 622: the first rocket/explosion used to FREEZE the frame. The texture was pre-uploaded, but the Sprite
 // shader PROGRAM that draws a flipbook is only compiled/linked by the GPU the first time such a sprite is
 // actually rendered — and the load-time renderer.compile() pass runs before any flipbook sprite exists in the
@@ -34100,7 +34214,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1430 · 2026-08-07';
+const BUILD_VERSION = 'build 1431 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

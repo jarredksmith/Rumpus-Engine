@@ -47,6 +47,11 @@ function rig(props, opts = {}) {
     'const LOD_HYST = ' + LOD_HYST + ', LOD_BUDGET = ' + LOD_BUDGET + ', LOD_SHADOW_MUL = ' + LOD_SHADOW_MUL + ', LOD_NEAR_KEEP = ' + LOD_NEAR_KEEP + ';',
     'function _dirtyShadows(){}',
     'let _lodCursor = 0, _lodAnyCulled = false;',
+    // build 1431 added a GEOMETRY rung to _lodTick and a restore call to _lodRestoreAll. This harness
+    // is about the cull and shadow rungs and says nothing about geometry, so the new dependency is
+    // supplied INERT — _lodGeoN of 0 is exactly 'no mesh has a level of detail', which is the state
+    // every assertion here was written against.
+    'let _lodGeoN = 0; function _lodGeoTick(){} function _lodGeoRestoreAll(){}',
     'let editorOpen = ' + (opts.editorOpen ? 'true' : 'false') + ';',
     extractFunction('_lodPxNow'), extractFunction('_lodEligible'),
     extractFunction('_lodSetCasting'), extractFunction('_lodRemeasure'),
