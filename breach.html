@@ -20394,6 +20394,11 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
      An immediate static body on a prop about to become dynamic would strand an invisible solid box at the
      spawn point. The tick walks `colliders`, which a dynamic prop has already left, so it cannot happen. */
   if(!obj.userData.phys && typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();
+  /* build 1435: a prop selected before its model landed has no outline (there was nothing to measure).
+     Nothing else re-runs the highlight, so without this the box only appears on the creator's next nudge —
+     which is the other half of the report. `editorOpen` is declared near the top of the file precisely so
+     boot-time callbacks like this one can read it, and it is false for every boot-time call. */
+  if(editorOpen && typeof updateSelectionHighlight==='function') updateSelectionHighlight();
   return obj;
 }
 // Physics state (declared here, before spawnProp, because restoring a saved/synced dynamic prop calls
@@ -34296,7 +34301,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1434 · 2026-08-08';
+const BUILD_VERSION = 'build 1435 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -50631,8 +50636,13 @@ function activeSel(){ return editorActive==='lights' ? selLights : selProps; }  
 const _cen = new THREE.Vector3();
 function selCentroid(){ const list=activeSel(); _cen.set(0,0,0); for(const o of list) _cen.add(o.position); return _cen.multiplyScalar(1/Math.max(1,list.length)); }
 function syncSelToIdx(){ const o = propModels[editorTargets.props.idx]; selProps = o ? [o] : []; }
+// build 1435: seeded with an EMPTY group, not the scene. `new THREE.BoxHelper(x)` measures x on the spot,
+// so seeding with the scene walked every object in the level once per pooled helper — and left each one
+// holding the whole map as its geometry, which is what _selOutline below exists to make sure is never
+// drawn. An empty group measures to nothing and costs nothing.
+const _selSeed = new THREE.Group();
 function ensureSelBoxes(n){
-  while(selBoxes.length < n){ const b = new THREE.BoxHelper(scene, 0x38f5b5); b.material.depthTest=false; b.visible=false; scene.add(b); selBoxes.push(b); }
+  while(selBoxes.length < n){ const b = new THREE.BoxHelper(_selSeed, 0x38f5b5); b.material.depthTest=false; b.visible=false; scene.add(b); selBoxes.push(b); }
 }
 function syncPropStateFromObj(){
   const o = editorTargets.props.obj(); if(!o) return; const s = editorTargets.props.state;
@@ -51174,13 +51184,28 @@ function _xfGroupApply(k, oldV, newV, uniform){
   }
   return n > 0;
 }
+// three's BoxHelper.update() ends its measure with `if ( _box.isEmpty() ) return;` — it KEEPS ITS PREVIOUS
+// GEOMETRY rather than clearing. So pointing a helper at something with nothing in it yet (a prop whose
+// model has not landed) and then setting .visible = true outlines it with whatever the helper last held:
+// the previously selected prop, or — for a pooled helper seeded from the scene — the entire level. That is
+// the "huge bounding box that resizes correct after I drag a handle" reported from play. Measured on a real
+// prop: 142 x 28 x 142 drawn around a prop 1 m across.
+// So the box is measured FIRST and the helper is only shown when there is something to show. One extra
+// Box3 walk per outlined object, on selection changes and drags, never per frame.
+const _selB3 = new THREE.Box3();
+function _selOutline(b, o){
+  if(!b || !o) return false;
+  _selB3.setFromObject(o);
+  if(_selB3.isEmpty()){ b.visible = false; return false; }
+  b.setFromObject(o); b.visible = true; return true;
+}
 function updateSelectionHighlight(){
   if(isGroupSel()){
     const list = activeSel();
     const boxOf = (o)=> (editorActive==='lights' && o.userData.marker) ? o.userData.marker : o;   // box the visible light marker
     if(selBox) selBox.visible = false;
     ensureSelBoxes(list.length);
-    list.forEach((o,i)=>{ const b=selBoxes[i]; b.setFromObject(boxOf(o), true); b.visible=true; });
+    list.forEach((o,i)=>{ _selOutline(selBoxes[i], boxOf(o)); });
     for(let i=list.length;i<selBoxes.length;i++) selBoxes[i].visible=false;
     _setVehArrow(null);   // build 719: no forward arrow on a multi-selection
     _setJointGiz(null);   // build 756: no hinge marker on a multi-selection
@@ -51192,9 +51217,8 @@ function updateSelectionHighlight(){
   _setVehArrow(o);
   _setJointGiz(o);   // build 756: show the joint hinge point/axis for the selected prop
   if(!o){ if(selBox) selBox.visible=false; updateGizmo(); return; }
-  if(!selBox){ selBox = new THREE.BoxHelper(o, 0x38f5b5); selBox.material.depthTest=false; scene.add(selBox); }
-  else { selBox.setFromObject(o); }
-  selBox.visible = true;
+  if(!selBox){ selBox = new THREE.BoxHelper(_selSeed, 0x38f5b5); selBox.material.depthTest=false; scene.add(selBox); }
+  _selOutline(selBox, o);
   updateGizmo();
 }
 // Click an object in the scene (while the editor is open) to jump straight to its settings.
