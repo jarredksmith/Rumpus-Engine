@@ -34306,7 +34306,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1436 · 2026-08-08';
+const BUILD_VERSION = 'build 1437 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -50305,10 +50305,21 @@ function renderEditorFields(){
     const commit = (raw, fromSlider)=>{
       let v = parseFloat(raw); if(isNaN(v)) return;
       const isScale = (fld.k==='sx'||fld.k==='sy'||fld.k==='sz');
+      /* build 1437: a number input commits PER KEYSTROKE, so typing a fractional scale passes through the
+         digits that precede it — and "0" is one of them. A zero written into the state then became the base
+         the NEXT keystroke divided by, through a `|| 0.00001` fallback, so "0.8" on a prop at scale 2 read
+         ratio 80000 and multiplied the other two axes by it: the field said 0.8 and the prop was
+         0.00001 x 160000 x 160000. Every scale-down beginning with "0." did it, in the default
+         configuration. A scale of zero is not a value anyone can have — the proportional branch already
+         clamps writes at 0.00001 — so it is not a state to pass through on the way to one. */
+      if(isScale && !(v > 0)) return;
       const _xfOld = tgt.state[fld.k];   /* build 1368: the group apply needs the primary’s value BEFORE this commit */
       if(isScale && scaleProportional && editorActive==='props'){
         // Proportional ON: dragging one scale axis scales all three together, preserving their ratios (matches the gizmo's uniform handle).
-        const old = tgt.state[fld.k] || 0.00001, ratio = v/old;
+        /* ...and the base is never SUBSTITUTED. If the live value is not a positive number there is no
+           proportion to preserve, so this falls through to setting the one axis rather than inventing a
+           denominator five orders of magnitude away from it. */
+        const old = tgt.state[fld.k], ratio = (old > 0) ? (v/old) : 0;
         if(isFinite(ratio) && ratio>0){
           tgt.state.sx = Math.max(0.00001, tgt.state.sx*ratio);
           tgt.state.sy = Math.max(0.00001, tgt.state.sy*ratio);

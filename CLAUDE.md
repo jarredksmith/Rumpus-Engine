@@ -1743,6 +1743,56 @@ working. The rule from the logic booth stands: **read the object before authorin
 Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
 `explodeAt + _blastProps` now, every assertion unchanged in intent.
 
+## Typing 0.8 into a scale field made the prop 160 km wide (build 1437)
+
+Found by a four-critic audit run against the tree, and it is the worst defect this session has produced:
+**silent, destructive, in the default configuration, on the commonest edit in level building.**
+
+A number input commits PER KEYSTROKE (`num.oninput = ()=>commit(num.value,false)`), so typing a value
+passes through every prefix of it — and for a scale-down written the way people write them, one of those
+prefixes is `"0"`. Proportional scaling is on by default. On a prop at scale (2,2,2), typing `0.8`:
+
+```
+"0"    v=0  -> ratio 0  -> not (isFinite && >0) -> the else branch -> sx := 0
+"0."   parseFloat("0.") = 0                     -> the same       -> sx := 0
+"0.8"  old = tgt.state[fld.k] || 0.00001        -> ratio 80000    -> sy, sz *= 80000
+```
+
+The field reads `0.8`. The prop is **0.00001 x 160000 x 160000**. Nothing reports it, and the creator's
+next Save writes it to the file.
+
+### The fix is two lines, and the second is why the first is enough
+
+- **A scale of zero is REFUSED.** The proportional branch already clamps its writes at 0.00001, so zero is
+  not a value anyone can hold — which makes it not a state to pass *through* on the way to one. That alone
+  closes the reported path, because a zero written into the state is the only way the base becomes falsy.
+- **The ratio's base is never SUBSTITUTED.** `|| 0.00001` turned "there is no proportion here" into a
+  denominator five orders of magnitude from the truth. If the live value is not positive there is no
+  proportion to preserve, so it falls through to setting the one axis.
+
+Negative scales go with the zero: they flip the winding and break the lighting, and the clamp already
+refused them on this path.
+
+### What the test does, and the property it protects
+
+`test-1437` lifts the REAL `commit` closure out of the source and types into it one character at a time,
+which is what an `<input type=number>` actually does. The pre-1437 form is **reconstructed from the shipped
+text** (builds 1434 and 1435's pattern), so the premise is proven rather than asserted: it reproduces
+`sy = 160000` exactly.
+
+The property that matters for proportional scaling is not "the number you typed appears" — it is that the
+SHAPE survives. On a (2,4,6) prop, typing `0.25` must leave sy at 2x sx and sz at 3x sx, and it does. That
+holds because the ratios compose correctly across keystrokes once no keystroke can write a zero.
+
+### A note on the audit that found it
+
+Four critics ran against the tree, each required to verify every claim in source before asserting it (the
+build-1159 rule). **Three of the four opened by reporting that `BUILD_VERSION` read 1431 or 1432 rather
+than 1436** — they were reading during container rollback #29's window. That is build 1389's lesson
+arriving for reviewers: *a critic cannot silently review a build that is not in the tree*, and the only
+reason it did not poison the results is that they were told to state what they could not verify, and did.
+Every finding acted on was re-verified against the recovered tree first.
+
 ## The frame meter had one door, and it was a key no phone has (build 1436)
 
 Asked from use: *"Can there be a way to open the dev hud on a touch device? I want to see FPS but I can't
