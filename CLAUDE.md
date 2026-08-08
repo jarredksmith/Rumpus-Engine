@@ -1712,6 +1712,68 @@ everything measured in Node against the real files (1378's compensation is re-de
 measurement, which does not involve those maps. **A capture rig that stages an incomplete copy of the game
 does not fail — it quietly photographs a different game.**
 
+## A physics prop is not in `colliders`, and the grenade was not a blast (build 1433)
+
+Two reports from play in one message, and they share a root worth stating first: **`setPropDynamic`
+SPLICES a prop out of `colliders` and puts it in `dynamicProps`.** Every consumer therefore has to ask for
+both lists, and the bullet ray always did — `[...enemyMeshes, ...bots, ...colliders, ...dynamicProps,
+floor]`. Nothing enforces that, so each new consumer is a fresh chance to ask for one.
+
+**1. "Grenades don't seem to cause dynamic props to react."** Not a near miss: `explodeGrenade` is a
+SEPARATE detonator from `explodeAt` and referenced props **zero times** — no damage, no shove, no shatter,
+no chain-detonating a barrel. Build 1405 taught `explodeAt` to throw what it damages and every blast in
+the game inherited it except the one the player throws, which never called it. The prop blast is now
+`_blastProps`, called by both — **one body, because two implementations of one behaviour is how the
+grenade came to be the odd one out** (1162, 1252, 1266, 1280, 1400).
+
+**2. "Some imported props let the rocket pass right through them."** The rocket swept `colliders` only, so
+it flew through every physics prop in the level — which is why shooting a crate worked and rocketing it
+did not. The laser SIGHT had the identical split and shone through them too; fixed with it.
+
+```
+grenade beside a dynamic crate    68 damage   ·   CONTROL 30 m away: 500 hp, unmoved
+rocket at a dynamic prop          detonates, 55.7 damage, prop provably NOT in colliders
+```
+
+**And a field name guessed rather than read, for the sixth time this session:** `GRENADE.dmg` does not
+exist — it is `damage` — so the first run passed `undefined`, `hp -= NaN`, and the readback showed
+`hp: null`. A wrong key that throws is cheap; one that silently produces NaN reads as the feature not
+working. The rule from the logic booth stands: **read the object before authoring against it.**
+
+Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
+`explodeAt + _blastProps` now, every assertion unchanged in intent.
+
+## The decal ghost: DIAGNOSED, NOT FIXED (open, after build 1433)
+
+Reported with a screenshot and the model: bullet decals land in mid-air, metres from the prop, on an
+invisible barrier. A decal is stamped at the shot ray's hit point, so this is a raycast that disagrees
+with the geometry — and the A/B is decisive.
+
+The reported arch spans **z 39.3–40.7**. A ray along +Z at x=40, y=3 reports a hit at **z = 33.01** — six
+metres in front of it, at a height ABOVE the model (max y 2.53), and a ray at x=46 "hits" a model whose
+max x is 44.
+
+```
+build 1097's BVH raycast installed   phantom hits at z 33.01 and 37.14
+the same rays with it removed        no hit at all — they pass over and reach the wall at z 69
+```
+
+**Eliminated, each by measurement, and worth recording so they are not re-run:**
+- **NOT build 1431's geometric LOD** — the hits are byte-identical with levelling active and neutered,
+  even though this model (4,058 triangles) is over the threshold and gets a level.
+- **NOT staleness.** The reporter's own observation was that the editor shows a huge bounding box which a
+  gizmo drag snaps correct — so `refreshPropCollider` was the obvious suspect. Calling it does **not**
+  change the ray, and a full `delete __bvh; _installRaycastBVH()` rebuild reproduces the identical wrong
+  hit. The drag fixes the drawn BOX; the ray stays wrong. **Two symptoms, two causes.**
+
+The one live tell: the BVH holds **13,104 vertices for a 3,276-vertex mesh**, and the prop is scaled **8×**.
+That is where the next session should start — `_buildTriBVH` against a SCALED fixture, checking whether the
+node bounds and the triangle array agree with the geometry.
+
+Shipping a guess here was declined deliberately. The one time this session a plausible mechanism shipped
+without proof (1431's bake interaction) it cost a live crash, and the decal fault is cosmetic — collision,
+damage and shooting are unaffected; only the hit POINT is wrong.
+
 ## The bake was reading a geometry it never set up (build 1432)
 
 Reported from play, on the live site, with the console overlay build 1330 exists to produce:

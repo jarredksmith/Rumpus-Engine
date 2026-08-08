@@ -4,7 +4,7 @@
 // Launch Power, same channel the trebuchet uses.
 import { gameSource, extractFunction, done, assert } from './harness.mjs';
 
-const ex = extractFunction('explodeAt');
+const ex = (extractFunction('explodeAt') + extractFunction('_blastProps'));
 assert(/player\.extVel\.x\+=kx\/kh\*kb; player\.extVel\.z\+=kz\/kh\*kb; player\.vel\.y=Math\.max\(player\.vel\.y,\(5\+R\*0\.6\)\*f\*LP\); player\.onGround=false;/.test(ex), 'explodeAt launches the player');
 assert(/applyEnemyDamageToSelf\(pd, pos\.x, pos\.z\)/.test(ex), 'explodeAt still applies self-damage alongside the launch');
 

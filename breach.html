@@ -22986,6 +22986,7 @@ function loadGunModel(){ showWeaponModel(curWep); }
 // the world and draw a red dot at the hit plus a thin beam from a gun-ish origin. World-space, so it works on any
 // gun model. _laserVisible is pure (unit-tested). Hidden in menus, while reloading, on melee, and deep in ADS.
 let _laserDot=null, _laserBeam=null; const _laserRay = new THREE.Raycaster();
+const _lzTgts = [];   // build 1433: reused per frame (1168)
 const _lz_o=new THREE.Vector3(), _lz_d=new THREE.Vector3(), _lz_r=new THREE.Vector3(), _lz_u=new THREE.Vector3(), _lz_start=new THREE.Vector3();
 function _laserVisible(s){ return !!(s.hasLaser && s.gameOn && !s.reloading && !s.melee && !s.shopOpen && !s.paused && !s.dead && (s.adsBlend||0) < 0.6); }
 function ensureLaser(){
@@ -23005,7 +23006,12 @@ function updateLaser(){
   ensureLaser();
   camera.getWorldPosition(_lz_o); camera.getWorldDirection(_lz_d); _lz_d.normalize();
   _laserRay.set(_lz_o, _lz_d); _laserRay.far = 300;
-  const hits = (typeof colliders!=='undefined' && colliders.length) ? _laserRay.intersectObjects(colliders, true) : [];
+  /* build 1433: the same list split — the dot used to shine THROUGH every physics prop, for the same
+     reason the rocket flew through them. Cosmetic rather than a hit test, but it is the same question. */
+  _lzTgts.length=0;
+  if(typeof colliders!=='undefined') for(const c of colliders) _lzTgts.push(c);
+  if(typeof dynamicProps!=='undefined') for(const c of dynamicProps) _lzTgts.push(c);
+  const hits = _lzTgts.length ? _laserRay.intersectObjects(_lzTgts, true) : [];
   if(!hits.length){ _laserDot.visible=false; _laserBeam.visible=false; return; }
   const hit=hits[0].point, dist=hits[0].distance;
   // beam start: a touch below-right of the eye, approximating the muzzle (the gun is a viewmodel, not in the world)
@@ -31293,6 +31299,9 @@ function explodeGrenade(g){
   explosions.push({ mesh:blast, light:bl, life:0.35, maxR:R });
   for(let i=0;i<(usedSheet?6:14);i++) { spark(pos, 0xffaa44); }
   if(typeof NET!=='undefined' && NET.mode==='client'){ scene.remove(g.mesh); return; }   // build 670: clients render the blast only; the host authors the damage. build 1015: ...and the spent grenade prop leaves the scene (it used to linger forever)
+  /* build 1433: ...and props react. Host/solo only, above the mode split, because a grenade damages props
+     identically in co-op and PvP and the two branches below would each need their own copy otherwise. */
+  if(typeof _blastProps==='function') _blastProps(pos, R, GRENADE.damage, (g.by!=null)?g.by:0);
   // AoE damage: full at the center, linear falloff to 0 at the radius
   if(typeof pvpMode==='function' && pvpMode()){
     // build 1006: grenades WORK in PvP — bots + remote players + the host take blast damage
@@ -31369,6 +31378,18 @@ function explodeAt(pos, R, dmg, byId){
      Build 1421 narrowed it once more — to "cannot be DESTROYED" — so the ternary that used to route
      around `damageProp` is gone: the blast registers on an unbreakable prop (flash, sound, `damaged`) and
      `damageProp` itself is the one place that decides it does not break. */
+  _blastProps(pos, R, dmg, byId);
+}
+/* build 1433: the blast's effect on PROPS, lifted out of explodeAt so the GRENADE can have it too.
+   Reported from play: "grenades don't seem to cause dynamic props to react." They did not — and not by a
+   near miss. `explodeGrenade` is a SEPARATE detonator from `explodeAt` and referenced props ZERO times:
+   no damage, no shove, no shatter, no chain-detonating a barrel. Build 1405 taught explodeAt to throw
+   what it damages and every call site inherited it EXCEPT the grenade, which never called it.
+   One body, not two — two implementations of one behaviour is the defect this file records more than any
+   other (1162, 1252, 1266, 1280, 1400), and it is exactly how the grenade came to be the odd one out. */
+function _blastProps(pos, R, dmg, byId){
+  /* build 1405: damage AND throw. Damage first, and shove only what SURVIVED — the same order every other
+     damage site here uses, because a shattered prop's body is gone and its debris is its own system. */
   for(const o of dynamicProps.slice()){
     if(!o.userData || o.userData._shattered || !o.userData.phys) continue;
     const d=o.position.distanceTo(pos); if(!(d>0.01 && d<R)) continue;
@@ -31491,6 +31512,7 @@ function updateGrenades(dt){
 // the damage; a client's rocket is simulated on the host, and everyone sees the rocket fly + the blast. ----------
 const rockets = []; const ROCKET_SPEED = 42;
 const _rkRay = new THREE.Raycaster(); const _rkDir = new THREE.Vector3(); const _rkPrev = new THREE.Vector3();
+const _rkTgts = [];   // build 1433: reused, because a rocket sweeps this every frame it is in flight (1168)
 function makeRocketMesh(){
   const g=new THREE.Group();
   g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,0.5,8), new THREE.MeshBasicMaterial({color:0x552200})));
@@ -31537,8 +31559,16 @@ function updateRockets(dt){
     // rockets up against an invisible wall in open air. A mesh ray only hits geometry that's actually there
     // (and sweeping prev->now also stops a fast rocket from tunnelling through a thin wall).
     if(!impact){ const dx=p.x-_rkPrev.x, dy=p.y-_rkPrev.y, dz=p.z-_rkPrev.z, L=Math.hypot(dx,dy,dz);
-      if(L>1e-5 && colliders.length){ _rkDir.set(dx/L,dy/L,dz/L); _rkRay.set(_rkPrev,_rkDir); _rkRay.far=L+0.05;
-        const hits=_rkRay.intersectObjects(colliders, true); const _rH=(typeof _firstSolidHit==='function')?_firstSolidHit(hits):(hits[0]||null); if(_rH){ p.copy(_rH.point); impact=true; } } }   /* build 1236: a rocket must not detonate on an invisible collision volume mid-doorway */
+      /* build 1433: `colliders` AND `dynamicProps`. Reported from play: "some imported props let the
+         rocket pass right through them." A prop with physics on is SPLICED OUT of `colliders` by
+         setPropDynamic and lives in `dynamicProps` instead, so a ray that asks only the first list flies
+         straight through every physics prop in the level. The BULLET ray has always asked for both
+         (`[...enemyMeshes, ...bots, ...colliders, ...dynamicProps, floor]`) — the rocket never did, which
+         is why shooting a crate worked and rocketing it did not. Reused array: build 1168 removed exactly
+         this class of per-frame allocation, and a rocket in flight runs this every frame. */
+      if(L>1e-5 && (colliders.length || dynamicProps.length)){ _rkDir.set(dx/L,dy/L,dz/L); _rkRay.set(_rkPrev,_rkDir); _rkRay.far=L+0.05;
+        _rkTgts.length=0; for(const c of colliders) _rkTgts.push(c); for(const c of dynamicProps) _rkTgts.push(c);
+        const hits=_rkRay.intersectObjects(_rkTgts, true); const _rH=(typeof _firstSolidHit==='function')?_firstSolidHit(hits):(hits[0]||null); if(_rH){ p.copy(_rH.point); impact=true; } } }   /* build 1236: a rocket must not detonate on an invisible collision volume mid-doorway */
     if(!impact){
       if(!pvpMode()){ for(const en of enemies){ if(en.mesh && en.mesh.position.distanceTo(p)<1.0){ impact=true; break; } } }
       else {
@@ -34254,7 +34284,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1432 · 2026-08-08';
+const BUILD_VERSION = 'build 1433 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
