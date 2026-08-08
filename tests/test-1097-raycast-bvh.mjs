@@ -14,7 +14,10 @@ const build = extractFunction('_buildTriBVH');
 // ---------------------------------------------------------------- executable: the builder
 // _buildTriBVH is deliberately THREE-free (plain arrays), so it runs as-is.
 {
-  const fn = new Function(`${build}\nreturn _buildTriBVH;`)();
+  // build 1434: the builder reads positions through the attribute API (getX/getY/getZ) rather than the
+  // raw array, because a glTF POSITION is very often interleaved. The packer is LIFTED FROM SOURCE, never
+  // restated — a rig that restates a helper keeps passing against a stale copy.
+  const fn = new Function(`${extractFunction('_bvhPackPos')}\n${build}\nreturn _buildTriBVH;`)();
   // a 12x12 grid of quads (288 tris), indexed
   const N = 12, pos = [], idx = [];
   for (let z = 0; z <= N; z++) for (let x = 0; x <= N; x++) pos.push(x, Math.sin(x * z) * 0.2, z);
@@ -22,7 +25,9 @@ const build = extractFunction('_buildTriBVH');
     const a = z * (N + 1) + x, b = a + 1, c = a + N + 2, d = a + N + 1;
     idx.push(a, b, c, a, c, d);
   }
-  const geo = { attributes: { position: { array: new Float32Array(pos), count: pos.length / 3 } },
+  const pa = new Float32Array(pos);
+  const geo = { attributes: { position: { array: pa, count: pos.length / 3,
+      getX: i => pa[i*3], getY: i => pa[i*3+1], getZ: i => pa[i*3+2] } },
     index: { array: new Uint32Array(idx), count: idx.length } };
   const bvh = fn(geo);
   const triCount = idx.length / 3;

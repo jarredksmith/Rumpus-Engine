@@ -365,6 +365,16 @@ shattered, faceted, blue-green shading. Measured on a reported model: 98.4% of i
 **Build 1429 fixes this in the engine** — no re-export needed, no setting to change, and correctly-authored
 models are untouched. If you are on an older build, exporting textures as webp or png avoids it.
 
+**Optimized/compressed geometry — also nothing to configure, and also one fixed bug.** `gltfpack`, meshopt
+and essentially every "optimize my glTF" pipeline pack a mesh's position, normal, tangent and UV into one
+*interleaved* buffer. Up to build 1433 the fast raycast Rumpus builds for big imported models read that
+buffer as though it held nothing but coordinates, so it built its search tree out of normals and UVs. The
+symptom is unmistakable and was reported exactly this way: **bullet decals landing in mid-air, metres from
+the prop, on an invisible barrier**. Measured on a reported model, 60 rays: every single one reported a hit
+outside the model, the worst 7.2 m away. Collision, damage and physics were never affected — only where a
+shot said it landed. **Build 1434 fixes it in the engine**, and afterwards the raycast agrees with three.js's
+own to the last decimal. Thin models showed it worst; a chunky one could hide it entirely.
+
 ### Animation
 | Control | What it does |
 |---|---|
