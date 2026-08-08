@@ -12,7 +12,7 @@ assert(/if\(prevSp >= u\.impactVel && \(prevSp - curSp\) >= u\.impactVel\*0\.5\)
 assert(/xaSnapToBase\(\);   \/\/ restore animated props to their base FIRST/.test(src), 'startGame re-bases from the true base, not a mid-swing pose');
 assert(/for\(const it of _impactList\) shatterProp\(it\.o, it\.o\.position\.clone\(\), it\.d, 9, null\)/.test(up), 'detonates after the sync loop');
 
-const ea = extractFunction('explodeAt');
+const ea = (extractFunction('explodeAt') + extractFunction('_blastProps'));
 assert(/const _vp = pos\.clone\(\); _vp\.y \+= \(VFX\.explosion\.size\|\|6\) \* eScale \* 0\.35/.test(ea), 'explosion/smoke billboards lifted off the surface');
 assert(/playFlipbook\('explosion', _vp, eScale\)/.test(ea) && /playFlipbook\('smoke', _vp,/.test(ea), 'both billboards use the lifted position');
 

@@ -85,7 +85,7 @@ const src = gameSource();
 // ------------------------------------------------------- the loop's decision, executed ----
 {
   const loop = (() => {
-    const fn = extractFunction('explodeAt');
+    const fn = (extractFunction('explodeAt') + extractFunction('_blastProps'));
     const i = fn.indexOf('for(const o of dynamicProps.slice()){');
     return fn.slice(i, fn.indexOf('\n  }', i) + 4);
   })();

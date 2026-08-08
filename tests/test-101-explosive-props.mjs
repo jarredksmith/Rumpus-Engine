@@ -6,7 +6,7 @@ import { gameSource, extractFunction, html, done, assert } from './harness.mjs';
 const src = gameSource();
 
 assert(/function explodeAt\(pos, R, dmg, byId\)/.test(src), 'shared blast fn exists');
-const ex = extractFunction('explodeAt');
+const ex = (extractFunction('explodeAt') + extractFunction('_blastProps'));
 assert(/playFlipbook\('explosion', _vp/.test(ex), 'plays the explosion sprite sheet');
 assert(/if\(NET\.mode==='client'\) return;/.test(ex), 'clients show visuals only; host authors damage');
 assert(/alertEnemy\(en, pos\.x, pos\.z\); _blastLaunch\(en, pos\.x,pos\.y,pos\.z, R, f\); enemyHurt\(en, dmg\*f, pos\.x, pos\.z\)/.test(ex), 'co-op: falloff AoE damages + alerts + launches enemies (build 389)');

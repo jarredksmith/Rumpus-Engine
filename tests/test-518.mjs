@@ -26,7 +26,7 @@ assert(/if\(typeof NET!=='undefined' && NET\.mode==='client'\)\{ scene\.remove\(
 assert(/for\(const en of enemies\.slice\(\)\)\{/.test(eg), 'the host still applies AoE damage');
 
 // --- explodeAt broadcasts every blast (rockets, props, hazards) ---
-const ea = extractFunction('explodeAt');
+const ea = (extractFunction('explodeAt') + extractFunction('_blastProps'));
 assert(/if\(NET\.mode==='host'\)\{ for\(const id in NET\.conns\)\{ try\{ NET\.conns\[id\]\.send\(\{t:'boom', p:\[pos\.x,pos\.y,pos\.z\], r:R\}\); \}[\s\S]*?if\(NET\.mode==='client'\) return;/.test(ea), 'host broadcasts the boom, then clients return after the visual');
 
 // --- the rocket call-site no longer double-broadcasts (explodeAt owns it now) ---

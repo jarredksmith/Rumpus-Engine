@@ -9,7 +9,14 @@ const src = gameSource();
 const ur = extractFunction('updateRockets');
 assert(/_rkPrev\.copy\(rk\.mesh\.position\); rk\.mesh\.position\.addScaledVector\(rk\.vel, dt\)/.test(ur), 'rocket records its previous position before moving (for the sweep)');
 assert(/_rkDir\.set\(dx\/L,dy\/L,dz\/L\); _rkRay\.set\(_rkPrev,_rkDir\); _rkRay\.far=L\+0\.05;/.test(ur), 'a ray is swept over this frame of travel');
-assert(/const hits=_rkRay\.intersectObjects\(colliders, true\); const _rH=[^\n]*if\(_rH\)\{ p\.copy\(_rH\.point\); impact=true; \}/.test(ur), 'detonates on the real mesh hit point, not a bounding box');   // build 1236: the hit is ghost-filtered first — still a real mesh point, never a bbox
+// build 1433: the target list gained `dynamicProps`. Reported from play — "some imported props let the
+// rocket pass right through them" — because a prop with physics on is SPLICED OUT of `colliders` by
+// setPropDynamic, so a ray asking only that list flew through every physics prop in the level. The intent
+// here is untouched: a real MESH hit point, ghost-filtered (1236), never a bounding box.
+assert(/const hits=_rkRay\.intersectObjects\(_rkTgts, true\); const _rH=[^\n]*if\(_rH\)\{ p\.copy\(_rH\.point\); impact=true; \}/.test(ur),
+  'detonates on the real mesh hit point, not a bounding box');
+assert(/for\(const c of colliders\) _rkTgts\.push\(c\); for\(const c of dynamicProps\) _rkTgts\.push\(c\);/.test(ur),
+  '...sweeping BOTH lists, so a physics prop stops a rocket');
 assert(!/for\(const b of bs\)\{ if\(p\.x>=b\.min\.x&&p\.x<=b\.max\.x/.test(ur), 'the old point-in-grid-box detonation is gone');
 
 const ug = extractFunction('updateGrenades');

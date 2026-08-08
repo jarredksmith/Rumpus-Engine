@@ -17,7 +17,13 @@ assert(!T({adsBlend:0.8}), 'fades out once you are sighted in (using the optic, 
 
 // --- wiring ---
 const ul = extractFunction('updateLaser');
-assert(/_laserRay\.set\(_lz_o, _lz_d\)/.test(ul) && /intersectObjects\(colliders, true\)/.test(ul), 'raycasts the aim into world colliders');
+// build 1433: the dot used to shine THROUGH every physics prop, because a prop with physics on is
+// spliced out of `colliders` and lives in `dynamicProps` — the same split that let rockets fly
+// through them. The intent here is unchanged: the aim is raycast into the world.
+assert(/_laserRay\.set\(_lz_o, _lz_d\)/.test(ul) && /intersectObjects\(_lzTgts, true\)/.test(ul),
+  'raycasts the aim into world colliders');
+assert(/for\(const c of colliders\) _lzTgts\.push\(c\)/.test(ul) && /for\(const c of dynamicProps\) _lzTgts\.push\(c\)/.test(ul),
+  '...asking BOTH lists, so a physics prop stops the dot');
 assert(/_laserDot\.position\.copy\(hit\)/.test(ul) && /p\.setXYZ\(1, hit\.x,hit\.y,hit\.z\)/.test(ul), 'dot sits at the hit; beam ends there');
 assert(/if\(!vis\)\{ if\(_laserDot\)\{ _laserDot\.visible=false; _laserBeam\.visible=false; \} return; \}/.test(ul), 'hides cleanly when inactive');
 assert(/Math\.max\(0\.006, Math\.min\(0\.04, dist\*0\.006\)\)/.test(ul), 'dot scales with distance for ~constant apparent size');

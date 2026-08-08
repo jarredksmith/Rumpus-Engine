@@ -70,7 +70,7 @@ const src = gameSource();
 
 // ---------------------------------------------------- an explosion reaches them ----
 {
-  const fn = extractFunction('explodeAt');
+  const fn = (extractFunction('explodeAt') + extractFunction('_blastProps'));
   assert(/for\(const o of dynamicProps\.slice\(\)\)/.test(fn), 'the dynamic sweep is unchanged');
   assert(/for\(const o of propModels\)\{ if\(!o \|\| !o\.userData \|\| !o\.userData\.shootable \|\| o\.userData\.phys\) continue;/.test(fn),
     'and a second sweep covers static targets — they are not in dynamicProps, so a grenade at the range ' +

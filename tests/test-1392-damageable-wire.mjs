@@ -127,7 +127,7 @@ const src = gameSource();
 // Build 1390 already wired this one (a second sweep over propModels), and the probe confirmed it fires.
 // Pinned here only because the self-damage guard is what made it read as dead on the first probe run.
 {
-  const fn = extractFunction('explodeAt');
+  const fn = (extractFunction('explodeAt') + extractFunction('_blastProps'));
   assert(/for\(const o of propModels\)\{ if\(!o \|\| !o\.userData \|\| !o\.userData\.shootable \|\| o\.userData\.phys\) continue;/.test(fn),
     'static targets get their own sweep');
   /* build 1405 restructured the DYNAMIC sweep so it can throw as well as damage, so the guard is written as

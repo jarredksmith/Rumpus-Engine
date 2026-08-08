@@ -128,7 +128,7 @@ const prop = (ud, st) => ({
     'client-prediction call sites have to agree with the host about that');
 }
 {
-  const fn = extractFunction('explodeAt');
+  const fn = (extractFunction('explodeAt') + extractFunction('_blastProps'));
   assert(/const broke = damageProp\(o, dmg\*f, null, null, 6, byId\);/.test(fn),
     'the dynamic sweep calls damageProp directly: the ternary that routed around it also skipped the ' +
     'flash, the sound and the event');
