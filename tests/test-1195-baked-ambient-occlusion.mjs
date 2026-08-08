@@ -65,8 +65,14 @@ const DIRS = new Function('Math', 'return ' + src.match(/\(\(\)=>\{ const out=\[
 // ---------------------------------------------------------------- the job's invariants, pinned
 {
   const tick = extractFunction('_bakeTick');
-  assert(/mesh\.geometry = mesh\.geometry\.clone\(\); mesh\.geometry\.userData\._bakeOwn = true;/.test(tick),
+  // build 1432 restructured this through a local, because the job must HOLD the geometry it set up —
+  // build 1431 swaps mesh.geometry between frames and the resumable job was reading whatever was drawn.
+  // The intent here is untouched: a shared geometry is cloned once and marked, so copies of one GLB do
+  // not bake over each other.
+  assert(/g = g\.clone\(\); g\.userData\._bakeOwn = true;/.test(tick),
     'copies of one GLB share geometry — the bake writes into a private, marker-guarded clone');
+  assert(/if\(!g\.userData\._bakeOwn\)\{/.test(tick), '...and only clones when it does not already own one');
+  assert(/mesh\.geometry = g;/.test(tick), '...then the mesh draws the clone');
   assert(/if\(ms\.some\(m => _bakeMats\.has\(m\)\)\)/.test(tick) && /new Float32Array\(cnt \* 3\)\.fill\(1\)/.test(tick),
     'the shared-material invariant: any unbaked mesh sharing a baked material gets an all-white attribute — a missing attribute renders BLACK');
   assert(/if\(typeof _glbPending !== 'undefined' && _glbPending > 0\) return;/.test(tick),
