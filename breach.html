@@ -9456,6 +9456,26 @@ scene.add(moon);
 // moonFar is seated at BOOT (the light count must never change during play — builds 636/977/1153/1155),
 // desktop only: a phone keeps one cascade and one shadow pass, decided once before the first compile.
 const moonFar = IS_COARSE ? null : new THREE.DirectionalLight(0x9fd8ff, 0.9);
+/* build 1459: the FAR cascade refreshes on its own cadence. r149's shadow pass checks a PER-LIGHT gate
+   after the global one (`if(shadow.autoUpdate === false && shadow.needsUpdate === false) continue;`, and
+   it clears `needsUpdate` itself once rendered), so opting this one light out costs no define, no light
+   count change and no recompile — which every other approach here would have.
+
+   WHY THE AUDIT'S OWN PROPOSAL WAS NOT BUILT. It suggested gating `_shDirty` on whether a mover sits
+   inside the NEAR cascade's fitted volume. Measured (tools/probe/shadow-dirty-scope.mjs): both cascades
+   share ONE dirty counter, so the honest test is against the FAR volume - and at the shipped defaults
+   that volume is 240 half-extent against an arena of 70. ONE HUNDRED PERCENT of the default arena, and
+   100% of a build-1372 wave ring, sit inside it. The proposed test buys 0.0% of wave frames on any level
+   under ~500 half-extent. What is real is the far map's COST, so that is what this build addresses.
+
+   FAR_SHADOW_EVERY IS DERIVED, not picked. A caster lags at most (N-1) frames; at run speed (14 u/s,
+   60 fps) that is (N-1) x 0.233 m. The far cascade only DRAWS beyond the near volume's edge (build
+   1185's coverage select), so the worst case is at that boundary, E = 60 m, where 444 screen px per
+   radian gives (N-1) x 1.7 px. N = 2 keeps the lag under two pixels; N = 3 would be 3.5, which is
+   visible on a sprinting caster. */
+const FAR_SHADOW_EVERY = 2;
+let _farShN = 0, _farShRefit = true;
+if(moonFar && moonFar.shadow) moonFar.shadow.autoUpdate = false;
 const _sunTargetFar = new THREE.Object3D(); scene.add(_sunTargetFar);
 const _fitL2 = new THREE.Vector3();
 if(moonFar){
@@ -34806,7 +34826,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1458 · 2026-08-09';
+const BUILD_VERSION = 'build 1459 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -40703,8 +40723,18 @@ function loop(){
   if(typeof _fitSunShadow==='function' && _fitSunShadow(camera)){
     if(typeof _sunOrbit==='function' && typeof worldCfg!=='undefined') _sunOrbit(worldCfg.sunAzim||0, Math.max(5, worldCfg.sunElev||61));
     _dirtyShadows(1);
+    _farShRefit = true;   /* build 1459: the far VOLUME moved — a stale map is now stale in the wrong place, which no cadence may skip */
   }
-  if(_shadowDirtyFrames>0){ renderer.shadowMap.needsUpdate = true; _shadowDirtyFrames--; }
+  if(_shadowDirtyFrames>0){ renderer.shadowMap.needsUpdate = true; _shadowDirtyFrames--;
+    /* build 1459: the near map follows the global flag as it always has; the far one takes every Nth
+       refresh, plus any frame its own volume was refitted. three clears `needsUpdate` after rendering,
+       so this only ever has to raise it. The counter advances on DIRTY frames alone — a still scene
+       skips the whole pass at the global gate and must not bank credit toward the next one. */
+    if(moonFar && moonFar.shadow){
+      _farShN++;
+      if(_farShRefit || (_farShN % FAR_SHADOW_EVERY === 0)){ moonFar.shadow.needsUpdate = true; _farShRefit = false; }
+    }
+  }
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
   let dt = rawDt;

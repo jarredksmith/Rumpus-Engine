@@ -13040,6 +13040,73 @@ rule. The declaration is excluded from that concatenation now and asserted separ
 scope, returned by reference, never rebuilt. **A pin against "allocation" has to distinguish allocating
 once from allocating per frame, or it fails for the opposite of the reason it exists.**
 
+## The audit's shadow fix died, and the measurement named the real one (build 1459)
+
+The performance audit asked for `_shDirty` to be gated on whether a mover sits inside the NEAR cascade's
+fitted volume. **The premise is true and the fix does not work**, and the numbers are worth keeping so
+nobody re-derives it:
+
+- Both cascades share ONE dirty counter (`_shadowDirtyFrames` → `renderer.shadowMap.needsUpdate`), so a
+  mover inside the **far** volume genuinely needs the refresh. The honest test is against that one.
+- Measured (`tools/probe/shadow-dirty-scope.mjs`): the far half-extent is **240** at the shipped defaults,
+  against an arena of **70**.
+
+```
+THIS arena inside the far volume    1681 / 1681 = 100%
+a build-1372 wave ring              192 / 192   = 100%
+coverage by arena size   70:100%  200:93.5%  500:21.9%  1000:5.5%  2000:1.4%
+```
+
+So the proposed test buys **0.0%** of wave frames on any level under ~500 half-extent. `_shDirty` is
+therefore **unchanged**, and `test-1459` asserts that it is — so the rejection stays a decision rather
+than something a later reader mistakes for an oversight.
+
+### What was real, and what r149 makes possible
+
+The far map's **cost**: measured at **358 of 990 draw calls** in a shadow frame. And r149 checks a
+**per-light** gate after the global one —
+
+```js
+if ( shadow.autoUpdate === false && shadow.needsUpdate === false ) continue;   // three.cjs:20914
+shadow.needsUpdate = false;                                                    // three.cjs:20989
+```
+
+— and clears the flag itself once rendered. So the far light opts out of the global refresh and takes
+every second one. **No define, no light-count change, no recompile**, which is what every other approach
+here would have cost (builds 636/977/1153).
+
+```
+draw calls   both cascades 990    near only 632    control 990 (returns exactly)
+average      far every frame 990  far every 2nd 811     -> 18.1% of shadow-frame draw calls
+cadence      [0,1,0,1,0,1], and a refit on frame 3 forces one out of turn
+```
+
+**`FAR_SHADOW_EVERY = 2` is derived, not picked.** A caster lags at most (N−1) frames; at run speed
+(14 u/s, 60 fps) that is (N−1) × 0.233 m. The far cascade only DRAWS beyond the near volume's edge
+(build 1185's coverage select), so the worst case is at that boundary, E = 60 m, where 444 screen px per
+radian gives **(N−1) × 1.7 px**. N=2 stays under two pixels; N=3 would be 3.5, which is visible on a
+sprinting caster. `test-1459` recomputes that arithmetic rather than trusting the comment.
+
+**A refit forces a refresh out of turn**, because the far VOLUME moved — a map stale in the wrong *place*
+is a different fault from one stale by a frame, and no cadence may skip it. It consumes itself without
+resetting the counter, so the phase is preserved. Quiet frames bank no credit: the global gate skips the
+whole pass, so the first frame of movement does not owe several refreshes.
+
+### Two test-writing notes, both mine
+
+- **My expectation was wrong and the engine was right.** I asserted a refit-then-cadence run would read
+  `1010`; it reads `1101`, because the refit fires frame 0 and frame 1 then fires *on its own turn*.
+  That IS the phase being preserved — only frame 0 differs from the unforced run. The test now asserts
+  both runs side by side so the property is visible rather than asserted from memory.
+- **A pin must not fail on code it does not own.** My "never flips castShadow or visibility" check sliced
+  2,600 characters after `const moonFar` and reached build 1185's legitimate `moonFar.visible =
+  moon.visible` mirror line. Scoped to the block this build added. The character-budget trap, in its
+  other direction: not a window that grew past its needle, but one that swallowed a neighbour.
+
+One pin moved (256), and its intent is unchanged: this build put the far cadence between its two
+statements, so it asserts them separately — the countdown drains one frame at a time, and a spent
+countdown leaves the map frozen.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
