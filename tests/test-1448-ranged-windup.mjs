@@ -148,10 +148,17 @@ assert(/if\(en\._aimT\)\{ en\._aimT=0; en\._aimTgt=null; \}/.test(src),
 }
 
 /* ---- the field, defaulted where every other ranged field is ------------------------------------------ */
-assert(/aimMs: \(ty\.aimMs != null\) \? ty\.aimMs : RANGED_AIM_MS/.test(src),
+// build 1449 moved the default into the ENEMY_BASE capture so a LEVEL can tune it too; the property is
+// unchanged — aimMs defaults per type, and the != null test is what lets an authored 0 mean "instant".
+assert(/aimMs:\(_t\.aimMs!=null\)\?_t\.aimMs:RANGED_AIM_MS/.test(src),
   'aimMs is a per-type field beside fireCd/burst/projSpeed/standoff');
-assert(/aimMs: \(ty\.aimMs != null\)/.test(src) && !/aimMs: ty\.aimMs\|\|/.test(src),
+assert(/aimMs: _eff\.aimMs/.test(src), '...and the spawn reads the derived value, so a level can tune it');
+// the != null test moved into the baseline capture with the default; what it protects is unchanged, and
+// build 1449 added a SECOND place the same rule has to hold — the level's own tuning
+assert(/aimMs:\(_t\.aimMs!=null\)/.test(src) && !/aimMs:_t\.aimMs\|\|/.test(src),
   '...tested for null rather than falsiness, or an authored 0 could never mean "instant"');
+assert(/out\[f\] = \(m && m\[f\]!=null\) \? m\[f\] : b\[f\]/.test(src),
+  '...and a LEVEL authoring 0 is honoured the same way (build 1449)');
 
 /* ---- the capsule pulses for it, through the ONE telegraph function ---------------------------------- */
 {

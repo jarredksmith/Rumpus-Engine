@@ -4,7 +4,10 @@ const src = gameSource();
 assert(/gunner:[^\n]*burst:4, burstGap:0\.09/.test(src), 'gunner has a 4-round burst');
 assert(/gunner:[^\n]*projSpeed:38/.test(src), 'gunner bolts fly fast');
 assert(/gunner:[^\n]*dmg:4,/.test(src), 'per-round damage rebalanced for the burst');
-assert(/burst: ty\.burst\|\|1, burstGap: ty\.burstGap\|\|0\.09/.test(src), 'burst config carried onto live enemies');
+// build 1449 routed burst through _enemyEff so a level can tune it; burstGap stays on the type. The
+// intent — the burst config reaches a live enemy — is unchanged and now covers both roads.
+assert(/burst: _eff\.burst, burstGap: ty\.burstGap\|\|0\.09/.test(src), 'burst config carried onto live enemies');
+assert(/burst:_t\.burst\|\|1/.test(src), '...with the factory default captured once, in the baseline');
 
 // per-round spread
 assert(/function fireEnemyShot\(en, target, spread\)/.test(src), 'fireEnemyShot takes spread');

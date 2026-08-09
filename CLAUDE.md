@@ -1940,6 +1940,66 @@ arriving for reviewers: *a critic cannot silently review a build that is not in 
 reason it did not poison the results is that they were told to state what they could not verify, and did.
 Every finding acted on was re-verified against the recovered tree first.
 
+## The knobs a shooting range is built from (build 1449)
+
+Build 1191 made hp, damage and speed per-level and stopped there. **Fire interval, burst size, bolt speed,
+standoff and build 1448's aim wind-up were engine constants** read straight off the type table by
+`spawnEnemy` — so a creator building the gauntlet's range could not make the gunners fire slower, aim
+longer, or hold further back. Those five ARE the range.
+
+They ride build 1191's machinery unchanged: `ENEMY_BASE` captures them, `_sanitizeEnemyMods` clamps them,
+`_enemyEff` derives them, and the spawn reads `_eff` instead of `ty`. Only-changed serialization and both
+loaders come free — an untuned level's file grows no key, measured.
+
+**They are ABSOLUTE, unlike `spd`.** A speed multiplier exists so a type's gait variance survives tuning
+(min and max move together); a fire rate has no variance to preserve, and *"fires every 3 seconds"* is what
+a creator thinks in.
+
+### Every floor is a real value, and the any-check counts keys
+
+The clamps' lower bounds are things somebody might want — `aimMs` 0 is 1448's documented instant shot,
+`standoff` 0 is "walk right up", `fireCd` 0.05 is a minigun — with the CEILINGS doing the work of stopping a
+hostile level file shipping a 1e9 burst.
+
+Which exposed the real trap. The sanitizer ended `if(e.hp!=null || e.dmg!=null || e.spd!=null){ out[k]=e; }`
+— **a list that has to grow with every field, where the one you forget is silently dropped on save.** And a
+mods object carrying only `aimMs: 0` is exactly what a truthiness test loses. It counts `Object.keys(e)` now.
+
+### The TDZ, caught by reading rather than by running
+
+`ENEMY_BASE` is a module-level initialiser that executes at BOOT, and it now reads `RANGED_AIM_MS` — which
+1448 declared beside the melee constant, **6,000 lines below it**. That is a throw on the first line of the
+game, and `typeof` would not have guarded it (1127, 1331, 1350, 1383, 1411, 1447). The constant moved above
+its reader, with a note at both ends saying why it sits away from the melee one. Found by checking the
+declaration order before running the script — which is the whole reason to check.
+
+### The editor shows them only on a type that shoots
+
+A fire rate on a melee grunt is a control with no consequence (build 1348), so the five sit on their own
+indented `ranged` row that only appears for `ENEMY_TYPES[k].ranged` — measured live: 10 inputs across the
+two ranged types, none on the other six. Each carries its factory value as the placeholder (blank visibly
+means factory) and a tooltip, because "standoff" does not explain itself.
+
+### Measured live, with an untuned level as the control
+
+```
+factory                fireCd 1.6 · burst 4 · projSpeed 38 · standoff 11 · aimMs 260
+authored               fireCd 4   · burst 3 · projSpeed 55 · standoff 28 · aimMs 900
+spawned enemy          every one of them
+in a real firefight    lead 916 ms (the authored 900), burst gaps 100/100, backing off 8 -> 17.7 toward 28
+round trip             the file carries them; cleared, restored, and a fresh spawn reads them again
+untuned control        the key is absent from the FILE — JSON drops undefined, so ask the round trip
+```
+
+**Six pins moved, and five were one trap.** 1191's baseline, 1372's lifted capture, 228's and 32's spawn
+lines and 1448's default all quoted a WHOLE literal that legitimately grew (builds 519/928/1411/1447 record
+the same thing). Each asserts its property now — *captured from the live type table*, *the spawn carries the
+set*, *`!= null` so an authored 0 survives*. The sixth is 1191's executing rig, handed `ENEMY_MOD_RANGED`
+lifted from source rather than restated.
+
+**And the prose trap for the eighth time:** my pin that the enumerated any-check was gone matched this
+build's own comment explaining why it went. Pin the STATEMENT, never the bare phrase.
+
 ## The gunner fired on the frame its cooldown expired (build 1448)
 
 A melee enemy has wound up before it swings since build **627** (320 ms), audible since **1283** and visible

@@ -21394,18 +21394,61 @@ let _enStepBudget = 0;
 // pattern (1190): a factory baseline captured at boot, only-changed values serialized, one clamped
 // sanitizer every loader routes through so a hostile level file cannot ship a 0-hp boss army at 30x
 // speed. Speed is a MULTIPLIER (min and max scale together, so a type's gait variance survives tuning).
-const ENEMY_BASE = {}; for(const _ek of ENEMY_TYPE_KEYS){ const _t=ENEMY_TYPES[_ek]; if(_t) ENEMY_BASE[_ek]={ hp:_t.hp, dmg:_t.dmg, speedMin:_t.speedMin, speedMax:_t.speedMax }; }
+/* build 1448: the ranged half of build 627's telegraph. A melee enemy has wound up before it swings since
+   627, and a charger since 635 — but a GUNNER fired on the exact frame its cooldown expired, so a player who
+   stepped out of cover was hit before anything on screen or in the mix had told them a shot was coming.
+   Build 1371 floored `shootCd` on the AWARE rising edge, which covers the first acquisition and nothing
+   after it: in an ongoing firefight every subsequent round was still instant.
+
+   260 ms rather than melee's 320. A swing is a body committing its whole mass; a shot is a weapon coming up,
+   and it happens at range where the player is already at a distance to react. It is per-TYPE (`aimMs`) beside
+   fireCd/burst/projSpeed/standoff, so a creator can lengthen it for a sniper or set 0 to get exactly the
+   pre-1448 instant fire back. */
+const RANGED_AIM_MS = 260;
+/* It is declared HERE, ~6,000 lines above the melee constant it mirrors, because build 1449's ENEMY_BASE
+   reads it in a module-level initialiser that runs at boot — and `typeof` does not guard a temporal dead
+   zone (builds 1127, 1331, 1350, 1383, 1411, 1447). Anything a boot-time capture reads has to be above it. */
+/* build 1449: build 1191 made hp/damage/speed per-level and stopped there, so the five fields that decide
+   how a RANGED enemy actually behaves — how often it fires, how many rounds, how fast they travel, how far
+   back it stands and (1448) how long it aims — were engine constants a creator could not reach. Those are
+   exactly the knobs a shooting range is built out of.
+
+   They are ABSOLUTE, unlike `spd`. A speed multiplier exists so a type's gait variance survives tuning
+   (min and max move together); a fire rate has no variance to preserve and "fires every 3 seconds" is what
+   a creator thinks in. The defaults here are the `||` fallbacks spawnEnemy has always applied, restated in
+   ONE place so the baseline and the spawn cannot disagree about what factory means. */
+const ENEMY_BASE = {}; for(const _ek of ENEMY_TYPE_KEYS){ const _t=ENEMY_TYPES[_ek]; if(_t) ENEMY_BASE[_ek]={ hp:_t.hp, dmg:_t.dmg, speedMin:_t.speedMin, speedMax:_t.speedMax,
+  fireCd:_t.fireCd||1.5, burst:_t.burst||1, projSpeed:_t.projSpeed||24, standoff:_t.standoff||11,
+  aimMs:(_t.aimMs!=null)?_t.aimMs:RANGED_AIM_MS }; }
+/* the five that only mean anything on a type that shoots — the editor hides them elsewhere, because a fire
+   rate on a melee grunt is a control with no consequence (build 1348) */
+const ENEMY_MOD_RANGED = ['fireCd','burst','projSpeed','standoff','aimMs'];
 function _sanitizeEnemyMods(o){ if(!o || typeof o!=='object') return null; const out={}; let any=false;
   for(const k of ENEMY_TYPE_KEYS){ const m=o[k]; if(!m || typeof m!=='object') continue; const e={};
     if(m.hp!=null  && isFinite(+m.hp))  e.hp  = Math.max(1, Math.min(99999, +m.hp));
     if(m.dmg!=null && isFinite(+m.dmg)) e.dmg = Math.max(0, Math.min(999, +m.dmg));
     if(m.spd!=null && isFinite(+m.spd)) e.spd = Math.max(0.25, Math.min(3, +m.spd));
-    if(e.hp!=null || e.dmg!=null || e.spd!=null){ out[k]=e; any=true; } }
+    /* build 1449. Every clamp's FLOOR is a real value a creator might want, not a defensive minimum: a
+       0 aimMs is build 1448's instant shot (the documented opt-out), and a 0.05 s fireCd is a minigun.
+       A level file is untrusted input, so the ceilings are what stop a hostile one shipping a 1e9 burst. */
+    if(m.fireCd!=null    && isFinite(+m.fireCd))    e.fireCd    = Math.max(0.05, Math.min(60, +m.fireCd));
+    if(m.burst!=null     && isFinite(+m.burst))     e.burst     = Math.max(1, Math.min(20, Math.round(+m.burst)));
+    if(m.projSpeed!=null && isFinite(+m.projSpeed)) e.projSpeed = Math.max(2, Math.min(200, +m.projSpeed));
+    if(m.standoff!=null  && isFinite(+m.standoff))  e.standoff  = Math.max(0, Math.min(200, +m.standoff));
+    if(m.aimMs!=null     && isFinite(+m.aimMs))     e.aimMs     = Math.max(0, Math.min(3000, Math.round(+m.aimMs)));
+    /* the any-check counts KEYS rather than listing them: written as `e.hp!=null || e.dmg!=null || ...` it
+       would have to grow with every field, and the one that got forgotten would be silently dropped on
+       save — and a mods object carrying ONLY `aimMs: 0` is exactly the case a truthiness test loses. */
+    if(Object.keys(e).length){ out[k]=e; any=true; } }
   return any ? out : null; }
 function _enemyEff(k){ const b=ENEMY_BASE[k]||{ hp:10, dmg:5, speedMin:3, speedMax:5 };
   const m=(typeof gameCfg!=='undefined' && gameCfg.enemyMods && gameCfg.enemyMods[k]) || null;
   const s=(m && m.spd) || 1;
-  return { hp:(m&&m.hp!=null)?m.hp:b.hp, dmg:(m&&m.dmg!=null)?m.dmg:b.dmg, speedMin:b.speedMin*s, speedMax:b.speedMax*s }; }
+  const out={ hp:(m&&m.hp!=null)?m.hp:b.hp, dmg:(m&&m.dmg!=null)?m.dmg:b.dmg, speedMin:b.speedMin*s, speedMax:b.speedMax*s };
+  /* build 1449: the five ranged fields, authored value over the captured factory one. `!= null` everywhere,
+     so an authored 0 (an instant shot, a standoff of zero) is honoured rather than read as "unset". */
+  for(const f of ENEMY_MOD_RANGED) out[f] = (m && m[f]!=null) ? m[f] : b[f];
+  return out; }
 // Weighted random type — later waves bias toward tougher + ranged hostiles, and mix in the odd Sapper.
 function pickEnemyType(waveNum, rng){
   rng = rng || Math.random; const r = rng();
@@ -23798,8 +23841,11 @@ function spawnEnemy(spawn){
   const _wr = (typeof gameCfg!=='undefined' && gameCfg.mode==='random' && !(typeof editorOpen!=='undefined' && editorOpen)) ? (1 + 0.04*Math.min((typeof wave!=='undefined'?wave:1), 25)) : 1;
   const _hp = Math.round(_eff.hp * _wr);
   const e = { id: nextEnemyId++, mesh, hp:_hp, maxHp:_hp, speed: _eff.speedMin + Math.random()*(_eff.speedMax-_eff.speedMin), dmg:_eff.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
-    ranged: !!ty.ranged, standoff: ty.standoff||11, fireCd: ty.fireCd||1.5, projSpeed: ty.projSpeed||24, burst: ty.burst||1, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
-    aimMs: (ty.aimMs != null) ? ty.aimMs : RANGED_AIM_MS,   // build 1448: the wind-up before the round leaves; 0 is the pre-1448 instant shot.4 + Math.random()*0.8,
+    /* build 1449: through _eff, so a level's own tuning reaches them. burstGap deliberately stays on the
+       type — it is the internal cadence of one burst, not a dial a range needs, and exposing every field
+       is how a tuning panel becomes unreadable. */
+    ranged: !!ty.ranged, standoff: _eff.standoff, fireCd: _eff.fireCd, projSpeed: _eff.projSpeed, burst: _eff.burst, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
+    aimMs: _eff.aimMs,   // build 1448: the wind-up before the round leaves; 0 is the pre-1448 instant shot.4 + Math.random()*0.8,
     exploder: !!ty.exploder, blastR: ty.blastR||6, blastDmg: ty.blastDmg||40,   // build 628: Sapper detonation
     strafe: !!ty.strafe,   // build 633: ranged enemy strafes while holding standoff
     cover: !!ty.cover, bravery: ty.cover ? (0.30 + Math.random()*0.15) : 0, flankSide: Math.random()<0.5?1:-1,   // build 1189: the bot brain's cover-break + flank, per type
@@ -27403,17 +27449,6 @@ function botHurt(b, dmg, sx, sz){
   return false;
 }
 let matchWarmup = 0;
-/* build 1448: the ranged half of build 627's telegraph. A melee enemy has wound up before it swings since
-   627, and a charger since 635 — but a GUNNER fired on the exact frame its cooldown expired, so a player who
-   stepped out of cover was hit before anything on screen or in the mix had told them a shot was coming.
-   Build 1371 floored `shootCd` on the AWARE rising edge, which covers the first acquisition and nothing
-   after it: in an ongoing firefight every subsequent round was still instant.
-
-   260 ms rather than melee's 320. A swing is a body committing its whole mass; a shot is a weapon coming up,
-   and it happens at range where the player is already at a distance to react. It is per-TYPE (`aimMs`) beside
-   fireCd/burst/projSpeed/standoff, so a creator can lengthen it for a sniper or set 0 to get exactly the
-   pre-1448 instant fire back. */
-const RANGED_AIM_MS = 260;
 const ENEMY_MELEE_WINDUP_MS = 320;   // build 627: telegraph window — a melee enemy winds up, then strikes; back out of reach during it and the swing whiffs
 let _warmupBroadcast = false;   // build 624: host has sent the live {t:'warmup'} count to clients this match (sent once)
 let _clientWarmupHold = false;  // build 624: client is frozen on "GET READY" until the host's synced count arrives
@@ -34551,7 +34586,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1448 · 2026-08-09';
+const BUILD_VERSION = 'build 1449 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -48347,7 +48382,7 @@ function renderEditorFields(){
     }
     { // build 1191: per-type enemy tuning — blank = factory; saved with the level
       const eh=document.createElement('div'); eh.className='hint'; eh.style.margin='10px 0 3px';
-      eh.innerHTML='<b>Enemy tuning</b> \u2014 hp / damage / speed\u00d7 per type (blank = factory)';
+      eh.innerHTML='<b>Enemy tuning</b> \u2014 per type, blank = factory. Ranged types get five more.';
       bWav.appendChild(eh);
       const _emGet=(k,f)=>{ const m=gameCfg.enemyMods&&gameCfg.enemyMods[k]; return (m&&m[f]!=null)?m[f]:''; };
       const _emSet=(k,f,v)=>{ pushUndoSnapshot(); const o=Object.assign({}, gameCfg.enemyMods||{}); const e=Object.assign({}, o[k]||{});
@@ -48361,15 +48396,32 @@ function renderEditorFields(){
         const row=document.createElement('div'); row.style.cssText='display:flex;gap:4px;margin:1px 0;align-items:center;';
         const nm=document.createElement('span'); nm.textContent=(ENEMY_TYPES[ek]&&ENEMY_TYPES[ek].name)||ek; nm.style.cssText='flex:0 0 74px;font-size:11px;color:#9fc0b8;';
         row.appendChild(nm);
-        for(const [f, ph] of [['hp', String(ENEMY_BASE[ek]?ENEMY_BASE[ek].hp:'')], ['dmg', String(ENEMY_BASE[ek]?ENEMY_BASE[ek].dmg:'')], ['spd', '1']]){
+        const _mk=(f, ph, st)=>{
           const ip=document.createElement('input'); ip.type='number'; ip.placeholder=ph; ip.value=_emGet(ek,f);
-          ip.step=(f==='spd')?'0.05':'1'; ip.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+          ip.step=st||'1'; ip.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
           ip.onchange=()=>{ _emSet(ek,f,ip.value); ip.value=_emGet(ek,f); };
-          row.appendChild(ip);
-        }
+          return ip;
+        };
+        const _base=(f)=>String((ENEMY_BASE[ek]&&ENEMY_BASE[ek][f]!=null)?ENEMY_BASE[ek][f]:'');
+        for(const [f, ph, st] of [['hp', _base('hp'), '1'], ['dmg', _base('dmg'), '1'], ['spd', '1', '0.05']])
+          row.appendChild(_mk(f, ph, st));
         bWav.appendChild(row);
+        /* build 1449: the five ranged fields, on their own indented row and ONLY for a type that shoots.
+           A fire rate on a melee grunt is a control whose consequence is invisible (build 1348). */
+        if(ENEMY_TYPES[ek] && ENEMY_TYPES[ek].ranged){
+          const r2=document.createElement('div'); r2.style.cssText='display:flex;gap:4px;margin:1px 0 3px 10px;align-items:center;';
+          const l2=document.createElement('span'); l2.textContent='ranged'; l2.style.cssText='flex:0 0 64px;font-size:10px;color:#6f8f88;';
+          r2.appendChild(l2);
+          for(const [f, st] of [['fireCd','0.05'], ['burst','1'], ['projSpeed','1'], ['standoff','0.5'], ['aimMs','10']]){
+            const ip=_mk(f, _base(f), st); ip.title=({ fireCd:'seconds between shots', burst:'rounds per burst',
+              projSpeed:'bolt speed (units/s)', standoff:'how far back it holds (units)',
+              aimMs:'wind-up before the round leaves (ms) \u2014 0 is an instant shot' })[f];
+            r2.appendChild(ip);
+          }
+          bWav.appendChild(r2);
+        }
       }
-      hint(bWav, 'Applies at spawn \u2014 already-spawned enemies keep their stats. Speed multiplies the type\u2019s min AND max, so its gait variety survives.', '2px 0 0');
+      hint(bWav, 'Applies at spawn \u2014 already-spawned enemies keep their stats. Speed multiplies the type\u2019s min AND max, so its gait variety survives; the ranged fields are absolute. Ranged row: fire interval s \u00b7 burst \u00b7 bolt speed \u00b7 standoff \u00b7 aim ms.', '2px 0 0');
     }
     const ugLab=document.createElement('label'); ugLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 2px;cursor:pointer;';
     const ugCb=document.createElement('input'); ugCb.type='checkbox'; ugCb.checked=(gameCfg.upgrades!==false); ugCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';

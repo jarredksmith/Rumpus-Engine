@@ -7,7 +7,7 @@
 // grunt at 30x speed, and spawn-time application so the formula, manifests and placed spawns all
 // inherit it with zero extra plumbing. Speed is a MULTIPLIER of the type's min AND max, so gait
 // variance survives tuning.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
 /* build 1400: the two byte-identical `if(level.game){...}` loader blocks became ONE `_applyGameCfg(g)` — build 1280's fix for props, applied to the game block after five settings turned out to be written and never read back. So `level.game.` reads `g.` and the count is 1, not 2. The assertion's intent — this field is restored by the level loaders — is unchanged, and is now STRONGER: both loaders provably route through the one function, which `test-1400` pins by count. */
 
 const src = gameSource();
@@ -33,7 +33,12 @@ const KEYS = ['grunt', 'runner', 'brute', 'gunner', 'sapper', 'shielded', 'charg
 
 // ---------------------------------------------------------------- the effective stats, executed
 {
-  const mk = (mods) => new Function('ENEMY_BASE', 'gameCfg', extractFunction('_enemyEff') + '\nreturn _enemyEff;')(
+  // build 1449 gave _enemyEff five more fields driven by a table; this rig's subject is the hp/dmg/speed
+  // derivation, so the table is LIFTED FROM SOURCE rather than restated — a rig that restates a dependency
+  // keeps passing against a stale copy.
+  const mk = (mods) => new Function('ENEMY_BASE', 'gameCfg',
+    'const ENEMY_MOD_RANGED = ' + extractConst('ENEMY_MOD_RANGED') + ';\n' +
+    extractFunction('_enemyEff') + '\nreturn _enemyEff;')(
     { grunt: { hp: 20, dmg: 10, speedMin: 4, speedMax: 7 } }, { enemyMods: mods });
   { const e = mk(null)('grunt');
     eq(e.hp, 20, 'no mods: factory hp'); eq(e.dmg, 10, '...dmg'); eq(e.speedMin, 4, '...speed'); eq(e.speedMax, 7, '...'); }
@@ -46,8 +51,16 @@ const KEYS = ['grunt', 'runner', 'brute', 'gunner', 'sapper', 'shielded', 'charg
 
 // ---------------------------------------------------------------- the wiring
 {
-  assert(/const ENEMY_BASE = \{\}; for\(const _ek of ENEMY_TYPE_KEYS\)\{ const _t=ENEMY_TYPES\[_ek\]; if\(_t\) ENEMY_BASE\[_ek\]=\{ hp:_t\.hp, dmg:_t\.dmg, speedMin:_t\.speedMin, speedMax:_t\.speedMax \}; \}/.test(src),
-    'the baseline is captured from the live type table at boot');
+  // A pin that quotes a WHOLE literal is a pin against the literal (builds 519/928/1411/1447) — build 1449
+  // legitimately added five more captured fields. The property is that the baseline is READ FROM the live
+  // type table at boot rather than restated, so assert THAT.
+  {
+    const cap = src.slice(src.indexOf('const ENEMY_BASE = {};'), src.indexOf('const ENEMY_MOD_RANGED'));
+    assert(/for\(const _ek of ENEMY_TYPE_KEYS\)\{ const _t=ENEMY_TYPES\[_ek\];/.test(cap),
+      'the baseline is captured from the live type table at boot');
+    for (const f of ['hp', 'dmg', 'speedMin', 'speedMax'])
+      assert(new RegExp(f + ':_t\\.' + f).test(cap), '...including ' + f + ', read off the type');
+  }
   assert(/const _eff = \(typeof _enemyEff==='function'\) \? _enemyEff\(typeKey\) : ty;/.test(src) &&
     /const _hp = Math\.round\(_eff\.hp \* _wr\);/.test(src) &&
     /hp:_hp, maxHp:_hp, speed: _eff\.speedMin \+ Math\.random\(\)\*\(_eff\.speedMax-_eff\.speedMin\), dmg:_eff\.dmg,/.test(src),

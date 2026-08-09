@@ -168,10 +168,15 @@ const mkWave = (playerStub, bossWave)=> new Function('Math','player',
   eq(TYPES.sapper.speedMin, 9.5, 'sapper floor unchanged at 9.5');
   eq(TYPES.sapper.speedMax, 11.8, 'sapper ceiling 11.8: the fuse can be outrun too');
   assert(TYPES.runner.speedMin > TYPES.grunt.speedMax, 'the runner still outruns every grunt (pressure survives the retune)');
-  const baseLine = src.match(/const ENEMY_BASE = \{\}; for\(const _ek of ENEMY_TYPE_KEYS\)\{ const _t=ENEMY_TYPES\[_ek\]; if\(_t\) ENEMY_BASE\[_ek\]=\{ hp:_t\.hp, dmg:_t\.dmg, speedMin:_t\.speedMin, speedMax:_t\.speedMax \}; \}/);
-  assert(baseLine, 'the 1191 factory-baseline capture is unchanged');
+  // The rig LIFTS the capture from source rather than restating it — right, but it pinned that line's exact
+  // text and build 1449 legitimately added five fields to it. Slice it by its own anchors instead, so the
+  // rig keeps testing the real capture without asserting one spelling of it.
+  const _bi = src.indexOf('const ENEMY_BASE = {};'), _bj = src.indexOf('const ENEMY_MOD_RANGED', _bi);
+  assert(_bi > 0 && _bj > _bi, 'found the 1191 factory-baseline capture');
+  const baseLine = [src.slice(_bi, _bj)];
   const eff = (cfg)=> new Function('gameCfg',
-    '"use strict"; const ENEMY_TYPES = ' + extractConst('ENEMY_TYPES') + '; const ENEMY_TYPE_KEYS = ' + extractConst('ENEMY_TYPE_KEYS') + '; '
+    '"use strict"; const ENEMY_TYPES = ' + extractConst('ENEMY_TYPES') + '; const ENEMY_TYPE_KEYS = ' + extractConst('ENEMY_TYPE_KEYS')
+    + '; const RANGED_AIM_MS = ' + extractConst('RANGED_AIM_MS') + '; const ENEMY_MOD_RANGED = ' + extractConst('ENEMY_MOD_RANGED') + '; '
     + baseLine[0] + ' ' + extractFunction('_enemyEff') + '; return _enemyEff;')(cfg);
   const d = eff({})('runner');
   eq(d.speedMin, 10.5, '_enemyEff serves the new runner floor'); eq(d.speedMax, 11.5, '...and ceiling');
