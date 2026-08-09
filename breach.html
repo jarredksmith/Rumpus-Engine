@@ -21973,7 +21973,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
 // the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
 // crushed red channel survives the restaging.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'img/tex/floor-concrete-n.png', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'img/tex/wall-panels-n.png', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, airDash:0, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'img/tex/floor-concrete-n.png', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'img/tex/wall-panels-n.png', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -22230,6 +22230,31 @@ function skyStatus(msg, isErr){
 }
 
 const JUMP_CUT_MIN = 0.1;   // build 1301: the shortest tap hop, so the setting can never swallow a jump
+/* ---- build 1463: THE AIR DASH (gameplay audit F6's remaining verb) --------------------------------
+   Build 1301 closed variable jump height and named what it deliberately left: double jump, wall jump,
+   dash, air-dash — "each is its own verb with its own tuning and its own compatibility question".
+
+   THE COMPATIBILITY QUESTION IS WHY IT IS OFF BY DEFAULT. Every gap, ledge and jump puzzle in every
+   level ever authored was measured against a player who could not change direction mid-air beyond
+   build 1361's air control. A dash that existed by default would silently make a fraction of them
+   trivial and, worse, would let a player leave arenas their author had sealed. `airDash` is the dash
+   SPEED in units/second, so 0 means off and one field both enables and tunes it — exactly `jumpCut`'s
+   shape, and exactly its argument.
+
+   IT IS THE SLIDE KEY, and that is the whole reason this needs no new bind, no new key to teach and no
+   rebinding conflict: the slide already requires `player.onGround`, so the airborne press has been dead
+   input since build 910. Slide on the ground, dash in the air is one verb expressed by state — the
+   Titanfall/Apex idiom — and a creator who rebinds slide moves both together, which is what they mean. */
+const AIR_DASH_T = 0.16;        // how long gravity is suspended: the difference between a dash and a nudge
+const AIR_DASH_MIN = 4;         // an authored speed below this is a tap, not a dash — clamped up so the verb always reads
+let AIR_DASH = 0;               // live value derived from worldCfg; 0 = the pre-1463 engine, byte for byte
+let _dashT = 0, _dashUsed = false, _airT = 0;
+/* `onGround` FLICKERS FALSE for single frames mid-stride — the same flicker builds 926 (slide), 1160
+   (jump) and 1222 (sprint FOV) each had to survive. A dash gated on the bare flag therefore STEALS the
+   buffered slide tap from a sprinting player on flat ground, which the probe's control caught: with the
+   dash on, `sliding` never became true. So the dash asks how long the player has ACTUALLY been airborne,
+   and AIR_DASH_ARM is comfortably longer than a flicker and far shorter than any real jump. */
+const AIR_DASH_ARM = 0.09;
 let SPEED, SPRINT, JUMP, GRAV, CROUCH_SPEED, JUMP_CUT = 0.5;   // live values derived from worldCfg (build 1301: JUMP_CUT — the release cut, 1 = no cut)
 function applyWorldCfg(){
   if(typeof _applyPaintCfg==='function') _applyPaintCfg();   // build 875: floor paint layers + splat
@@ -22314,6 +22339,11 @@ function applyWorldCfg(){
      worse outcome than one that cannot quite reach "no hop". 0.1 is a 2.8 cm hop: effectively none, but the
      player still leaves the floor and the input is never lost. */
   JUMP_CUT = Math.max(JUMP_CUT_MIN, Math.min(1, worldCfg.jumpCut == null ? DEFAULT_WORLD.jumpCut : +worldCfg.jumpCut));
+  /* build 1463: 0 is OFF and must survive `||`-style defaulting, so it is tested against null explicitly
+     (build 1329's trap). Anything positive is floored at AIR_DASH_MIN — an authored 0.5 would be a verb
+     the player presses and cannot feel, which is worse than no verb. */
+  { const _ad = +(worldCfg.airDash == null ? DEFAULT_WORLD.airDash : worldCfg.airDash);
+    AIR_DASH = (isFinite(_ad) && _ad > 0) ? Math.max(AIR_DASH_MIN, Math.min(60, _ad)) : 0; }
   // arena size — rebuild floor/grid/walls only when it changes; coalesce rapid changes (slider drag)
   // into one rebuild per frame so dragging stays smooth.
   worldCfg.arena = Math.max(15, Math.min(2000, worldCfg.arena == null ? DEFAULT_WORLD.arena : +worldCfg.arena));   // build 827: up to 2000 (a 4 km course) for racing-scale worlds; the flat floor/walls scale free and the nav grid stays bounded
@@ -25561,6 +25591,13 @@ function refreshFxZoneMarkers(){
     ring.rotation.x=-Math.PI/2; ring.position.y=z.y+0.06; grp.add(ring);
     const wall=new THREE.Mesh(new THREE.CylinderGeometry(z.r, z.r, z.h, 36, 1, true), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:sel?0.16:0.08, side:THREE.DoubleSide, depthWrite:false }));
     wall.position.y=z.y+z.h/2; grp.add(wall);
+    /* build 1464: a FILLED centre. The ring is an annulus and the wall is an open cylinder, so this
+       marker had a HOLE where every other zone type has something — measured, an effect zone could only
+       be clicked ON ITS OUTLINE, and clicking the middle of the zone (which is what a creator does) hit
+       nothing. It doubles as a readability fix: the other seven read as areas and this one read as a
+       hoop. Very faint, and it is the pick surface, so it is not `visible:false`. */
+    const disc=new THREE.Mesh(new THREE.CircleGeometry(Math.max(0.3, z.r-0.3), 40), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:sel?0.14:0.07, side:THREE.DoubleSide, depthWrite:false }));
+    disc.rotation.x=-Math.PI/2; disc.position.y=z.y+0.05; grp.add(disc);
     grp.position.set(z.x, 0, z.z); grp.visible=!!(typeof editorOpen!=='undefined' && editorOpen);
     grp.userData.zoneIdx=i; scene.add(grp); fxZoneFx.push(grp);
   }
@@ -34908,7 +34945,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1462 · 2026-08-09';
+const BUILD_VERSION = 'build 1464 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -41097,6 +41134,37 @@ function loop(){
   if(!sliding && slideCD<=0 && _slideBufT>0 && (_sprinting || _sprintGraceT>0) && player.onGround && wish.lengthSq()>0.01 && !shopOpen && !editorOpen){
     _slideBufT = 0; sliding = true; slideT = SLIDE_DUR; slideDir.copy(wish).normalize(); SFX.slide();
   }
+  /* ---- build 1463: the air dash ------------------------------------------------------------------
+     Grounded refunds the charge, so once per airtime — anything else is flight. A ledge grab refunds it
+     too: build 1290's hang IS ground contact by every other rule in this file (it zeroes velocity, it
+     ends the fall, you can climb from it), and a player who dashed to a lip and could not dash off it
+     would read the refund as broken rather than strict.
+     `_dashUsed` is CLEARED on the ground rather than set on landing, because `onGround` flickers
+     mid-stride (builds 926/1160/1222) — a landing EDGE would miss the refund on the frames it blinks.
+     It is also why no run-reset is needed: the first grounded frame of a fresh deploy refunds it. */
+  if(player.onGround || _ledge){ _dashUsed = false; _airT = 0; } else _airT += dt;
+  if(_dashT > 0) _dashT -= dt;
+  if(AIR_DASH > 0 && _slideBufT > 0 && !_dashUsed && _airT >= AIR_DASH_ARM && !player.onGround && !_ledge && !sliding
+     && !drivingCar && !mountedTurret && !_onLadder && !duelDead && gameOn && !editorOpen && !shopOpen
+     && !_levelLoaderActive && matchWarmup <= 0){
+    /* The direction is the MOVEMENT BASIS, never the camera: in side-scroll `forward` is the zero vector
+       and in the twin-stick views it points at the cursor (builds 874/1290). Facing is the fallback for
+       a dash with no stick input, which is what a player pressing it alone means. */
+    let _dx = wish.x, _dz = wish.z;
+    if((_dx*_dx + _dz*_dz) < 1e-6){ _dx = forward.x; _dz = forward.z; }
+    const _dl = Math.hypot(_dx, _dz);
+    if(_dl > 1e-6){
+      _dx /= _dl; _dz /= _dl;
+      /* max(), never set(): a dash must never BRAKE a fast approach — that is build 1361's defect one
+         verb along — and it must always deliver at least the authored speed from a standstill. */
+      const _cur = player.vel.x*_dx + player.vel.z*_dz;
+      const _sp = Math.max(_cur, AIR_DASH);
+      player.vel.x = _dx*_sp; player.vel.z = _dz*_sp;
+      if(player.vel.y < 0) player.vel.y = 0;   /* kill a FALL, never cut a rise — cutting a rise is a brake */
+      _dashUsed = true; _dashT = AIR_DASH_T; _slideBufT = 0;
+      if(typeof SFX!=='undefined' && SFX.slide) SFX.slide();
+    }
+  }
   if(sliding){
     slideT -= dt;
     const k = Math.max(0, slideT/SLIDE_DUR);
@@ -41222,7 +41290,7 @@ function loop(){
     }
   } else {
     _climbAnim = 0;   // not climbing
-  player.vel.y -= GRAV*dt;
+  if(_dashT > 0) player.vel.y = 0; else player.vel.y -= GRAV*dt;   /* build 1463: the dash window is what makes it read as a dash rather than a nudge */
   if(typeof _waterPlayerStep==='function') _waterPlayerStep(dt);   // build 856: buoyancy/wade/flow — adjusts player.vel before BOTH the KCC and classic movers consume it
   if(typeof _fallPushStep==='function') _fallPushStep(dt);   // build 862: waterfalls drive you down into the plunge pool
   // one-shot vertical knock from physics props (e.g. a fast body launching the player)
@@ -47996,7 +48064,7 @@ function renderEditorFields(){
     };
     { const b=subSec('Movement','move',false);
       slider(b,'Walk speed','walk',4,60,1); slider(b,'Run speed','run',4,100,1); slider(b,'Crouch speed','crouch',1,40,1);
-      slider(b,'Jump','jump',0,30,0.5); slider(b,'Tap hop','jumpCut',0.1,1,0.05); slider(b,'Launch power','launchPower',0.25,4,0.25); slider(b,'Gravity','grav',5,80,1);   /* build 1301: Tap hop — how much of the jump a TAP keeps (height goes as the square, so 0.5 is a quarter-height hop). 1 = every jump is full height, the pre-1301 engine. */
+      slider(b,'Jump','jump',0,30,0.5); slider(b,'Tap hop','jumpCut',0.1,1,0.05); slider(b,'Air dash','airDash',0,40,1);   /* build 1463: the dash SPEED — 0 is OFF, which is every level authored before it. Pressed on the slide key while airborne, once per jump. */ slider(b,'Launch power','launchPower',0.25,4,0.25); slider(b,'Gravity','grav',5,80,1);   /* build 1301: Tap hop — how much of the jump a TAP keeps (height goes as the square, so 0.5 is a quarter-height hop). 1 = every jump is full height, the pre-1301 engine. */
       slider(b,'Eye height','eyeHeight',0.4,20,0.05);   // build 702/703: first-person camera height (up to 20m)
       hint(b,'','1px 0 2px').textContent='Crouch: hold Ctrl (R3 on a controller). Eye height sets the first-person camera level (1.7 = default; up to 20m for a tall/overhead view). View only — collision is unchanged. Gravity change affects props on next Deploy.'; }
     { const b=subSec('Lighting','light',true);
@@ -52257,12 +52325,23 @@ renderer.domElement.addEventListener('click', (e)=>{
   for(const g of spawnMarkers){ if(g.visible && !g.userData.edLock) targets.push(g); }
   for(const m of pickupMarkers){ if(m && m.visible) targets.push(m); }
   for(const m of lootMarkers){ if(m && m.visible) targets.push(m); }
-  for(const m of deathZoneMarkers){ if(m && m.visible) targets.push(m); }
-  // build 657: every placeable thing must be click-selectable. Adds turrets, ladders, audio zones, the player
-  // start marker, and the extract zone (their markers/visuals are already visible during editing).
-  for(const g of turretModels){ if(g && g.visible && !(g.userData && g.userData.edLock)) targets.push(g); }   // build 1036: outliner lock/hide
-  for(const m of ladderMarkers){ if(m && m.visible) targets.push(m); }
-  for(const m of audioZoneMarkers){ if(m && m.visible) targets.push(m); }
+  /* build 1464: EVERY zone type, from the same table the resolver reads.
+     Reported from play: "not all zones can be clicked — water, waterfalls, death zones, you have to open
+     the World tab and scroll to the bottom and click the zone's Select button."
+     Build 1326 made ZONE_EDIT the one place a zone type declares itself and routed the RESOLVER through
+     it — the half that decides what a hit BELONGS to — and left this list, the half that decides what can
+     be HIT AT ALL, hand-written with three of the eight types in it. So the resolver's branches for the
+     other five were dead code: measured, triggers / jump pads / fire zones / water zones / effect zones
+     each had a visible marker with real meshes and a resolver that named it correctly, and no ray could
+     reach any of them. That is build 1158's pattern (a fix complete for the half it was tested against)
+     and build 1277's (pinning both ends of a wire proves nothing about the wire). */
+  for(const type in ZONE_EDIT){
+    for(const m of (ZONE_EDIT[type].markers() || [])){ if(m && m.visible) targets.push(m); }
+  }
+  // build 657: every placeable thing must be click-selectable. Adds turrets, the player start marker and
+  // the extract zone (their markers/visuals are already visible during editing); the zone markers that
+  // used to be listed here by hand now arrive through ZONE_EDIT above.
+  for(const g of turretModels){ if(g && g.visible && !(g.userData && g.userData.edLock)) targets.push(g); }
   if(playerSpawnMarker && playerSpawnMarker.visible) targets.push(playerSpawnMarker);
   if(extractZone && extractZone.visible) targets.push(extractZone);
   if(!targets.length) return;

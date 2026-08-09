@@ -1646,6 +1646,125 @@ value exactly.
 engine HOLDS, not what you asked it to hold. And #1/#3 are build 1124's rule for the third time in this
 session — know what is in the frame before attributing anything to it.
 
+## Every zone can be clicked (build 1464)
+
+Reported from play: *"Not all zones can be clicked on in the editor to get control with their gizmos.
+Water, waterfalls, death zones, etc you can't click — you have to open the World tab and scroll all the way
+to the bottom and then click on the zone's Select button. It's very inconvenient."*
+
+Build 1326 made `ZONE_EDIT` the one place a zone type declares itself and routed the **resolver** through
+it — the half that decides what a clicked object BELONGS to. The click path's raycast **target list**, the
+half that decides what can be HIT AT ALL, stayed hand-written with three of the eight types in it. So the
+resolver's branches for the other five were dead code.
+
+**That is build 1158's pattern and build 1277's, together** — a fix complete for the half it was tested
+against, and a test that pins both ends of a wire. 1326's own test asserted the resolver handles every type
+and never asked whether a ray could reach one.
+
+Measured before the fix by driving the REAL click handler from a posed editor camera:
+
+```
+type          marker  visible  meshes  resolver names it   in raycast list
+triggers        yes     yes       5     triggers                0/1
+jumppads        yes     yes       5     jumppads                0/1
+firezones       yes     yes       2     firezones               0/1
+waterzones      yes     yes       3     waterzones              0/1
+fxzones         yes     yes       2     fxzones                 0/1
+deathzones / ladders / audiozones                               1/1
+```
+
+After: **8/8 select dead-centre**, with a prop as the control. The list is derived from the same table now,
+so a ninth zone type is clickable the day it is added.
+
+**The effect zone had a HOLE.** Its ring is an annulus and its wall an OPEN cylinder, so even once it was
+in the list it could only be clicked ON ITS OUTLINE — measured, it hit at NDC `[0.12, 0]` and missed at
+`[0,0]`, which is where a creator clicks. It gets a faint filled disc, which is both the pick surface and
+the reason it now reads as an area rather than a hoop. It is deliberately not `visible:false`: three skips
+an invisible object in a raycast.
+
+### Four instrument faults, and the control caught every one
+
+The probe reported all eight types failing — **including the three that already worked** — four separate
+times, and each null was mine:
+
+| it reported | why |
+|---|---|
+| every type fails | the pick listens for **`click`**, and a synthesised `mousedown`+`mouseup` does not produce one |
+| the control resolves a *jump pad* | the control prop was spawned on top of a zone marker — a fixture collision |
+| the control finds nothing at all | `spawnProp`'s tuple is `[x,y,z, rx,ry,rz, sx,sy,sz]`; I put the scale in the rotation slots and made a **zero-size box**, which is invisible to a raycast and reads exactly like a broken click path |
+| `fxzones` fails at every offset | the offsets were NDC, and at 26 m up with fov 78 that is **7.4 m** — outside a 4 m zone. Only the centre was ever tested, and the centre of a ring is its hole |
+
+A fifth was a diagnostic rather than the feature: my own `directHits` readings used the **shared**
+raycaster, whose `far` this engine leaves at `null` — build 1295 gave melee its own for exactly that
+reason. A diagnostic must state its own `near`/`far`.
+
+Two pins moved (test-507's, which quoted the two hand-written lines). Their intent — a ladder and an audio
+zone are click-selectable — is unchanged and now stronger: it is a property of every zone type rather than
+of two remembered ones.
+
+## The air dash, and a control that found a regression that was not there (build 1463)
+
+Build 1301 closed variable jump height and named what it deliberately left: *"double jump, wall jump,
+dash, air-dash — each is its own verb with its own tuning and its own compatibility question."* This is
+that question answered for one of them.
+
+**OFF BY DEFAULT, and that is the whole compatibility argument.** Every gap, ledge and jump puzzle in
+every level ever authored was measured against a player who could not change direction mid-air beyond
+build 1361's air control. A dash that existed by default would make a fraction of them trivial and, worse,
+would let a player leave arenas their author had sealed. `airDash` is the dash **speed**, so 0 means off
+and one field both enables and tunes it — `jumpCut`'s exact shape, and exactly its argument.
+
+**It is the SLIDE key.** The slide requires `player.onGround`, so the airborne press has been dead input
+since build 910. Slide on the ground, dash in the air is one verb expressed by state — no new bind, no new
+key to teach, no rebinding conflict, and a creator who rebinds slide moves both, which is what they mean.
+
+Measured live from the player's own inputs, identical inputs either side, `airDash:0` as the control:
+
+```
+             spd before -> after     vy          charge   gap cleared
+off (control)   5.99 -> 5.99      2.5 -> 2.0      no        3.09 m
+on              5.99 -> 18.0      2.5 -> 0.0      spent     8.50 m
+```
+
+Four decisions, each a defect the other way:
+- **`max()`, never `set()`.** A dash must not BRAKE a fast approach — build 1361's defect one verb along —
+  and must still deliver the authored speed from a standstill. Executed at 25 (kept) and at 10 (lifted).
+- **A killed FALL, an untouched RISE.** Zeroing a descent is what makes gap distance predictable; cutting a
+  rise would be a mid-air brake, which is a different and bad feature.
+- **Direction from the MOVEMENT BASIS**, facing as the fallback — in side-scroll `forward` is the zero
+  vector and in the twin-stick views it points at the cursor (builds 874/1290).
+- **Once per airtime**, refunded by the ground *and by a ledge*: build 1290's hang IS ground contact by
+  every other rule in this file, and a player who dashed to a lip and could not dash off it would read the
+  refund as broken rather than strict.
+
+### The control found a regression, and then the order test found the control
+
+The probe's slide check reported `sliding: false` with the dash on and `true` with it off — a textbook
+controlled A/B saying I had broken the ground slide. The mechanism was plausible and already recorded three
+times: `onGround` flickers false mid-stride (926, 1160, 1222), so an airborne dash could steal the buffered
+slide tap. I added `AIR_DASH_ARM` on that reading.
+
+**Then the cheap discriminator: run the pair in the other order.** `first18 false · then0 true · first0
+true · then18 true` — the failure follows the SEQUENCE, not the value. The first slide run of any sequence
+fails because the fixture carries state out of the trial before it. There was never a regression.
+
+`AIR_DASH_ARM` stays, and this entry is careful about why: probed directly, `onGround` read **1,1,1,1,1,1,1,1**
+across eight sprinting frames and `_airT` never left 0, so **this fixture cannot produce the flicker** and I
+have no measurement of the hazard at all. It is hardening against a hazard this file documents three times,
+at a cost (0.09 s against any real jump) of nothing — *not* a fix credited with evidence it does not have.
+
+**The general form, and it is the sharper half of "a control that fails is the instrument":** a control
+that *passes* can still be measuring the order rather than the variable. Swapping the sequence costs one
+run and is the only thing that tells them apart.
+
+### Container rollback #28, mid-build
+
+The tree reverted to build 1431 and the 1463 edits landed on it — the anchors existed in both states.
+Recovery was the documented one and cost about two minutes. Worth noting: **build 1414's staging guard was
+blind again**, for the third time, because `probe-out` and the repo were the *same* rolled-back tree — the
+guard detects disagreement, not recency. What did catch it was the probe printing `[build 1431]` in its own
+staging line, which is the only reason the rollback was noticed before a measurement was published.
+
 ## A campaign could not be shared (build 1462)
 
 A campaign lived in **localStorage**. It could be exported to a file and nothing else — no share link, no
