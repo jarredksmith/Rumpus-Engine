@@ -12898,6 +12898,82 @@ the block is hidden with no pad and **revealed** when one appears, from the titl
   requires `_a11yArm` inside the window now. That is build 1411's first-match trap in a regex rather
   than an `indexOf` — **a pin that matches "the first thing shaped like X" is a pin on file order.**
 
+## The ladder could not reach the biggest lever (build 1457)
+
+The performance audit's CRITICAL, verified at the line. `_adaptResTick` sheds motion blur, then
+MSAA+SSAO, then RESOLUTION, then the sun's shadow map — and **never touched `lodPx`**, whose default has
+been 0 since build 1273. So the single largest scaling lever in the engine was opt-in and unreachable by
+the one system whose entire job is finding relief: a struggling device got pixel-count relief and went on
+submitting every draw call it always had.
+
+`_lodPxNow` now returns the larger of the creator's value and a **per-rung floor**, `[0, 0, 1, 2, 3]`.
+
+**Build 1273 is not reversed, and that distinction is the build.** Its argument stands — a perf feature
+that DELETES a creator's prop does not get to be on by default, and it could not reproduce the report
+behind it. What it does not cover is a device already at 60–66% of native with its antialiasing and its
+ambient occlusion gone. The ladder engaging *is* the engine saying this machine is in trouble; spending
+draw calls there is the trade every other rung already makes.
+
+### Measured, 659 props — and the isolation is the number that counts
+
+```
+rung   px   draw calls   triangles   culled
+0      0        2062       323,928        0
+1      0        1552       240,296        0
+2      1         907        90,104      272
+3      2         426        25,468      455
+ctrl   0        2062       323,928        0    <- returns
+
+ISOLATED at rung 3 (same rung, same post pipeline, only the floor moves):
+without    px 0   1040 calls    0 culled
+withFloor  px 2    426 calls  455 culled     -> 59.0%
+control    px 0   1040 calls    0 culled     <- returns EXACTLY
+```
+
+**The top-to-bottom figure would have been dishonest.** Rung 0 → 1 already drops 510 calls with `px 0`
+and nothing culled: SSR sheds at rung 1 and its G-buffer is a **full scene pass**. That is pre-existing
+behaviour. The A/B above changes nothing but the floor — `_LADDER_LOD_PX` is a `const` binding holding a
+*mutable* array, which is what makes it possible without a second build.
+
+Four guards, each executed: rungs 0 and 1 are exactly 0 (no full-quality frame moves, and neither does
+the first resolution downshift); it is a FLOOR, never a cap (an authored 4 px survives every rung);
+`_adaptOn === false` returns 0, because build 1342 made "off" a promise of full quality; and
+`LOD_NEAR_KEEP` is untouched, so **44 props within 40 m, 0 culled, at the worst rung** — which is what
+makes 1273's reported symptom structurally unreachable rather than merely unlikely. The editor culls
+nothing at rung 3 either.
+
+**The floor deliberately does NOT repeat the tick's editor gate.** `_lodTick` already returns early while
+authoring — build 1267 put that gate at the one place that acts on the number — and repeating it here
+would make the ladder case **unreportable**, because Level Check renders in the editor. So `lodReport`
+carries the authored value, the floor and who is responsible, and the row names the **scaler** when the
+scaler raised it: telling a creator to "set Cull below (px) back to 0" when their slider already reads 0
+is a control lying about its own engine, the defect builds 1310 and 1348 exist to remove.
+
+### Container rollback #26, and the guard that could not see it
+
+The tree reverted to **build 1431** mid-build, and I applied 1457's edits to that stale base before
+noticing — the tell was `BUILD_VERSION` reading 1431 under an assert and the suite reporting **1170**
+harnesses against 1193. So the first probe run measured 1431 + 1457, not 1456 + 1457.
+
+Build 1414's staging guard is keyed on a content hash of `probe-out` against the repo, and **both were
+the rolled-back tree**, so they agreed. That build recorded the limitation in one line — *the guard
+detects disagreement, not recency* — and this is the first time it has cost anything. It cost one probe
+run: recovery was `git log`, `git fetch`, `reset --hard FETCH_HEAD`, re-apply, re-measure. The rescued
+untracked files (the new test and probe) survived `reset --hard` by definition; the tracked edits did not,
+which is the split build 1405 recorded.
+
+**The re-measurement changed the answer by 0.8 points (58.2% → 59.0%)** — nothing between 1432 and 1456
+touches LOD, so it could hardly have differed. That is not a reason to have skipped it: I could not have
+known that without re-running, and the figures written into the source comment were wrong until I did.
+
+**Four rigs needed the new dependency** (1267, 1270, 1273, 1274), each supplied `_lodFloorNow` and the
+table **lifted from source** with the scaler off at rung 0 — byte-identical to pre-1457. Deliberately not
+stubbed to 0: 1273's whole subject is the default, and a stub would hide the interaction.
+
+**And my own pin was satisfied by my own comment, for the ninth time.** `!/editorOpen/` over
+`_lodFloorNow` matched the comment explaining that it does not gate on `editorOpen`. It pins the
+STATEMENT now (`!/if\([^)]*editorOpen/`).
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

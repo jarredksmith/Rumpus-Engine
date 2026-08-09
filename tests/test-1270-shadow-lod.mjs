@@ -35,6 +35,13 @@ function rig(props, opts = {}) {
     'let _lodGeoN = 0; function _lodGeoTick(){} function _lodGeoRestoreAll(){}',
     'let editorOpen = false;',
     'function _dirtyShadows(){ dirtied++; }',
+    /* build 1457: `_lodPxNow` now takes the larger of the creator's value and a per-rung ladder FLOOR,
+    so these rigs need the floor too. It is LIFTED FROM SOURCE, never restated — and deliberately not
+    stubbed to 0, because a stub would hide the very interaction this file's subject depends on. The
+    scope below sets rung 0 with the scaler off, which is byte-identical to the pre-1457 behaviour. */
+    'let _adaptOn = false, _prStepI = 0;',
+    (gameSource().match(/const _LADDER_LOD_PX = \[[^\]]*\];/) || [''])[0],
+    extractFunction('_lodFloorNow'),
     extractFunction('_lodPxNow'), extractFunction('_lodEligible'),
     extractFunction('_lodSetCasting'), extractFunction('_lodRemeasure'),
     // build 1440: the batches got their own rung inside _lodTick. Supplied LIFTED FROM SOURCE with an

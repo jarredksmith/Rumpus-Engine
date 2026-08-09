@@ -11768,7 +11768,41 @@ const LOD_SHADOW_MUL = 4;    // below lodPx * this, a prop still DRAWS but no lo
 const LOD_NEAR_KEEP = 40;
 const LOD_BUDGET = 128;      // props examined per frame; the cursor rolls, so a 2,000-prop level costs a fixed slice
 let _lodCursor = 0, _lodAnyCulled = false;
-function _lodPxNow(){ const v = (typeof worldCfg!=='undefined' && worldCfg) ? +worldCfg.lodPx : 0; return (v>0 && isFinite(v)) ? Math.min(16, v) : 0; }
+/* build 1457 (performance audit CRITICAL): the single largest scaling lever in the engine was OFF by
+   default and the adaptive ladder could not reach it. `_adaptResTick` sheds motion blur, then MSAA+SSAO,
+   then RESOLUTION, then the sun's shadow map - and never touched `lodPx`, whose default is 0 (build
+   1273). So a struggling device got pixel-count relief and submitted every draw call it always had.
+
+   Build 1273's argument for the 0 default is intact and is NOT being reversed: a perf feature that
+   DELETES a creator's prop does not get to be on by default, and that build could not reproduce the
+   report behind it. What it does not cover is a device already running at 60-66% of native resolution
+   with its antialiasing and its ambient occlusion gone. The ladder is the engine saying "this machine is
+   in trouble"; spending draw calls at that point is the same trade every other rung already makes.
+
+   Measured, 659 props, ISOLATED at the bottom rung (same rung, same post pipeline, only the floor moves):
+   1,040 draw calls -> 426, and the control returns to 1,040 exactly.
+
+   Four things keep it honest:
+     - RUNGS 0 AND 1 ARE EXACTLY 0, so no frame at full quality moves by a pixel, and neither does the
+       first resolution downshift. It engages only where the machine is genuinely struggling.
+     - It is a FLOOR, never a cap: a creator who authored 4 px keeps 4 px at every rung.
+     - `_adaptOn === false` returns 0. Turning the scaler off is a promise of full quality (build 1342),
+       and this build must not be the thing that quietly breaks it.
+     - Build 1273's LOD_NEAR_KEEP is untouched, so nothing within 40 m can vanish at any rung - which is
+       what makes the reported symptom structurally unreachable rather than merely unlikely. */
+const _LADDER_LOD_PX = [0, 0, 1, 2, 3];
+function _lodFloorNow(){
+  if(typeof _adaptOn==='undefined' || !_adaptOn) return 0;
+  /* Deliberately NOT gated on editorOpen. `_lodTick` already returns early while authoring (build 1267's
+     own gate, at the one place that acts on the number), so nothing can vanish in the editor either way -
+     and gating HERE would make the ladder case unreportable, because Level Check renders in the editor.
+     A creator must be able to see that their machine is culling in play. */
+  const i = (typeof _prStepI==='undefined') ? 0 : Math.max(0, Math.min(_LADDER_LOD_PX.length-1, _prStepI|0));
+  return _LADDER_LOD_PX[i];
+}
+function _lodPxNow(){ const v = (typeof worldCfg!=='undefined' && worldCfg) ? +worldCfg.lodPx : 0;
+  const authored = (v>0 && isFinite(v)) ? v : 0;
+  return Math.min(16, Math.max(authored, _lodFloorNow())); }
 // Eligibility is decided ONCE per prop and cached, because two of the three tests are a full subtree walk.
 function _lodEligible(o){
   const u = o.userData;
@@ -11824,7 +11858,14 @@ function lodReport(){
     if(u._lodCull) culled++;
     if(u._lodNoShadow) noShadow++;
   }
-  return { px:_lodPxNow(), culled, noShadow, eligible, minR:(minR===Infinity?0:minR), minName };
+  /* build 1457: `px` is the EFFECTIVE threshold, which the adaptive ladder can now raise above what the
+     creator authored. Reporting only that would tell a creator their level is culling at 2 px when their
+     own setting reads 0 - the exact "a number I never set and cannot find" that build 1274 exists to
+     prevent. So the report carries both, and who is responsible. */
+  const authored = (typeof worldCfg!=='undefined' && worldCfg && +worldCfg.lodPx > 0) ? Math.min(16, +worldCfg.lodPx) : 0;
+  const floor = _lodFloorNow();
+  return { px:_lodPxNow(), authored, floor, fromLadder: floor > authored,
+           culled, noShadow, eligible, minR:(minR===Infinity?0:minR), minName };
 }
 function _lodRestoreAll(){
   _lodGeoRestoreAll();   // build 1431: the editor shows the authored mesh, never a decimated one
@@ -34739,7 +34780,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1456 · 2026-08-09';
+const BUILD_VERSION = 'build 1457 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -47047,10 +47088,18 @@ function levelIssues(){
     if(typeof lodReport==='function'){
       const r=lodReport();
       if(r && r.px>0 && (r.culled>0 || r.noShadow>0))
-        issues.push('Culling is on (below '+r.px+'px): '+r.culled+' prop'+(r.culled===1?'':'s')+' hidden and '
+        /* build 1457: the threshold can now come from the ADAPTIVE LADDER rather than from the creator,
+           and "set Cull below (px) back to 0" is false advice when their setting already IS 0 - a control
+           that lies about its own engine, which is the defect builds 1310 and 1348 exist to remove. The
+           row names whoever is responsible and gives the fix that matches. */
+        issues.push('Culling is on (below '+r.px+'px'
+          +(r.fromLadder ? ', raised from '+r.authored+' by the adaptive quality scaler because this device is struggling' : '')
+          +'): '+r.culled+' prop'+(r.culled===1?'':'s')+' hidden and '
           +r.noShadow+' not casting shadows, of '+r.eligible+' eligible. Smallest measured prop radius is '
           +r.minR.toFixed(2)+'m'+(r.minName?(' \u2014 '+r.minName):'')
-          +'. If something large is disappearing, set Cull below (px) back to 0; that radius is the number to report.');
+          +'. If something large is disappearing, '
+          +(r.fromLadder ? 'turn off Adaptive resolution in the pause menu' : 'set Cull below (px) back to 0')
+          +'; that radius is the number to report.');
     }
     // build 1167: failed asset loads lead the list — "my prop vanished" is the #1 support thread and the
     // answer was sitting in the console. The url's tail is shown because Poly Pizza urls only differ there.
