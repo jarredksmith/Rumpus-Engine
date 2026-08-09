@@ -22,7 +22,11 @@ assert(/editorActive==='firezones'\)\{[\s\S]*?g\.scale\.copy\(v\);[\s\S]*?z\.sx=
 
 // --- the gizmo is no longer forced to translate-only for fire zones ---
 assert(!/editorActive==='firezones'\) mode='translate'/.test(src), 'fire zones are not forced to translate-only');
-assert(/editorActive==='deathzones'\|\|editorActive==='jumppads'\|\|editorActive==='ladders'\|\|editorActive==='audiozones'\) mode='translate'/.test(src), 'flat floor zones (death/jump) + ladders + audio zones still translate-only');
+/* build 1466: this quoted the per-type line, and that line is gone — the zone type used to be written
+   out by hand in five places and the last three each named six of the eight, which is how water zones and
+   effect zones ended up selectable but un-draggable. What it means is asserted against the derived form. */
+assert(/if\(ZONE_EDIT\[editorActive\]\) mode='translate';/.test(src),
+  'EVERY zone is translate-only — was six named by hand, now the whole table');
 
 // --- panel exposes precise rotation + uniform scale ---
 const panel = extractFunction('renderFireZonesPanel');

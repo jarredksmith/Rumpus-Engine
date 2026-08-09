@@ -1646,6 +1646,89 @@ value exactly.
 engine HOLDS, not what you asked it to hold. And #1/#3 are build 1124's rule for the third time in this
 session — know what is in the frame before attributing anything to it.
 
+## A clicked zone gets a gizmo and a panel, not just a selection (build 1466)
+
+Reported from play **after build 1464 claimed this closed**: *"Still no way to select, drag, or delete a
+water zone, a waterfall, or an effect zone by clicking on it. You still have to navigate to the world menu
+and scroll to the bottom."*
+
+**The zone type was written out by hand in FIVE places, and I fixed two of them and shipped.**
+
+| | what it decides | fixed |
+|---|---|---|
+| the resolver | what a clicked object BELONGS to | 1326 |
+| the raycast list | what can be HIT at all | 1464 |
+| the post-pick chain | what to DO with the pick | **1466** |
+| `movable` | whether the selection grows HANDLES | **1466** |
+| `getSelPos` | where those handles GO | **1466** |
+
+The last three each named **six of the eight**, and the two missing were water zones and effect zones —
+exactly what the report says. The pick chain has a generic tail (`else if(picked)`) that sets
+`editorActive` and re-renders, so those two really *were* being selected. What the tail never does is call
+`revealZoneTool` — so the World tab's section never opens — or `updateGizmo` — so there are **no drag
+handles**. A selection you cannot see and cannot drag is not a selection.
+
+### The measurand was the actual fault
+
+1464's probe asserted `editorActive === type`. The generic tail satisfies that, so it read HIT for all
+eight and I believed it. **A creator does not care whether a variable holds an index.** The probe now
+measures the gizmo and the revealed panel, and drags and deletes each zone through the real paths:
+
+```
+type          select  gizmo  panel   drag  delete
+all eight       true   true   true   true    true      (a prop as the control)
+```
+
+Getting there took three rounds, because each fix exposed the next list: the branch landed and the gizmo
+was still absent (`movable`), then `movable` passed and the gizmo still hid itself (`getSelPos` returned
+null). Every one was the same shape.
+
+**And DRAG read false for all eight on its first run** — a failed control, and it was me calling
+`_zoneMoveTo`, which does not exist. The real one is `_zoneMove(type, v)`. Build 1427/1429's
+invented-name trap, third time this session.
+
+**Twelve pins moved across seven files**, every one quoting a per-type line this build collapsed, and every
+intent preserved and widened from "these five zone types" to "every zone type".
+
+## Five more HUD elements can be switched off (build 1465)
+
+Asked for from play: *"I want HUD control over the reload loading bar, not every creator will want that"* —
+and more generally, *"as much customization as possible for creators to build the games they want and not
+feel stuck because of the limited options for on-screen elements."*
+
+The machinery was already right. `HUD_TOGGLES` is the ONE place a toggle is declared, and the sanitizer,
+the class applier and the editor's checkbox list all iterate it — so a new entry needs a CSS rule and a
+label and nothing else. What was wrong was the **set**, and one entry in particular.
+
+**The reload bar was welded to the CROSSHAIR's toggle.** Build 1450 put it under the reticle and shared
+the reticle's hide rule, with a comment saying so — which made *"keep the crosshair, lose the bar"*, the
+exact thing asked for, unsayable, and the reverse too. Now:
+
+```
+             crosshair   reload bar
+both            block       block
+bar off only    block       NONE      <- the pairing that could not be said
+xhair off only  NONE        block     <- and the reverse
+```
+
+Five new toggles: the reload bar, the hit marker, the power-up timers, the boss health bar and build
+1412's objective markers. **14 of 16 verified live** through the real `applyHudCfg` on rendered elements,
+on → none → back with the toggle off as the control at each step. The two unverified are hosts this
+session never built (the marker host and the dialogue panel are created lazily); their rules are pinned.
+
+### Three instrument faults, each of which made a working toggle look broken
+
+- **`.hidden` is `display:none !important`** and beats a plain inline display, so every at-rest element
+  read as hidden whatever the toggle did — and four of these are hidden at rest by design (the bar only
+  shows *during* a reload).
+- **The objective banner is opacity-driven, not display** (build 701, so it never reflows) — display is
+  simply the wrong measurand for it.
+- **It carries a 0.4 s transition**, and `getComputedStyle` during one returns the INTERPOLATED value. Read
+  0 ms after the class change it reports the old opacity, which made a toggle that works perfectly read as
+  dead *while the body demonstrably carried its class*.
+
+Three pins moved (542, 545, 1450). 1450's was pinning the weld itself.
+
 ## Every zone can be clicked (build 1464)
 
 Reported from play: *"Not all zones can be clicked on in the editor to get control with their gizmos.

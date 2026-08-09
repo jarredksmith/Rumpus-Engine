@@ -25,6 +25,10 @@ assert(/sec\('Zones', 'zones',/.test(src) && /id="edLadders" class="zoneHost" da
 assert(/scene:   \['world','generate','zones'\]/.test(src), 'the grouped Zones section (incl. ladders) shows in Scene mode');
 assert(/ladders: ladders\.map\(L=>\(\{ x:\+L\.x, z:\+L\.z, r:\(\+L\.r\|\|1\), y:\(\+L\.y\|\|0\), h:\(L\.h!=null\?\+L\.h:4\), face:\(\+L\.face\|\|0\) \}\)\)/.test(src), 'serialized with the level');
 appliedOnceByBothLoaders(/ladders = Array\.isArray\(level\.ladders\) \? level\.ladders\.map\(_migrateLadder\) : \[\]/g, 'restored in both load paths');
-assert(/editorActive==='ladders'\){ return \(selLadder>=0/.test(src), 'the move gizmo targets the selected ladder');
+/* build 1466: this quoted the per-type line, and that line is gone — the zone type used to be written
+   out by hand in five places and the last three each named six of the eight, which is how water zones and
+   effect zones ended up selectable but un-draggable. What it means is asserted against the derived form. */
+assert(/const _zd = ZONE_EDIT\[editorActive\];/.test(src) && /_zd\.markers\(\) \|\| \[\]\)\[_i\]/.test(src)
+  && /\bladders:\s*\{/.test(src), 'the move gizmo targets the selected ladder');
 
 done('placeable ladders: climb volume + editor + serialize + climb animations (build 645)');

@@ -448,7 +448,12 @@
   body.hud-shape-square #hud .panel, body.hud-shape-square #prompt, body.hud-shape-square #grabHint, body.hud-shape-square #goalBanner, body.hud-shape-square #dialogue { border-radius: 0; }
   body.hud-noborder #hud .panel, body.hud-noborder #prompt, body.hud-noborder #grabHint, body.hud-noborder #goalBanner, body.hud-noborder #dialogue { border-color: transparent !important; }
   body.hud-hide-minimap #minimap, body.hud-hide-score #score, body.hud-hide-wave #wavePanel,
-  body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair, body.hud-hide-crosshair #reloadBar,
+  body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair,
+  /* build 1465: the reload bar was welded to the CROSSHAIR's toggle, so "keep the crosshair, lose the bar"
+     — the thing that was actually asked for — could not be said at all. It is its own toggle now, and the
+     crosshair no longer hides it, which is the whole point of splitting them. */
+  body.hud-hide-reload #reloadBar, body.hud-hide-hitmark #hitmarker,
+  body.hud-hide-buffs #buffs, body.hud-hide-boss #bossBar, body.hud-hide-marker #objMarkers,
   body.hud-hide-killfeed #killFeed, body.hud-hide-prompt #prompt, body.hud-hide-grab #grabHint { display: none !important; }
   body.hud-hide-goal #goalBanner { opacity: 0 !important; }   /* build 701: banner uses opacity (not display) so it never reflows */
   body.hud-hide-dlg #dialogue { display: none !important; }
@@ -524,8 +529,9 @@
     filter: drop-shadow(0 0 1px rgba(0,0,0,.95)) drop-shadow(0 0 2px rgba(0,0,0,.55));
   }
   /* build 1450: how far through a reload you are. Under the reticle because that is where the eye already
-     is while reloading, and 18px down so it clears the widest crosshair gap without covering it. It rides
-     the same hide-crosshair toggle (below) — a player who turned the reticle off wants a clean centre. */
+     is while reloading, and 18px down so it clears the widest crosshair gap without covering it.
+     Build 1465 gave it its OWN toggle: it used to ride the crosshair's, which made "keep the reticle, lose
+     the bar" unsayable, and that was the thing creators asked for. */
   #reloadBar {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, 18px);
     width: 56px; height: 3px; border-radius: 2px;
@@ -7174,8 +7180,14 @@ applyUiTheme();   // apply saved look immediately on load
 // the global `uiTheme` (a per-PLAYER localStorage preference) — hudCfg is serialized WITH the level so a shared
 // level carries the creator's HUD design. Applied scoped to #hud (vars) + body classes, so it never restyles
 // the editor or menus.
-const HUD_TOGGLES = ['minimap','score','wave','ammo','health','crosshair','killfeed','prompt','grab','goal','dlg'];
-const HUD_TOGGLE_LABEL = { minimap:'Minimap', score:'Score', wave:'Wave counter', ammo:'Ammo', health:'Health', crosshair:'Crosshair', killfeed:'Kill feed', prompt:'Interact prompt', grab:'Grab hint', goal:'Objective banner', dlg:'NPC dialogue' };
+/* build 1465: five more, asked for from play — "I want HUD control over the reload loading bar, not every
+   creator will want that", and more generally "as much customization as possible for creators to build the
+   games they want and not feel stuck because of the limited options for on-screen elements".
+   The machinery was already right: this array is the ONE place a toggle is declared, and the sanitizer,
+   the class applier and the editor's checkbox list all iterate it — so a new entry needs a CSS rule and a
+   label and nothing else. What was wrong was the SET, and one entry in particular. */
+const HUD_TOGGLES = ['minimap','score','wave','ammo','health','crosshair','reload','hitmark','killfeed','buffs','boss','marker','prompt','grab','goal','dlg'];
+const HUD_TOGGLE_LABEL = { minimap:'Minimap', score:'Score', wave:'Wave counter', ammo:'Ammo', health:'Health', crosshair:'Crosshair', reload:'Reload bar', hitmark:'Hit marker', killfeed:'Kill feed', buffs:'Power-up timers', boss:'Boss health bar', marker:'Objective markers', prompt:'Interact prompt', grab:'Grab hint', goal:'Objective banner', dlg:'NPC dialogue' };
 const HUD_FONTS = ['Chakra Petch','Major Mono Display','Orbitron','Rajdhani','Press Start 2P','Share Tech Mono','Audiowide','Teko','Exo 2','Saira Condensed','Aldrich','Syncopate','VT323','Michroma','Russo One','Bungee','Space Mono','JetBrains Mono'];
 // build 817: the 16 optional HUD fonts were a blocking @import of 18 families at boot. Load them ON DEMAND — when the
 // font pickers open, or when a saved theme / loaded level actually USES a non-default family. display=swap keeps text
@@ -34945,7 +34957,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1464 · 2026-08-09';
+const BUILD_VERSION = 'build 1466 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -51829,12 +51841,13 @@ function getSelPos(){
   if(editorActive==='turrets'){ const g=editorTargets.turrets.obj(); return g?g.position:null; }
   if(editorActive==='pstart'){ return playerSpawnMarker?playerSpawnMarker.position:null; }
   if(editorActive==='extract'){ return extractZone?extractZone.position:null; }
-  if(editorActive==='triggers'){ return (selTrigger>=0 && triggerMarkers[selTrigger])?triggerMarkers[selTrigger].position:null; }
-  if(editorActive==='deathzones'){ return (selDeathZone>=0 && deathZoneMarkers[selDeathZone])?deathZoneMarkers[selDeathZone].position:null; }
-  if(editorActive==='jumppads'){ return (selJumpPad>=0 && jumpPadMarkers[selJumpPad])?jumpPadMarkers[selJumpPad].position:null; }
-  if(editorActive==='ladders'){ return (selLadder>=0 && ladderMarkers[selLadder])?ladderMarkers[selLadder].position:null; }
-  if(editorActive==='firezones'){ return (selFireZone>=0 && fireZoneFx[selFireZone])?fireZoneFx[selFireZone].position:null; }
-  if(editorActive==='audiozones'){ return (selAudioZone>=0 && audioZoneMarkers[selAudioZone])?audioZoneMarkers[selAudioZone].position:null; }   // build 687: drag-handle for audio zones
+  /* build 1466: six near-identical lines naming six of the EIGHT zone types — the FIFTH hand-written
+     list of them, after the resolver (1326), the raycast list (1464), the post-pick chain and
+     `movable`. Water zones and effect zones were selected, panelled and declared movable, and then the
+     gizmo asked WHERE and got null, so it hid itself. One lookup: a zone's handle sits on its marker. */
+  { const _zd = ZONE_EDIT[editorActive];
+    if(_zd){ const _i = _zd.sel(), _m = (_zd.markers() || [])[_i];
+      return (_i >= 0 && _m) ? _m.position : null; } }
   return null;
 }
 // move the selected object to a world position and sync its editor state + collider
@@ -52009,7 +52022,13 @@ function buildGizmo(){
 function updateGizmo(){
   if(!gizmo) gizmo = buildGizmo();
   const gr = gizmo.userData.groups;
-  const movable = editorOpen && (selPickup>=0 || editorActive==='props' || editorActive==='station' || editorActive==='lights' || editorActive==='spawns' || editorActive==='pstart' || editorActive==='extract' || (editorActive==='triggers'&&selTrigger>=0) || (editorActive==='deathzones'&&selDeathZone>=0) || (editorActive==='jumppads'&&selJumpPad>=0) || (editorActive==='ladders'&&selLadder>=0) || (editorActive==='firezones'&&selFireZone>=0) || (editorActive==='audiozones'&&selAudioZone>=0) || editorActive==='turrets');
+  /* build 1466: the six zone clauses here were a FOURTH hand-written list of zone types — after the
+     resolver (1326), the raycast list (1464) and the post-pick chain (above) — and it named six of the
+     eight. A water zone or an effect zone was selected, its panel opened, and it grew NO HANDLES, which
+     is the "no way to drag" half of the report. Asking ZONE_EDIT means the ninth zone type is draggable
+     the day it is added, and there is no fifth list left to fall out of. */
+  const _zsel = ZONE_EDIT[editorActive] ? (ZONE_EDIT[editorActive].sel() >= 0) : false;
+  const movable = editorOpen && (selPickup>=0 || _zsel || editorActive==='props' || editorActive==='station' || editorActive==='lights' || editorActive==='spawns' || editorActive==='pstart' || editorActive==='extract' || editorActive==='turrets');
   // build 1038: a locked primary (outliner padlock) never grows handles — locked means immovable
   const _lkO = editorActive==='props' ? propModels[editorTargets.props.idx]
     : editorActive==='lights' ? lightModels[editorTargets.lights.idx]
@@ -52027,7 +52046,7 @@ function updateGizmo(){
   if((editorActive==='lights'||editorActive==='spawns'||editorActive==='pstart') && mode==='scale') mode='translate';
   if(selPickup>=0) mode='translate';   // a pickup spot is just an x/z position
   if(editorActive==='extract') mode='translate';   // the extraction point only moves (radius lives in Game / waves)
-  if(editorActive==='triggers'||editorActive==='deathzones'||editorActive==='jumppads'||editorActive==='ladders'||editorActive==='audiozones') mode='translate';   // these zones only move; size lives in their panel
+  if(ZONE_EDIT[editorActive]) mode='translate';   // build 1466: EVERY zone only moves; its size lives in its own panel
   // build 556: fire zones now support rotate + scale gizmo modes (move/rotate/scale), like a prop
   if(editorActive==='turrets') mode='translate';   // move with the gizmo; facing/scale/arc live in the Turrets panel
   gr.translate.visible = (mode==='translate');
@@ -52376,12 +52395,27 @@ renderer.domElement.addEventListener('click', (e)=>{
     if(typeof setEditorMode==='function' && editorMode!=='rules') setEditorMode('rules', true);   // build 704: jump to the Gameplay tab so the Pickups section (with its transform controls) is in view
     if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
   else if(picked==='loot'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; gizmoMode='translate'; if(typeof refreshLootMarkers==='function') refreshLootMarkers(); if(typeof renderEditorFields==='function') renderEditorFields(); updateSelectionHighlight(); }
-  else if(picked==='deathzones'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; gizmoMode='translate'; editorActive='deathzones'; if(typeof revealZoneTool==='function') revealZoneTool('deathzones'); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
-  else if(picked==='jumppads'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; gizmoMode='translate'; editorActive='jumppads'; if(typeof revealZoneTool==='function') revealZoneTool('jumppads'); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
-  else if(picked==='firezones'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; gizmoMode='translate'; editorActive='firezones'; if(typeof revealZoneTool==='function') revealZoneTool('firezones'); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
-  // build 657: the rest of the placeables that were never click-selectable
-  else if(picked==='ladders'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; gizmoMode='translate'; editorActive='ladders'; if(typeof revealZoneTool==='function') revealZoneTool('ladders'); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
-  else if(picked==='audiozones'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; editorActive='audiozones'; if(typeof revealZoneTool==='function') revealZoneTool('audiozones'); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
+  /* build 1466 (reported from play, AGAIN): "Still no way to select, drag, or delete a water zone, a
+     waterfall, or an effect zone by clicking on it."
+     This chain was FIVE hand-written zone branches — deathzones, jumppads, firezones, ladders,
+     audiozones — and triggers, water zones and effect zones fell through to the generic tail at the end
+     of the chain. That tail sets `editorActive` and re-renders, which is why build 1464's probe reported
+     a HIT for all eight and I called it fixed: the selection was real. What the tail does NOT do is call
+     `revealZoneTool` (so the World tab never opens the section) or `updateGizmo` (so there are NO DRAG
+     HANDLES). A selection you cannot see and cannot drag is not a selection, and that is precisely the
+     three types the report names.
+     THE THIRD HALF. 1326 fixed the resolver, 1464 fixed the raycast list, and this is what to DO with the
+     pick — hand-written, once more, and missing exactly the types nobody had tried. It is one branch off
+     the same table now, so there is no fourth list to fall out of. */
+  else if(picked && ZONE_EDIT[picked]){
+    selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1;
+    gizmoMode='translate'; editorActive=picked;
+    if(typeof revealZoneTool==='function') revealZoneTool(picked);
+    const _zd=ZONE_EDIT[picked]; if(_zd && typeof _zd.refresh==='function') _zd.refresh();
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    if(typeof updateGizmo==='function') updateGizmo();
+    updateSelectionHighlight();
+  }
   else if(picked==='turrets'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; gizmoMode='translate'; editorActive='turrets'; syncModeToActive(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
   else if(picked==='pstart'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; gizmoMode='translate'; editorActive='pstart'; syncModeToActive(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
   else if(picked==='extract'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; gizmoMode='translate'; editorActive='extract'; syncModeToActive(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }

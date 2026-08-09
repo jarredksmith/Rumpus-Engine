@@ -33,15 +33,26 @@ assert(/if\(playerSpawnMarker && root===playerSpawnMarker\)\{ picked='pstart'; b
 assert(/if\(extractZone && root===extractZone\)\{ picked='extract'; break; \}/.test(src), 'the extract zone is resolved');
 
 // --- the new picked branches route the editor correctly ---
-assert(/else if\(picked==='ladders'\)\{[\s\S]*?editorActive='ladders';[\s\S]*?revealZoneTool\('ladders'\);[\s\S]*?refreshLadderMarkers/.test(src), 'clicking a ladder reveals the ladder tool inside the Zones section');
-assert(/else if\(picked==='audiozones'\)\{[\s\S]*?editorActive='audiozones';[\s\S]*?revealZoneTool\('audiozones'\);/.test(src), 'clicking an audio zone reveals the audio tool');
+/* build 1466: the five hand-written zone branches in the pick chain collapsed into ONE off ZONE_EDIT,
+   because three of them (triggers, water zones, effect zones) had never existed and those zones were
+   therefore selected with no panel and no gizmo. What this asserts — clicking a zone reveals its tool —
+   is unchanged and now holds for every zone type rather than the five somebody remembered. */
+{
+  const zb = src.slice(src.indexOf("else if(picked && ZONE_EDIT[picked])"));
+  assert(zb.length > 0, 'the one zone branch exists');
+  assert(/editorActive=picked;/.test(zb) && /revealZoneTool\(picked\)/.test(zb) && /_zd\.refresh\(\)/.test(zb),
+    'clicking a ladder or an audio zone reveals its tool inside the Zones section and repaints its markers');
+  assert(/updateGizmo\(\)/.test(zb), '...and grows drag handles, which the generic fall-through never did');
+  for(const t of ['ladders','audiozones']) assert(new RegExp('\\b'+t+':\\s*\\{').test(src), t+' is a ZONE_EDIT row');
+}
 assert(/else if\(picked==='turrets'\)\{[\s\S]*?editorActive='turrets'; syncModeToActive\(\);/.test(src), 'clicking a turret jumps to its mode');
 assert(/else if\(picked==='pstart'\)\{[\s\S]*?editorActive='pstart'; syncModeToActive\(\);/.test(src), 'clicking the player start jumps to its mode');
 assert(/else if\(picked==='extract'\)\{[\s\S]*?editorActive='extract'; syncModeToActive\(\);/.test(src), 'clicking the extract zone jumps to its mode');
 
 // --- the existing zone branches now also reveal the right tool (build 649 regression fix) ---
 for(const z of ['deathzones','jumppads','firezones'])
-  assert(new RegExp("else if\\(picked==='"+z+"'\\)\\{[\\s\\S]*?revealZoneTool\\('"+z+"'\\);").test(src), 'clicking a '+z+' marker reveals its tool inside the grouped Zones picker');
+  assert(new RegExp('\\b'+z+':\\s*\\{').test(src) && /else if\(picked && ZONE_EDIT\[picked\]\)\{/.test(src),
+    'clicking a '+z+' marker reveals its tool inside the grouped Zones picker');
 
 // --- the helper itself ---
 assert(/function revealZoneTool\(type\)\{/.test(src), 'revealZoneTool is defined');

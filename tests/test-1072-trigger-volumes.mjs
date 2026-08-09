@@ -134,7 +134,9 @@ assert(/triggers:   'Volumes that fire a Logic event when something enters, leav
 }
 assert(/if\(typeof triggerZones!=='undefined'\) for\(const z of triggerZones\)\{ if\(z && z\.ev\) set\.add\(String\(z\.ev\)\.trim\(\)\); \}/.test(src),
   'a trigger’s event name appears in the graph’s dropdown, so On-event can pick it up');
-assert(/if\(editorActive==='triggers'\)\{ return \(selTrigger>=0 && triggerMarkers\[selTrigger\]\)\?triggerMarkers\[selTrigger\]\.position:null; \}/.test(src),
-  'the move gizmo grabs a selected trigger');
+/* build 1466: getSelPos named six of the eight zone types by hand, which is how water zones and effect
+   zones ended up selectable with no handles. It asks ZONE_EDIT now, so this holds for every zone. */
+assert(/const _zd = ZONE_EDIT\[editorActive\];/.test(src) && /_zd\.markers\(\) \|\| \[\]\)\[_i\]/.test(src)
+  && /\btriggers:\s*\{/.test(src), 'the move gizmo grabs a selected trigger');
 
 done('build 1072: "when something gets HERE" — the missing entry point, wired straight into the logic graph');

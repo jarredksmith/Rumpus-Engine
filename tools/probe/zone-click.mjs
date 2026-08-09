@@ -112,7 +112,7 @@ await withGame(async (probe) => {
          The pick listens for CLICK, not mousedown — a synthesised down+up does not produce one, which is
          why the first run reported every type failing INCLUDING the three that already worked. A null
          with a failed control is the instrument (build 1428). */
-      let hit = false, where = null;
+      let hit = false, where = null, gizmoVisible = null, zoneToolRevealed = null;
       /* the offsets are in NDC and the camera is 26 m up at fov 78, so half-height on the ground is ~21 m:
          0.35 is 7.4 m, well OUTSIDE a 4 m zone. Only the centre was ever being tested, and the centre of a
          ring is its hole. */
@@ -121,9 +121,18 @@ await withGame(async (probe) => {
         selProps.length = 0; editorActive = 'props'; editorDragMoved = false;
         cv.dispatchEvent(new MouseEvent('click', { bubbles:true,
           clientX: cx + ox * r.width * 0.5, clientY: cy + oy * r.height * 0.5, button:0 }));
-        if(editorActive === type && d.sel() === i){ hit = true; where = [ox, oy]; break; }
+        /* build 1466: editorActive === type was the WRONG measurand, and it is why 1464 shipped
+           believing this was closed. The selection was real for all eight; what three of them never got
+           was a GIZMO to drag and a revealed panel to edit — which is the whole of the report. Measure
+           what a creator can actually do. */
+        if(editorActive === type && d.sel() === i){
+          hit = true; where = [ox, oy];
+          gizmoVisible = !!(gizmo && gizmo.visible);
+          zoneToolRevealed = (typeof activeZoneType !== 'undefined') ? (activeZoneType === type) : null;
+          break;
+        }
       }
-      out[type] = { hit, where };
+      out[type] = { hit, where, gizmoVisible, zoneToolRevealed };
       if(!hit){
         /* say WHY: what the ray actually reached, and what the marker is made of */
         const parts = []; m.traverse(o => { if(o.isMesh) parts.push({ t:o.geometry && o.geometry.type, vis:o.visible,
@@ -164,6 +173,22 @@ await withGame(async (probe) => {
                   bbox: (()=>{ const b=new THREE.Box3().setFromObject(pr); return b.isEmpty() ? 'EMPTY' :
                     [+b.min.x.toFixed(1),+b.min.y.toFixed(1),+b.min.z.toFixed(1),+b.max.x.toFixed(1),+b.max.y.toFixed(1),+b.max.z.toFixed(1)]; })(),
                   src: pr.userData && pr.userData.src };
+    }
+    /* the report names THREE verbs — select, drag, delete. Selecting is not the feature; measure all
+       three, per type, through the real paths. */
+    for(const type in ZONE_EDIT){
+      const d = ZONE_EDIT[type], i = d.list().length - 1, z = d.list()[i];
+      if(!z){ out[type].verbs = 'no zone'; continue; }
+      d.pick(i); editorActive = type;
+      const x0 = z.x, z0 = z.z;
+      /* DRAG: the gizmo's own write-back, which is what a handle drag calls */
+      try{ _zoneMove(type, new THREE.Vector3(x0 + 7, 0, z0 - 5)); }catch(e){}
+      const moved = (Math.abs(z.x - (x0 + 7)) < 0.01) && (Math.abs(z.z - (z0 - 5)) < 0.01);
+      /* DELETE: the editor's own delete path */
+      const before = d.list().length;
+      try{ d.remove(i); }catch(e){}
+      const deleted = d.list().length === before - 1;
+      out[type].verbs = { drag: moved, del: deleted };
     }
     out.__control = control;
     return out;

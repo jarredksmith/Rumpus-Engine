@@ -20,7 +20,11 @@ assert(/function addJumpPad\(\)/.test(src) && /function removeJumpPad\(i\)/.test
 
 // markers (distinct green) + gizmo move support
 assert(/function refreshJumpPadMarkers\(\)/.test(src) && /const JP_COLOR = 0x46e0a4/.test(src), 'jump pads draw their own (green) markers');
-assert(/\(editorActive==='jumppads'&&selJumpPad>=0\)/.test(src), 'gizmo can move a selected jump pad');
+/* build 1466: this quoted the per-type line, and that line is gone — the zone type used to be written
+   out by hand in five places and the last three each named six of the eight, which is how water zones and
+   effect zones ended up selectable but un-draggable. What it means is asserted against the derived form. */
+assert(/const _zsel = ZONE_EDIT\[editorActive\] \? \(ZONE_EDIT\[editorActive\]\.sel\(\) >= 0\) : false;/.test(src)
+  && /\bjumppads:\s*\{/.test(src), 'gizmo can move a selected jump pad');
 /* build 1326: six near-identical zone branches (and two types that had none) became one table-driven
    call that also carries Y. Same claim, through _zoneMove. */
 assert(/jumppads:   \{ list:\(\)=>jumpPads/.test(src) && /_zoneMove\(editorActive, v\)/.test(src), 'dragging writes back the pad position');
