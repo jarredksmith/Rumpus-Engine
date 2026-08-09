@@ -34479,7 +34479,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1445 · 2026-08-09';
+const BUILD_VERSION = 'build 1446 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -41917,6 +41917,63 @@ const _fmtField = (v, k)=> String(+(+v).toFixed(_fieldDp(k)));
 // `fmt` is a DIFFERENT job and deliberately keeps five: it writes the copy-paste block that bakes a tuned
 // value back into the source, where the extra digits are the whole point.
 const fmt = n => (+n).toFixed(5);
+/* build 1446: a slider must never silently rewrite a value it cannot represent.
+   The audit reported that the transform fields "clamp typed values back to +-65 while ARENA reaches 2000".
+   Measured, the typed value is NOT clamped — the commit takes it verbatim, as its own comment says — and
+   the real fault is worse, because it is silent and destructive one gesture later:
+
+     type 300 into Pos X    state 300, prop at x=300, the number field reads 300
+                            ...and the SLIDER reads 65, because a range input clamps its own value
+     touch the slider       state 65, prop teleports 235 units
+
+   Same for height (type 60, one touch, back to 20) and scale (type 40, one touch, back to 9.99). In an
+   800-unit arena the position sliders reach 8.1% of it.
+
+   Two derivations, and neither invents a bound:
+   - POSITION tracks the level, because ARENA is exactly how far the floor goes. At the default arena of 70
+     this is a 5-unit widening of a 65-unit slider, so nothing a creator has today moves; it only opens up
+     for the creator who enlarged their arena, which is the only one who needed it.
+   - ANY field widens to include the value it is showing. That is the general rule, and it is what fixes
+     scale and height without guessing new limits for them: a slider that cannot reach 40 is not entitled to
+     decide the value is 10.
+   The cost is a coarser slider in a big arena — which is what "reaches the whole arena" means, and the
+   number field and the gizmo are the precision tools. */
+/* ONE writer for "show this value on this slider". There were three — the build, the commit's own
+   write-back and the proportional siblings' refresh — and a range input CLAMPS ITS OWN VALUE, so any of
+   them assigning an out-of-range number is what left the slider reading 65 beside a prop standing at 300.
+   Widen, then write. */
+function _showOnRange(rng, fld, v){
+  const r = _fieldRange(fld, v);
+  if(+rng.min !== r.min) rng.min = r.min;
+  if(+rng.max !== r.max) rng.max = r.max;
+  /* The RANGE is not the only thing that can rewrite a value — the STEP lattice does it too, and it is
+     anchored at min. Scale's min is the 0.00001 epsilon that keeps zero out, so 40 is not on its lattice
+     and the element quietly held 39.99001. Rather than predicting that in floating point over an 800-unit
+     span, TRY the authored step and ask the element whether it managed to hold the number, relaxing only
+     when it did not — so arrow-key nudging keeps its 1 cm / 0.1 degree feel everywhere else.
+     The order matters and cost a run: writing the value first and RESTORING the step afterwards re-clamps
+     it, because assigning `step` re-sanitises `value`. The restore was undoing the fix. */
+  if(fld.step != null) rng.step = fld.step;
+  rng.value = v;
+  /* HALF A STEP is the tolerance, not an epsilon, and the difference is a real one. A correct rounding can
+     never move a value by more than half a step, so anything beyond that means the element could not
+     represent the number and fell back to a boundary — which is the rewrite worth relaxing for (40 on
+     scale's lattice becomes 39.99001, off by 0.00999 of a 0.01 step). Below it is ordinary quantisation
+     that every field has always had: scale's min is the 0.00001 epsilon keeping zero out, so its lattice is
+     offset from every round number and a 2 already shows as 2.00001. Relaxing there would drop the authored
+     step on almost every scale value and make arrow-key nudging coarse, to hide a ten-microme difference. */
+  const _tol = (+fld.step > 0) ? +fld.step * 0.5 : 1e-9;
+  if(Math.abs(+rng.value - v) > _tol){ rng.step = 'any'; rng.value = v; }
+}
+function _fieldRange(fld, v){
+  let lo = fld.min, hi = fld.max;
+  if(fld.k === 'px' || fld.k === 'pz'){
+    const A = (typeof ARENA === 'number' && isFinite(ARENA)) ? Math.abs(ARENA) : 0;
+    if(A > hi){ hi = A; lo = -A; }
+  }
+  if(typeof v === 'number' && isFinite(v)){ if(v < lo) lo = v; if(v > hi) hi = v; }
+  return { min: lo, max: hi };
+}
 function prsTransform(min,max,perAxisScale){
   const f = [
     { k:'px', label:'Pos X', min:min, max:max, step:STEP_POS },
@@ -50594,7 +50651,7 @@ function renderEditorFields(){
     num.step = fld.step; num.value = _fmtField(tgt.state[fld.k], fld.k);
     lab.appendChild(name); lab.appendChild(num);
     const rng = document.createElement('input'); rng.type='range';
-    rng.min=fld.min; rng.max=fld.max; rng.step=fld.step; rng.value=tgt.state[fld.k];
+    _showOnRange(rng, fld, tgt.state[fld.k]);   /* build 1446: sets the step too, relaxing it only for a value the lattice cannot hold */
     const commit = (raw, fromSlider)=>{
       let v = parseFloat(raw); if(isNaN(v)) return;
       const isScale = (fld.k==='sx'||fld.k==='sy'||fld.k==='sz');
@@ -50619,18 +50676,18 @@ function renderEditorFields(){
           tgt.state.sz = Math.max(0.00001, tgt.state.sz*ratio);
           v = tgt.state[fld.k];
         } else { tgt.state[fld.k] = v; }
-        for(const fi of editorFieldInputs){ if((fi.k==='sx'||fi.k==='sy'||fi.k==='sz') && fi.k!==fld.k){ fi.rng.value=tgt.state[fi.k]; fi.num.value=_fmtField(tgt.state[fi.k], fi.k); } }   // refresh the sibling axes (leave the one being dragged alone)
+        for(const fi of editorFieldInputs){ if((fi.k==='sx'||fi.k==='sy'||fi.k==='sz') && fi.k!==fld.k){ _showOnRange(fi.rng, fi, tgt.state[fi.k]); fi.num.value=_fmtField(tgt.state[fi.k], fi.k); } }   // refresh the sibling axes (leave the one being dragged alone)
       } else {
         tgt.state[fld.k] = v;                              // typed numbers can exceed slider min/max
       }
-      rng.value = v; num.value = fromSlider ? _fmtField(v, fld.k) : num.value;
+      _showOnRange(rng, fld, v); num.value = fromSlider ? _fmtField(v, fld.k) : num.value;   /* build 1446: widen before writing, or a typed value out of the slider's range is silently rewritten by the next touch of that slider */
       tgt.apply(); if(tgt===editorTargets.props) _xfGroupApply(fld.k, _xfOld, tgt.state[fld.k], isScale && scaleProportional); updateGizmo(); updateEditorOut();
     };
     rng.oninput = ()=>commit(rng.value, true);
     num.oninput = ()=>commit(num.value, false);
     rng.addEventListener('mousedown', ()=>pushUndoSnapshot());   // one undo entry per field-edit gesture
     num.addEventListener('focus', ()=>pushUndoSnapshot());
-    editorFieldInputs.push({ k:fld.k, rng, num });
+    editorFieldInputs.push({ k:fld.k, min:fld.min, max:fld.max, step:fld.step, rng, num });   /* build 1446: updateFieldDisplays re-derives the slider range, so it needs the field's own bounds — without them it would read undefined and every slider would widen to whatever it was showing */
     wrap.appendChild(lab); wrap.appendChild(rng);
     host.appendChild(wrap);
   }
@@ -50662,7 +50719,7 @@ function updateFieldDisplays(){
   if(!tgt || !tgt.state) return;   // zone targets (fire / jump / death zones) own no transform fields
   for(const f of editorFieldInputs){
     const v = tgt.state[f.k];
-    f.rng.value = v; f.num.value = _fmtField(v, f.k);
+    _showOnRange(f.rng, f, v); f.num.value = _fmtField(v, f.k);   /* build 1446 */
   }
 }
 

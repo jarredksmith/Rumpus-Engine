@@ -2215,6 +2215,67 @@ better than being in a batch.
 draw calls and triangles are the only trustworthy instruments; a creator's own machine is the only place
 the wall clock means anything, which is what the perf HUD's `other` / `idle` split (1426) is for.
 
+## A slider never silently rewrites a value it cannot represent (build 1446)
+
+The audit said the transform fields *"clamp typed values back to ±65 while ARENA reaches 2000"*. **Measured
+live, that is wrong** — and the truth is worse, because it is silent and destructive one gesture later. The
+typed value is not clamped at all; the commit takes it verbatim, as its own comment has always said. What
+clamps is the `<input type="range">`, which sanitises **its own** value:
+
+```
+type 300 into Pos X    state 300, prop at x=300, the number field reads 300
+                       ...and the slider reads 65
+touch the slider       state 65, and the prop teleports 235 units
+```
+
+Same for height (type 60, one touch, back to 20) and scale (type 40, one touch, back to 9.99). In an
+800-unit arena the position sliders reached **8.1%** of it.
+
+### Two derivations, neither inventing a bound
+
+- **Position tracks `ARENA`**, which is exactly how far the floor goes. At the default arena of 70 that is a
+  five-unit widening of a 65-unit slider, so nothing a creator has today moves; it only opens up for the
+  creator who enlarged their arena, who is the only one who needed it. Rotation, scale and height
+  deliberately do NOT follow it — a rotation is not a distance and a height is not an arena width.
+- **Any field widens to include the value it is showing.** That is the general rule, and it is what fixes
+  scale and height without guessing new limits for them: a slider that cannot reach 40 is not entitled to
+  decide the value is 10.
+
+The cost is a coarser slider in a big arena, which is what "reaches the whole arena" means; the number field
+and the gizmo are the precision tools.
+
+### There were three writers of `rng.value`, and each one re-introduced the bug
+
+The build, the commit's own write-back, and the proportional siblings' refresh — plus `updateFieldDisplays`.
+`_showOnRange` is the one writer now: widen, then write. The test counts the call sites rather than
+spot-checking, because any one of them assigning an out-of-range number brings the whole thing back.
+
+### The step lattice rewrites values too, and the fix's own restore re-broke it
+
+A range's step is anchored at `min`, and scale's `min` is the `0.00001` epsilon that keeps zero out — so 40
+is not on its lattice and the element quietly held **39.99001**. Rather than predicting that in floating
+point over an 800-unit span, the helper tries the authored step and **asks the element** whether it managed
+to hold the number.
+
+**The order cost a run.** Writing the value and then *restoring* the authored step re-clamps it, because
+assigning `step` re-sanitises `value` — so the restore was undoing the fix. The step is set first now.
+
+**And the tolerance is HALF A STEP, not an epsilon.** A correct rounding can never move a value by more than
+half a step, so anything beyond that means the element fell back to a boundary — the rewrite worth relaxing
+for. Below it is ordinary quantisation every field has always had: scale's offset lattice already shows a
+typed `2` as `2.00001`, and relaxing there would drop the authored step on nearly every scale value and make
+arrow-key nudging coarse, to hide ten micrometres.
+
+### The test's fake element was wrong about the one case that matters
+
+It rounded to the nearest lattice value and then clamped to `max`, so it held 40 exactly and disagreed with
+the browser. The real element steps **down** to the last lattice value at or below max. The live probe had
+already measured 39.99001, so the model was corrected against the measurement rather than the other way
+round — and the two now agree on every row.
+
+One pin moved (1437), an executing rig that genuinely lacked the new module-level helper; it is handed
+`_fieldRange`/`_showOnRange` **lifted from source**, never restated.
+
 ## Delete and Duplicate act on the same things (build 1445)
 
 From the editor audit. They were **three** hand-kept lists, and no two of them agreed:

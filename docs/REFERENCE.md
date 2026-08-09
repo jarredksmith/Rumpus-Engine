@@ -476,6 +476,7 @@ See World & Scene Settings for the eight zone tools and the terrain sculpt/paint
 | **F** | Frame selection; nothing selected = toggle free-fly |
 | **Shift+F** | Toggle free-fly camera |
 | **T** | Toggle top-down view |
+| **Transform fields** | Position sliders span the whole arena (build 1446); any field widens to show a value typed beyond its range, so typing a number and then touching its slider no longer moves the prop |
 | **Delete / Backspace** | Delete the selection — props, lights, spawn markers, turrets, any of the eight zone types, or a pickup spot (build 1445) |
 | **Shift+D** | Duplicate the same set |
 | **B** | Toggle the terrain brush |
