@@ -5,7 +5,7 @@
 // _withLibAnims appends them to the augmented gltf view, so the existing per-state pickers and
 // state machine treat them as the model's own.
 import * as THREE from 'three';
-import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 const glue = 'const CA_SLOTS = ' + extractConst('CA_SLOTS', src) + ';\n'
@@ -172,7 +172,6 @@ assert(/gltf\.userData\._caFor===_caRev && gltf\.userData\._caClips/.test(src), 
 assert(/customAnims: \(\(typeof customAnims!=='undefined' && customAnims\.length\) \? _caSanitize\(customAnims\) : undefined\)/.test(src),
   'serializeLevel stores the library (omitted when empty — old levels stay byte-identical)');
 assert(/let customAnims = _caSanitize\(savedLevel && savedLevel\.customAnims\);/.test(src), 'boot restores it');
-eq((src.match(/customAnims = _caSanitize\(level\.customAnims\); _caRev\+\+;/g) || []).length, 2,
-  'both level-apply paths (local load + network transfer) restore it and invalidate clip caches');
+appliedOnceByBothLoaders(/customAnims = _caSanitize\(level\.customAnims\); _caRev\+\+;/g, 'both level-apply paths (local load + network transfer) restore it and invalidate clip caches');
 
 done('build 1040: custom clips — sanitized, serialized, retargeting onto any humanoid through the existing pipeline');

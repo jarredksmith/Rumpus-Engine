@@ -6,7 +6,7 @@
 // a bar fills value/max, and 'when' gates visibility on a variable — so show/hide, scoring
 // and countdowns are all wired through the same nodes the level already uses. Level-scoped,
 // serialized, host-authoritative with the watched variables mirrored to clients ({t:'hudv'}).
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---- the sanitizer: imported levels stay inert data ----
@@ -64,8 +64,7 @@ const env = new Function('logicVars', 'NET', glue + '\nreturn { fmt:_hwFmtTimer,
 assert(/let hudWidgets = _sanitizeHudWidgets\(savedLevel && savedLevel\.hudWidgets\);/.test(src), 'widgets boot from the saved level');
 assert(/hudWidgets: \(\(typeof hudWidgets!=='undefined' && hudWidgets\.length\) \? _sanitizeHudWidgets\(hudWidgets\) : undefined\),/.test(src),
   'and serialize with it');
-eq((src.match(/hudWidgets = _sanitizeHudWidgets\(level\.hudWidgets\); _hwRev\+\+;/g) || []).length, 2,
-  'both level-load paths restore them');
+appliedOnceByBothLoaders(/hudWidgets = _sanitizeHudWidgets\(level\.hudWidgets\); _hwRev\+\+;/g, 'both level-load paths restore them');
 assert(/updateHudWidgets\(\);   \/\/ build 1058: custom HUD widgets mirror the logic variables \(all modes\)/.test(src),
   'the frame loop drives them right after the logic graph');
 assert(/e\.lb\.textContent=t;/.test(src) && !/hwLb[^]{0,200}innerHTML/.test(src),

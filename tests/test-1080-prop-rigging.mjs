@@ -7,7 +7,7 @@
 // A rig belongs to the MODEL, not to one copy of it. Props share one cached GLTF per URL, so rigging "this
 // crate" and "that crate" differently would be a lie the engine could not keep. Keying by URL means every
 // copy of the shopkeeper stands up the same way, and the level stores ONE marker set however many you placed.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- the store
@@ -100,7 +100,7 @@ const S = new Function(`
 }
 assert(/modelRigs: \(Object\.keys\(modelRigs\)\.length \? Object\.assign\(\{\}, modelRigs\) : undefined\),/.test(src),
   'the rigs serialize with the level');
-eq((src.match(/modelRigs = _sanitizeModelRigs\(level\.modelRigs\);/g) || []).length, 2, 'both load paths restore them');
+appliedOnceByBothLoaders(/modelRigs = _sanitizeModelRigs\(level\.modelRigs\);/g, 'both load paths restore them');
 {
   const i = src.indexOf('modelRigs = _sanitizeModelRigs(level.modelRigs);');
   const before = src.slice(0, i);

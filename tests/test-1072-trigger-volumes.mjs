@@ -4,7 +4,7 @@
 // prop. There was no "when the player gets HERE". Every other zone in the engine is a hardcoded
 // behaviour (death, audio, jump, ladder, fire, water); a trigger does nothing by itself and hands
 // the moment to the graph, which is where the author's game actually lives.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---- the volume test ----
@@ -116,8 +116,7 @@ assert(/if\(typeof _trigState!=='undefined'\) _trigState\.length=0;/.test(extrac
 assert(/let triggerZones = \(savedLevel && Array\.isArray\(savedLevel\.triggers\)\) \? savedLevel\.triggers\.map\(_migrateTrigger\) : \[\];/.test(src),
   'triggers boot from the saved level');
 assert(/triggers: \(triggerZones\.length \? triggerZones\.map\(_migrateTrigger\) : undefined\),/.test(src), 'and serialize with it');
-eq((src.match(/triggerZones = Array\.isArray\(level\.triggers\) \? level\.triggers\.map\(_migrateTrigger\) : \[\];/g) || []).length, 2,
-  'both level-load paths restore them');
+appliedOnceByBothLoaders(/triggerZones = Array\.isArray\(level\.triggers\) \? level\.triggers\.map\(_migrateTrigger\) : \[\];/g, 'both level-load paths restore them');
 assert(/triggerZones\.length=0; selTrigger=-1; _trigState\.length=0;/.test(src), 'and a scene wipe clears them');
 
 // ---- the editor ----

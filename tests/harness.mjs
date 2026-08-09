@@ -108,6 +108,28 @@ export function evalDecl(code, returnName, deps = {}) {
 // --- tiny test runner ---
 let _pass = 0, _fail = 0;
 const _fails = [];
+// ---------------------------------------------------------------------------------------------------
+// build 1454: a level's non-prop sections (zones, fx, logic, persistence, rigs, HUD, roster...) used to
+// be written out TWICE - once in loadLevelFromNet, once in restoreLevel - and 25 harnesses asserted a
+// COUNT OF 2 over the source to mean "restored on both load paths". That is build 1280's own finding:
+// a test that counts copies of a thing is a test of the copying. Worse, those pins made REMOVING the
+// duplication fail the suite, so the defect was test-enforced - and it had already drifted (the net
+// copy refreshed the extraction marker, the editor copy did not).
+//
+// This states the property the pins always meant: the statement lives ONCE, inside the one applier,
+// and every loader reaches that applier. It cannot be satisfied by a second copy appearing elsewhere.
+export function appliedOnceByBothLoaders(re, msg, src = gameSource()) {
+  const fn = extractFunction('_applyLevelSections', src);
+  const inFn = (fn.match(re) || []).length;
+  if (inFn !== 1) throw new Error(msg + ' - expected exactly one occurrence inside _applyLevelSections, found ' + inFn);
+  const whole = (src.match(re) || []).length;
+  if (whole !== 1) throw new Error(msg + ' - it also appears OUTSIDE the one applier (' + whole + ' engine-wide); the duplication is back');
+  for (const loader of ['loadLevelFromNet', 'restoreLevel']) {
+    const body = extractFunction(loader, src);
+    if (!/_applyLevelSections\(level\)/.test(body)) throw new Error(msg + ' - ' + loader + ' does not reach _applyLevelSections');
+  }
+}
+
 export function assert(cond, msg) {
   if (cond) { _pass++; }
   else { _fail++; _fails.push(msg || 'assertion failed'); }

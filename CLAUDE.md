@@ -12712,6 +12712,72 @@ That is the same fault class as 1289 — a gameplay quantity derived from the ar
 with a compatibility story, because every level that has already tuned `tpHeight` did so against this pivot.
 
 
+## A level's sections are applied in one place (build 1454)
+
+The nine-domain audit's code-quality CRITICAL, verified at the line and then found to be worse than
+reported. An **18-line block** was written out twice — `loadLevelFromNet` (campaign / co-op) and
+`restoreLevel` (every editor open and every Ctrl+Z) — covering the extraction spot, audio zones,
+triggers, death zones, jump pads, ladders, fire/water/effect zones, waterfalls, the impact and death
+fx, the logic graph, persistence, model rigs, custom anims, HUD widgets, action binds, prefab defs,
+the tracer/decal/bolt configs, the HUD theme, the radial menu and the character roster.
+
+**It had ALREADY DRIFTED, which is what makes this a bug fix rather than tidying.** Seventeen of the
+eighteen lines were byte-identical; the eighteenth was not. The net copy ended with
+`refreshExtractMarker()` and the editor copy stopped one call short:
+
+```
+loadLevelFromNet  extractSpot = …; if(level.extractFx){ … applyExtractFx(); } refreshExtractMarker();
+restoreLevel      extractSpot = …; if(level.extractFx){ … applyExtractFx(); }
+```
+
+`refreshExtractMarker` appears nowhere else in `restoreLevel`, so **loading a level in the editor — or
+pressing undo — left the extraction beacon on the PREVIOUS level's spot**, or lingering when the new
+level had none. It self-healed only if the creator happened to be sitting on the extract tab, which
+re-renders the marker for its own reasons (`renderEditorFields`). What ships is the UNION, build 1401's
+rule, so closing the duplication closes the bug.
+
+Measured live (`tools/probe/extract-marker-load.mjs`), driving the real editor loader:
+
+```
+A: authored spot          spot (120, -80)   marker (120, -80)
+B: restoreLevel, new spot spot (-35,  55)   marker (-35,  55)   <- FOLLOWED
+C: restoreLevel, no spot  spot null         marker (0, -30) = extractAutoPos()
+```
+
+### Twenty-five harnesses were enforcing the duplication
+
+Every one asserted a **count of 2** over the source to mean *"restored on both load paths"*. That is
+build 1280's own finding — *a test that counts copies of a thing is a test of the copying* — in its
+worst form: those pins made **removing** the defect fail the suite, so the duplication was
+test-enforced. And they proved nothing about behaviour: deleting one copy of any field left the suite
+fully green.
+
+They now go through `appliedOnceByBothLoaders(re, msg)` in `harness.mjs`, which states the property
+they always meant and **cannot be satisfied by a second copy appearing elsewhere**: the statement
+occurs exactly once inside `_applyLevelSections`, exactly once engine-wide, and both loaders reach the
+applier. One helper instead of 25 spellings of one idea.
+
+### The sweep produced a false positive, exactly as build 1400 warned
+
+A blanket regex over the test tree rewrote `test-1193`'s `_fxSpeedFor` assertion, which legitimately
+counts **two** sites (bots and enemies) and has nothing to do with loaders. Build 1400 recorded this
+class after doing it once; I did it again. **The only reason it was caught in one run is that the
+helper THROWS on a pattern it cannot find inside the applier rather than passing** — a converter that
+degraded silently would have left a green test measuring nothing.
+
+### `deathZones` had zero assertions in 1,190 harnesses
+
+Which is why `test-1454` is executable rather than a pin sweep: it runs the real applier against a
+level carrying all 24 sections at non-default values and reads the module state back, then against an
+EMPTY level (every list must come back empty rather than `undefined`, or the next consumer to iterate
+it takes the frame loop down — and the marker must still refresh, which is how a stale one clears),
+then A-then-B to prove nothing of the first level survives the second. 141 checks.
+
+**Recorded, not fixed:** `tools/probe/lint.mjs` now has a false-POSITIVE class to sit beside build
+1413's false-negative one — it flags legitimate `` ` + var + ` `` concatenation and nested `${...}` in
+`decal-ghost.mjs` and `ranged-windup.mjs`, both of which run correctly. A checker that cries wolf is
+one people stop reading, which is the same failure mode from the other side.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

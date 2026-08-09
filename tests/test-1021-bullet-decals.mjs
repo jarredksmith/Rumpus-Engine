@@ -4,7 +4,7 @@
 // image), serialized with the level. Optimized: one shared texture, pooled plane meshes, a
 // hard cap with oldest-recycled, and a tail fade — a firefight never accumulates geometry.
 import * as THREE from 'three';
-import { gameSource, html, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, html, extractFunction, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---- executable: sanitizer ----
@@ -77,7 +77,7 @@ assert(/decals\.slice\(\)\.forEach\(d=>\{ if\(d\.mesh\.parent\) d\.mesh\.parent\
 
 // ---- rides the level + editor panel ----
 assert(/decal: Object\.assign\(\{\}, decalCfg\),/.test(src), 'serialized with the level');
-eq((src.match(/decalCfg = _sanitizeDecal\(level\.decal\);/g)||[]).length, 2, 'restored (sanitized) at both level-load sites');
+appliedOnceByBothLoaders(/decalCfg = _sanitizeDecal\(level\.decal\);/g, 'restored (sanitized) at both level-load sites');
 assert(/\['decalfx','\\ud83d\\udd73\\ufe0f','Bullet holes'\]/.test(src), 'a third entry in the grouped Effects picker');
 assert(/decalfx:'edDecalFx'/.test(src) && /<div id="edDecalFx" class="wepfxHost" data-wepfx="decalfx"><\/div>/.test(src), 'panel host wired');
 assert(/renderUploadRow\(up, 'texture', \(url\)=>\{ decalCfg\.url=url\|\|''; _decalTexReset\(\); renderDecalFxPanel\(\); \}\);/.test(src),

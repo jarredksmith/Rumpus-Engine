@@ -4,7 +4,7 @@
 // under reserved keys __inv/__cp: the variable loader accepts only numeric values, so an old engine
 // reading a new blob skips them silently, and a new engine reading an old blob finds nothing — two-way
 // compatible by construction. Solo only; a play-from-here test pose (1224) outranks the checkpoint.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // a scope that runs the REAL store/load/resume trio against a fake localStorage
@@ -116,8 +116,7 @@ const drive = (setup, run) => {
 {
   assert(/persistInv: \(persistInv\|\|undefined\), persistCp: \(persistCp\|\|undefined\),/.test(src),
     'both flags serialize absent-when-off — old levels byte-identical');
-  eq((src.match(/persistInv = !!level\.persistInv; persistCp = !!level\.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad\(/g) || []).length, 2,
-    'BOTH loaders set the flags before the load (so __inv/__cp are picked up) and clear stale carried state from a previous level');
+  appliedOnceByBothLoaders(/persistInv = !!level\.persistInv; persistCp = !!level\.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad\(/g, 'BOTH loaders set the flags before the load (so __inv/__cp are picked up) and clear stale carried state from a previous level');
   assert(/let persistInv = !!\(savedLevel && savedLevel\.persistInv\);/.test(src), 'the boot path reads them too');
   const sg = extractFunction('startGame');
   const iWipe = sg.indexOf('inventory.length=0'), iRes = sg.indexOf('_persistResume(');

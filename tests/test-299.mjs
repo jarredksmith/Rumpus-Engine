@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 // build 406: death burst FX gained selectable styles (classic/blood/plasma/gib/vapor) + size + tint, with a
 // lingering ground splat for the gory ones. Serialized with the level + editable in the Impact FX panel.
@@ -30,6 +30,6 @@ assert(/r\.fade \? Math\.max\(0,r\.life\/mx\)\*0\.55 :/.test(src2), 'splats fade
 
 // serialized both ways + editor present
 assert(/deathFx: Object\.assign\(\{\}, deathFxCfg\)/.test(src), 'saved with the level');
-assert((src.match(/deathFxCfg = _sanitizeDeathFx\(level\.deathFx\)/g)||[]).length === 2, 'restored on both load paths');
+appliedOnceByBothLoaders(/deathFxCfg = _sanitizeDeathFx\(level\.deathFx\)/g, 'restored on both load paths');
 assert(/Death burst/.test(src) && /dtest\.onclick=\(\)=>\{/.test(src), 'editor has a Death burst section with a Test button');
 done();

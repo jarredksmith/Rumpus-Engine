@@ -7,7 +7,7 @@
 //  - the swim hook runs right after gravity so BOTH the Rapier KCC and the classic mover consume it;
 //  - full zone plumbing: editor panel + picker + quick-add, serialize/restore (both net + local paths),
 //    wipe, underwater tint overlay.
-import { gameSource, html, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, html, extractFunction, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---- the swim/wade/flow step runs EXECUTABLY against a stub player ----
@@ -57,7 +57,7 @@ assert(/\['waterzones','\\ud83d\\udca7','Water'\]|\['waterzones','💧','Water'\
 assert(/waterzones:'edWaterZones'/.test(src), '...with its panel host');
 assert(/id="edWaterZones" class="zoneHost" data-zone="waterzones"/.test(src), '...and the host div in the Zones section');
 assert(/waterZones: waterZones\.map\(z=>\(\{ x:\+z\.x, z:\+z\.z, r:\+z\.r, y:\(\+z\.y\|\|0\), h:\(z\.h!=null\?\+z\.h:2\), color:/.test(src), 'water zones serialize with the level');
-eq((src.match(/waterZones = Array\.isArray\(level\.waterZones\) \? level\.waterZones\.map\(_migrateWaterZone\) : \[\];/g)||[]).length, 2, '...and restore on BOTH the local and network load paths');
+appliedOnceByBothLoaders(/waterZones = Array\.isArray\(level\.waterZones\) \? level\.waterZones\.map\(_migrateWaterZone\) : \[\];/g, '...and restore on BOTH the local and network load paths');
 assert(/waterZones\.length=0; selWaterZone=-1;/.test(src), 'wipe clears them');
 assert(/if\(typeof _waterPlayerStep==='function'\) _waterPlayerStep\(dt\);/.test(src), 'the swim hook sits after gravity, before both movers');
 /* build 1320: the + menu's zone list WAS a second hand-maintained copy of ZONE_TYPES and had drifted by

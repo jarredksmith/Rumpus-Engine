@@ -3,7 +3,7 @@
 // locks, dialogue, materials, physics). Instances are pf-marked {id,inst,slot} (serialized) and
 // grouped so they move as one. The library persists in localStorage; the defs a level actually
 // uses are embedded in the level file, so shared levels bring their prefabs along.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
@@ -97,7 +97,7 @@ assert(/if\(o\.userData\.pf && o\.userData\.pf\.id\) e\.pf=\{ id:String\(o\.user
 assert(extractFunction('_applyPropEntry').includes("if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; }"),
   'all three level loaders restore the marks');
 assert(/prefabDefs: _pfUsedDefs\(\),/.test(src), 'used defs are embedded in the level file');
-eq(src.split('if(level.prefabDefs && typeof _pfMergeDefs===\'function\') _pfMergeDefs(level.prefabDefs);').length - 1, 2,
+appliedOnceByBothLoaders(/if\(level\.prefabDefs && typeof _pfMergeDefs==='function'\) _pfMergeDefs\(level\.prefabDefs\);/g,
   'both level-load sites merge the embedded defs');
 assert(/if\(savedLevel && savedLevel\.prefabDefs\)\{ try\{ _pfMergeDefs\(savedLevel\.prefabDefs\); \}catch\(e\)\{\} \}/.test(src), 'boot merges too');
 assert(/\+ sec\('Prefabs', 'prefabs', '<div id="edPrefabs"><\/div>'\)/.test(src) && /build:\s*\['gizmo','object','material','transform','prefabs'\]/.test(src),

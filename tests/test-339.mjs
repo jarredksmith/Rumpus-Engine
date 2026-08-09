@@ -1,4 +1,4 @@
-import { gameSource, html, extractFunction, assert, done } from './harness.mjs';
+import { gameSource, html, extractFunction, assert, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 const page = html;
 // build 450: fire zones — an area that's on fire dealing damage-over-time to the player, bots, and enemies as
@@ -9,7 +9,7 @@ assert(/function _migrateFireZone\(z\)\{ return \{ x:\+z\.x\|\|0, z:\+z\.z\|\|0,
 assert(/den:\(z\.den!=null\?\+z\.den:1\), psz:\(z\.psz!=null\?\+z\.psz:1\), hue:\(z\.hue!=null\?\+z\.hue:30\), turb:\(z\.turb!=null\?\+z\.turb:1\), wind:\(z\.wind!=null\?\+z\.wind:0\), spk:\(z\.spk!==false\)/.test(src), 'particle-look fields default to natural fire');
 assert(/let fireZones = \(savedLevel && Array\.isArray\(savedLevel\.fireZones\)\)/.test(src), 'fire zones load from the saved level');
 assert(/fireZones: fireZones\.map\(z=>\(\{ x:\+z\.x, z:\+z\.z, r:\+z\.r, y:\(\+z\.y\|\|0\), h:\(z\.h!=null\?\+z\.h:3\), dps:\(\+z\.dps\|\|0\), den:\(\+z\.den\|\|1\), psz:\(\+z\.psz\|\|1\), hue:\(z\.hue!=null\?\+z\.hue:30\), turb:\(z\.turb!=null\?\+z\.turb:1\), wind:\(\+z\.wind\|\|0\), spk:\(z\.spk!==false\), sat:\(z\.sat!=null\?\+z\.sat:1\), smoke:\(z\.smoke===true\?1:0\), rx:\(\+z\.rx\|\|0\), ry:\(\+z\.ry\|\|0\), rz:\(\+z\.rz\|\|0\), sx:\(z\.sx!=null\?\+z\.sx:1\), sy:\(z\.sy!=null\?\+z\.sy:1\), sz:\(z\.sz!=null\?\+z\.sz:1\) \}\)\)/.test(src), 'fire zones serialized with the level (incl. particle look + saturation + smoke + transform)');
-assert((src.match(/fireZones = Array\.isArray\(level\.fireZones\) \? level\.fireZones\.map\(z=>_migrateFireZone\(z\)\) : \[\];/g)||[]).length >= 2, 'fire zones adopted on the client level-load path (carries to joiners)');
+appliedOnceByBothLoaders(/fireZones = Array\.isArray\(level\.fireZones\) \? level\.fireZones\.map\(z=>_migrateFireZone\(z\)\) : \[\];/g, 'fire zones adopted on the client level-load path (carries to joiners)');
 
 // editor: section in the World/scene tab + panel + a Damage/sec control
 assert(/sec\('Zones', 'zones',/.test(src) && /id="edFireZones" class="zoneHost" data-zone="firezones"/.test(src), 'Fire zones host registered under the grouped Zones section (build 649)');

@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 // build 645: placeable ladders — a vertical climb volume. W up / S down / jump off; at the top you step off in the
 // ladder's facing. Authored in the editor (Scene > Ladders), serialized, and drives the ladder climb animations.
@@ -24,7 +24,7 @@ assert(/function addLadder\(\)/.test(src) && /function renderLaddersPanel\(\)/.t
 assert(/sec\('Zones', 'zones',/.test(src) && /id="edLadders" class="zoneHost" data-zone="ladders"/.test(src), 'Ladders host registered under the grouped Zones section (build 649)');
 assert(/scene:   \['world','generate','zones'\]/.test(src), 'the grouped Zones section (incl. ladders) shows in Scene mode');
 assert(/ladders: ladders\.map\(L=>\(\{ x:\+L\.x, z:\+L\.z, r:\(\+L\.r\|\|1\), y:\(\+L\.y\|\|0\), h:\(L\.h!=null\?\+L\.h:4\), face:\(\+L\.face\|\|0\) \}\)\)/.test(src), 'serialized with the level');
-assert((src.match(/ladders = Array\.isArray\(level\.ladders\) \? level\.ladders\.map\(_migrateLadder\) : \[\]/g)||[]).length===2, 'restored in both load paths');
+appliedOnceByBothLoaders(/ladders = Array\.isArray\(level\.ladders\) \? level\.ladders\.map\(_migrateLadder\) : \[\]/g, 'restored in both load paths');
 assert(/editorActive==='ladders'\){ return \(selLadder>=0/.test(src), 'the move gizmo targets the selected ladder');
 
 done('placeable ladders: climb volume + editor + serialize + climb animations (build 645)');
