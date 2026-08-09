@@ -1940,6 +1940,42 @@ arriving for reviewers: *a critic cannot silently review a build that is not in 
 reason it did not poison the results is that they were told to state what they could not verify, and did.
 Every finding acted on was re-verified against the recovered tree first.
 
+## The transparent-material registry, measured and declined (probe pass, after build 1451)
+
+Build 1168 named *"replacing `_aoHideNoDepth`'s traverse with a transparent-material registry"* as the half
+it did not finish, and 1353 did the cheap half (the four buffers). Before building the registry — which is
+the hand-kept-list shape this file records as its most repeated defect — `tools/probe/ao-sweep-cost.mjs`
+asks what the traverse actually costs.
+
+```
+                    59 props        659 props
+world nodes/sweep      157             777
+viewmodel nodes         18              18
+per frame (4 sweeps)   350           1,590
+NO-DEPTH HITS           24              24     <- constant
+```
+
+**The hit set does not grow with content.** A registry would save walking ~1,554 nodes to find a set of 24,
+each visit being `o.visible`, `o.material` and three property reads. For comparison, build 1451 removed
+~4,800 iterations a frame of strictly more expensive work from `checkProximity` at the same scale.
+
+Against that: a registry has to be invalidated on every add, every remove, and every write to `transparent`,
+`depthWrite` or `alphaTest` anywhere in the engine — and **its failure mode is a solid rectangle back in the
+AO buffer**, which is the bug builds 1126, 1128, 1152, 1158 and 1285 exist to prevent. Six arrivals of one
+rule is not a rule to hand to a cache.
+
+**`traverseVisible` was measured too, and it is not the free win it looks like.** three's `traverse` descends
+into an invisible subtree and calls back on every child; `traverseVisible` skips it, and three's own renderer
+skips it as well (`projectObject` returns early), so nothing under an invisible ancestor is drawn. But the
+two produce **different lists — 24 against 5**. The 19 extra are VISIBLE children of an INVISIBLE parent,
+which the current sweep hides and then restores: a net no-op for the frame, and 19 pointless writes a pass.
+So it is equivalent for the FRAME and different for the LIST — exactly the distinction build 1152 had to
+make (*"already-invisible objects are not collected, or the restore would switch them ON"*) — for **4.4%** of
+the node visits.
+
+Neither is worth touching this code for. **Recorded with numbers rather than left open**, so the next reader
+inherits a decision instead of a TODO — and so build 1168's note stops reading as work still owed.
+
 ## Five walks of the prop list, every frame, to ask one question (build 1451)
 
 `checkProximity` runs every frame in every mode, and it walked `propModels` **five separate times** — anim,
