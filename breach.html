@@ -15888,11 +15888,13 @@ function _selApply(fn){
 }
 // The banner the material fold has had since build 844, so a creator can see which rule a fold follows
 // WITHOUT having to test it on their own level.
-function _selBanner(host, n, groupWide){
+function _selBanner(host, n, groupWide, what){
   if(!host || !(n > 1)) return;
   const d=document.createElement('div'); d.className='hint'; d.style.cssText='margin:0 0 6px;color:'+(groupWide?'var(--accent)':'#ffbf7a')+';';
-  d.innerHTML = groupWide ? ('<b>Editing '+n+' selected props</b> \u2014 changes apply to all.')
-                          : ('<b>'+n+' props selected</b> \u2014 this fold edits the primary one only.');
+  /* build 1438: `what` names the rows the banner governs, for a fold whose parts differ. Absent, the
+     wording is byte-identical to build 1299's, so the four callers that predate this are unchanged. */
+  d.innerHTML = (groupWide ? ('<b>Editing '+n+' selected props</b> \u2014 ') : ('<b>'+n+' props selected</b> \u2014 '))
+              + (what || (groupWide ? 'changes apply to all.' : 'this fold edits the primary one only.'));
   host.appendChild(d);
 }
 function _matTargets(){
@@ -34306,7 +34308,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1437 · 2026-08-08';
+const BUILD_VERSION = 'build 1438 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -46728,20 +46730,33 @@ function _sigWorldRow(s, rerender){
   }
   return wr;
 }
-function buildSignalsUI(sgBody, store, rerender){
+/* build 1438: `opts` is how the PROP call site says "there is a selection". Absent — which is how the
+   inventory-item call site asks — every path below is byte-identical to what it did before, because an
+   item has no selection to be group-wide over.
+     opts.applyStore(fn)  runs fn against every selected prop's userData, and owns the undo snapshot
+     opts.count           how many are selected, for the banners and the copy action                  */
+function buildSignalsUI(sgBody, store, rerender, opts){
+  const _n = (opts && opts.count) || 1;
+  /* One store, one writer: with a selection this is `_selApply`, so the Tag row here and the Tag row in
+     Object & selection can no longer mean different things while wearing the same label. */
+  const applyAll = (opts && opts.applyStore) ? opts.applyStore : (fn)=>{ pushUndoSnapshot(); fn(store); };
+  if(_n > 1) _selBanner(sgBody, _n, true, '<b>Tag</b> and <b>Needs</b> apply to all of them.');
   { const tr=document.createElement('div'); tr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 4px;font-size:11px;color:#9fe6cf;';
     const tsp=document.createElement('span'); tsp.textContent='Tag'; tsp.style.minWidth='56px';
     const tin=document.createElement('input'); tin.type='text'; tin.placeholder='e.g. vaultDoor'; tin.value=store.tag||'';
     tin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
-    tin.onchange=()=>{ pushUndoSnapshot(); const v=tin.value.trim(); if(v) store.tag=v; else delete store.tag; if(typeof renderEditorFields==='function') renderEditorFields(); };   // build 1034: the Object & selection Tag field shows the same store — keep them in step
+    /* build 1034 kept this in step with the Object & selection Tag field; build 1438 keeps it in step when
+       there is more than one prop, which is when they had silently diverged — same label, opposite scope. */
+    tin.onchange=()=>{ const v=tin.value.trim(); applyAll(st=>{ if(v) st.tag=v; else delete st.tag; }); if(typeof renderEditorFields==='function') renderEditorFields(); };
     tr.appendChild(tsp); tr.appendChild(tin); sgBody.appendChild(tr); }
   { const nr=document.createElement('div'); nr.style.cssText='display:flex;gap:6px;align-items:center;margin:0 0 4px;font-size:11px;color:#9fe6cf;';
     const nsp=document.createElement('span'); nsp.innerHTML='<b>Needs</b>'; nsp.style.minWidth='56px'; nsp.title='How many DIFFERENT senders must signal this before it reacts (e.g. both plates / all 3 generators). The same sender firing twice still counts once.';
     const nin=document.createElement('input'); nin.type='number'; nin.min='1'; nin.max='20'; nin.value=store.sigNeed||1;
     nin.style.cssText='width:54px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
-    nin.onchange=()=>{ pushUndoSnapshot(); const v=Math.max(1, Math.min(20, parseInt(nin.value)||1)); if(v>1) store.sigNeed=v; else delete store.sigNeed; nin.value=v; };
+    nin.onchange=()=>{ const v=Math.max(1, Math.min(20, parseInt(nin.value)||1)); applyAll(st=>{ if(v>1) st.sigNeed=v; else delete st.sigNeed; }); nin.value=v; };
     const nl=document.createElement('span'); nl.textContent='different sender(s) before it reacts'; nl.style.fontSize='10px';
     nr.appendChild(nsp); nr.appendChild(nin); nr.appendChild(nl); sgBody.appendChild(nr); }
+  if(_n > 1) _selBanner(sgBody, _n, false, 'the <b>signals</b> below edit the primary one \u2014 use <b>Copy to all</b>.');
   const sigs = store.signals || (store.signals=[]);
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
@@ -46847,7 +46862,22 @@ function buildSignalsUI(sgBody, store, rerender){
     } });
   { const add=document.createElement('button'); add.textContent='+ Add signal'; add.style.cssText='padding:2px 9px;font-size:11px;margin:1px 0 2px;';
     add.onclick=()=>{ pushUndoSnapshot(); sigs.push({ when:'interacted', do:'toggle', target:'' }); rerender(); };
-    sgBody.appendChild(add); }
+    sgBody.appendChild(add);
+    /* A signal list is per-object STRUCTURE, not a scalar, so mirroring it on every edit would overwrite
+       whatever the other props already carried — a second data-loss path, which is not the trade to make
+       for saved keystrokes. An explicit action is the honest form: nothing is destroyed until asked, and
+       "ten plates, one On-hit signal" is one click. Deep-copied, or every prop would share ONE array and
+       editing any of them would edit all. */
+    if(_n > 1 && opts && opts.applyStore){
+      const cp=document.createElement('button'); cp.textContent='\u29c9 Copy to all '+_n;
+      cp.title='Replace the signals on every selected prop with these';
+      cp.style.cssText='padding:2px 9px;font-size:11px;margin:1px 0 2px 6px;';
+      cp.onclick=()=>{ const src=JSON.stringify(store.signals||[]);
+        opts.applyStore(st=>{ st.signals = JSON.parse(src); });
+        if(typeof flashToast==='function') flashToast('Signals copied to '+_n+' props');
+        rerender(); };
+      sgBody.appendChild(cp);
+    } }
   { const n=document.createElement('div'); n.className='hint'; n.style.margin='2px 0 0';
     n.innerHTML='Fire the action on every prop carrying the target tag when this is destroyed, E-activated, or has an object placed on/in it. <b>On object placed</b>: a box on a plate (Touching it) or an item in a bin (Inside it).';
     sgBody.appendChild(n); }
@@ -48638,7 +48668,11 @@ function renderEditorFields(){
       // ---- Signals: tag this prop / make it trigger other tagged props ----
       if(sel){
         const sgBody = edFold(behaveHost, 'signals', 'Signals', false, 'Tag this prop, or have it trigger others');
-        buildSignalsUI(sgBody, sel.userData, renderEditorFields);   // build 688: shared with inventory-item signals
+        /* build 1438: the fold used to write to the primary alone with nothing saying so — so shift-selecting
+           ten targets and adding "On hit -> Logic event" landed on one of them, silently. `_selApply` owns
+           the undo snapshot, which is why the rows below no longer take their own. */
+        buildSignalsUI(sgBody, sel.userData, renderEditorFields,
+          { count: _selTargets().length, applyStore: (fn)=>_selApply(o=>{ if(o && o.userData) fn(o.userData); }) });   // build 688: shared with inventory-item signals
       }
       // ---- Dialogue (build 695): make this prop a talkable NPC ----
       if(sel){

@@ -51,8 +51,11 @@ assert(/tin\.setAttribute\('list','lgTagList'\)/.test(src), 'the top field gets 
 // re-render; what changed is how many props it reaches.
 assert(/_selApply\(o=>\{ if\(v\) o\.userData\.tag=v; else delete o\.userData\.tag; \}\); renderEditorFields\(\);/.test(src),
   'the top field writes userData.tag and re-renders (updates the Signals copy)');
-assert(/if\(v\) store\.tag=v; else delete store\.tag; if\(typeof renderEditorFields==='function'\) renderEditorFields\(\);/.test(src),
-  'the Signals copy re-renders too (updates the top field) — one tag, two views');
+// build 1438: and they are one tag in SCOPE too, which they were not. This copy wrote the primary while
+// the field above went through _selApply, so with several props selected the same label did two different
+// things — the very defect build 1299 exists to remove, in the fold it did not reach.
+assert(/applyAll\(st=>\{ if\(v\) st\.tag=v; else delete st\.tag; \}\); if\(typeof renderEditorFields==='function'\) renderEditorFields\(\);/.test(src),
+  'the Signals copy re-renders too (updates the top field) — one tag, two views, one scope');
 
 // ---- collapse-all ----
 const ca = extractFunction('edCollapseAll', src);

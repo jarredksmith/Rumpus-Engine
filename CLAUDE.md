@@ -1743,6 +1743,50 @@ working. The rule from the logic booth stands: **read the object before authorin
 Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
 `explodeAt + _blastProps` now, every assertion unchanged in intent.
 
+## The Signals fold edited one prop while ten were highlighted (build 1438)
+
+The second finding from the same audit, and it is **build 1299's own defect surviving in the one fold a
+logic-driven level is built in**. That build's whole subject was that the inspector had two rules for one
+selection with nothing saying which was which; it labelled Lock, Dialogue, Physics and the Tag row, and
+missed this:
+
+```js
+buildSignalsUI(sgBody, sel.userData, renderEditorFields);   // the PRIMARY prop, and no banner
+```
+
+Shift-select the ten plates of a shooting range, add `On hit -> Logic event HIT`, and it lands on **one**.
+You test, nine plates score nothing, and nothing on screen said why.
+
+**It was worse than a missing banner.** The fold carries its OWN Tag input writing `store.tag` on the
+primary, while the Object & selection Tag row has gone through `_selApply` since 1299 — two fields, the
+same label, opposite scope. The comment on one of them read *"the Object & selection Tag field shows the
+same store — keep them in step"*, which was true when build 1034 wrote it and false for every
+multi-selection since 1299 shipped.
+
+### The taxonomy decides it, not the fold
+
+1299 split the inspector into **mark-the-set** fields (tag, interactable, lock — group-wide) and
+**per-object** fields (an NPC's name and speech — primary, and say so). Signals contain both:
+
+- **Tag and Needs are scalars that mark a set.** They go group-wide, which also removes the contradiction
+  with the identically-labelled row two folds up.
+- **The signal LIST is per-object structure.** Mirroring it on every edit would overwrite whatever the
+  other props already carried — a second silent data-loss path, the day after build 1437 closed one. Not
+  the trade to make for saved keystrokes.
+
+So the list stays primary, says so, and gets **one explicit `⧉ Copy to all N`**: nothing is destroyed
+until asked, and "ten plates, one On-hit signal" is one click. **Deep-copied**, or every prop would share
+one array and editing any of them would edit all.
+
+Two banners, each above the rows it governs, because the fold genuinely has two rules — `_selBanner` gained
+an optional tail so it can name them. Absent, its wording is byte-identical, so 1299's four callers did not
+change a word.
+
+**`buildSignalsUI` is shared with inventory items**, which have no selection to be group-wide over. The
+scope therefore arrives as an optional `opts` from the PROP call site rather than being baked in, and the
+test drives the real function both ways: with `opts` the writes reach every store and `_selApply` owns the
+undo snapshot; without it, every path is exactly what it was, including taking its own snapshot.
+
 ## Typing 0.8 into a scale field made the prop 160 km wide (build 1437)
 
 Found by a four-critic audit run against the tree, and it is the worst defect this session has produced:

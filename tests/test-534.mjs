@@ -5,8 +5,11 @@ const src = gameSource();
 // shared function used by both props and items.
 
 // --- a reusable signals editor, used by props and items ---
-assert(/function buildSignalsUI\(sgBody, store, rerender\)\{/.test(src), 'buildSignalsUI is a shared editor over a {tag,sigNeed,signals} store');
-assert(/buildSignalsUI\(sgBody, sel\.userData, renderEditorFields\);/.test(src), 'the prop inspector uses it');
+// build 1438: the signature gained an OPTIONAL `opts` carrying the prop selection. Absent — which is how
+// the inventory-item caller below asks — every path in it behaves exactly as it did, which is what makes
+// it still shared rather than two editors wearing one name.
+assert(/function buildSignalsUI\(sgBody, store, rerender, opts\)\{/.test(src), 'buildSignalsUI is a shared editor over a {tag,sigNeed,signals} store');
+assert(/buildSignalsUI\(sgBody, sel\.userData, renderEditorFields,/.test(src), 'the prop inspector uses it');
 const panel = extractFunction('renderEditorFields');   // item authoring lives here (renderInvItems is nested-rendered, but the call site is in the inv panel)
 const inv = extractFunction('renderInvItems');
 assert(/buildSignalsUI\(sgWrap, it, \(\)=>renderInvItems\(host\)\);/.test(inv), 'the item authoring uses it on the item def');
