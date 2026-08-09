@@ -12778,6 +12778,68 @@ then A-then-B to prove nothing of the first level survives the second. 141 check
 `decal-ghost.mjs` and `ranged-windup.mjs`, both of which run correctly. A checker that cries wolf is
 one people stop reading, which is the same failure mode from the other side.
 
+## Every other player's gun sounded the same (build 1455)
+
+The audio audit's HIGH, verified at the line. `SFX.shootAt(pos)` was one hardcoded square-plus-noise
+blip, weapon-agnostic — and it is the voice of **every relayed shot**: other players, bots, the host's
+guns on a client. So build 1363's six tuned per-weapon patches, and every creator's own
+`curSounds().shoot[wep]` sample, reached **nobody but the person pulling the trigger**.
+
+In this genre, identifying an enemy's weapon by ear is a primary information channel. A sniper and an
+SMG were indistinguishable to everyone except their owner.
+
+**Its only caller already had the answer in scope.** `remoteFire(pid, o, d, wep)` reads `wep` two lines
+earlier for `noMuzzle` and passed only a position. One argument.
+
+### One voice, not a second synth
+
+The fix is structural rather than a per-weapon copy of the blip: `_shotVoice(wep, at, first)` plays the
+layer table, called by the local gun with `at = null` and by the remote path with a position.
+**`_spatialOut` returns the bus for a falsy position**, so "unpositioned" is the same code path rather
+than a parallel one — and the two callers can no longer come to different answers about what a shotgun
+sounds like, which is what the old shape guaranteed they would.
+
+Three differences from `SFX.shoot` are deliberate, each a defect the other way:
+- **No music duck.** A four-player firefight would hold the score down permanently; build 1374's duck
+  is feedback on YOUR trigger, not on the room.
+- **Its own first-shot clock.** The >400 ms brightening is per-shooter, so a teammate opening up beside
+  you must not flatten the first round out of your own gun. Executed: a remote shot leaves
+  `_shotSndAt` byte-identical.
+- **An unknown or absent weapon falls back to the RIFLE patch**, exactly as `SFX.shoot` does for an
+  unknown `curWep`. This is a **stated deviation** from the finding's "reproduce the old blip
+  byte-for-byte": keeping that blip would mean keeping a second voice nothing else in the engine uses,
+  which is the thing this build removes. The control that matters is that a weaponless relay is never
+  SILENT, and it is not.
+
+A suppressed weapon phuts tail-lessly on the remote path too — that is what a suppressor is for, and a
+remote one you cannot hear correctly is a gameplay signal lost.
+
+### Measured live, through the real `remoteFire`
+
+Build 1277's rule — pinning the two ends of a wire proves nothing about the wire — so the probe fires
+the function the network handler calls and reads what reached the audio graph:
+
+```
+                   body Hz   crack            positioned
+remoteFire sniper       96   lowpass  0.26     yes
+remoteFire smg         386   highpass 0.05     yes
+remoteFire shotgun     150   lowpass  0.17     yes
+remoteFire NO weapon   328   highpass 0.07     yes   <- the control: never silent
+local SFX.shoot          -   -                 NO    <- unchanged, and still on the plain bus
+```
+
+`layers: 3` rather than 4 in that readout is honest and not a defect: the tail is on a real
+`setTimeout` and the probe reads synchronously, so it lands after the sample.
+
+**Five pins moved** (1208, 1211 ×3 as one block, 75 ×2, 1363), every intent kept — 1211's three layer
+pins are byte-identical values at a new address, and 1208's is now *stronger*: shootAt is spatialised
+**and** per-weapon. Two of them are executing rigs that genuinely lacked the new dependency; each is
+handed `_shotVoice` / `_shotFirst` / the remote clock **lifted from source**, never restated.
+
+**And my own new pin was wrong before the engine was:** `\bat\b(?=[,}])` counted 5, because
+`_shotVoice`'s own `at` PARAMETER matched. A pin on a bare identifier counts the declaration too — the
+same trap this file records for prose, one step along. It counts the call sites (`, at}`) now.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

@@ -18,7 +18,7 @@ const rf = extractFunction('remoteFire');
 assert(/tracer\(from, end \|\| from\.clone\(\)\.addScaledVector\(dir, 60\)\)/.test(rf), 'draws a tracer from the shooter (build 1020: to the surface it hit, 60m only on a miss)');
 assert(/muzzleFlashAt\(from\)/.test(rf), 'spawns a muzzle flash');
 assert(/rp\._fireT = performance\.now\(\)\+480/.test(rf) && !/setEnemyAnimState\(rp\.mesh,'attack'\)/.test(rf), 'flags the fire pose; netInterpolate owns the state (build 519)');
-assert(/SFX\.shootAt\(from\)/.test(rf), 'plays the distance-attenuated shot');
+assert(/SFX\.shootAt\(from, wep\)/.test(rf), 'plays the distance-attenuated shot — and since 1455 the WEAPON\'s own voice, not a generic blip');
 assert(/function muzzleFlashAt/.test(src), 'muzzle flash helper exists');
 assert(/flashLightAt\(pos\);/.test(extractFunction('muzzleFlashAt')), 'muzzle flash falls back to a light glow (no solid sphere)');
 assert(/function flashLightAt/.test(src) && /new THREE\.PointLight\(0xffcf6b/.test(src), 'pooled muzzle light');
@@ -34,5 +34,5 @@ assert(/else if\(msg\.t==='fire'\)\{ remoteFire\(id, msg\.o, msg\.d, msg\.w\); f
 assert(/else if\(msg\.t==='fire'\)\{ remoteFire\(msg\.from, msg\.o, msg\.d, msg\.w\); \}/.test(src), 'client renders a fire event');
 
 // attenuated sound
-assert(/shootAt\(pos\)\{/.test(src), 'SFX.shootAt exists');
+assert(/shootAt\(pos, wep\)\{/.test(src), 'SFX.shootAt exists');
 done('remote fire visuals');

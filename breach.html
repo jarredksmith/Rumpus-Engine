@@ -6813,6 +6813,29 @@ const _sndJit = (v,r)=> v*(1+(Math.random()*2-1)*r);
 // body+crack pair the guns always had (byte-identical values, so nothing authored moved), (c) a delayed
 // lowpassed noise re-trigger as a pseudo-tail (the space). Per-weapon: the sniper and shotgun get the
 // longest tails and deepest subs, the SMG stays snappy. sub:[freq,dur,vol] tail:[dur,vol,cutoff,delayMs].
+/* build 1455: ONE shot voice, two callers — the local gun (unpositioned) and every relayed/bot shot
+   (positioned). Before this the layer table was played out in SFX.shoot only, and shootAt had its own
+   hardcoded blip, so the two could never agree about what a shotgun sounds like. `at` of null is the
+   unpositioned path by construction: _spatialOut returns the bus for a falsy position. */
+function _shotVoice(wep, at, first){
+  const L=_SHOT_LAYERS[wep]||_SHOT_LAYERS.rifle;
+  /* build 1363: per-shot variation. Each tonal layer jitters freq +-3% / vol +-10%, the tail delay
+     wanders +-15 ms, and the first shot after a >400 ms gap gets a brighter crack (+20%) so a fresh
+     engagement reads louder than the middle of a mag dump. The table values are untouched; only the
+     jitter multiplies them. */
+  tone({freq:_sndJit(L.sub[0],0.03), type:'sine', dur:L.sub[1], vol:_sndJit(L.sub[2],0.10), slideTo:Math.max(20, L.sub[0]*0.55), attack:L.subA||0.002, at});
+  tone({freq:_sndJit(L.body.freq,0.03), type:L.body.type, dur:L.body.dur, vol:_sndJit(L.body.vol,0.10), slideTo:L.body.slideTo, attack:L.body.attack||0.005, at});
+  noise({dur:L.crack.dur, vol:_sndJit(L.crack.vol,0.10)*(first?1.2:1), filterFreq:L.crack.filterFreq, type:L.crack.type, at});
+  setTimeout(()=>noise({dur:L.tail[0], vol:L.tail[1], filterFreq:L.tail[2], type:'lowpass', at}), Math.max(0, Math.round(L.tail[3]+(Math.random()*2-1)*15)));
+}
+/* Separate clocks: a remote shot must not reset the local gun's first-shot brightening, or a teammate
+   firing beside you would flatten the first round out of your own weapon. */
+let _shotSndAtR = -9;
+function _shotFirst(remote){
+  const nw = actx ? actx.currentTime : 0;
+  if(remote){ const f=(nw-_shotSndAtR)>0.4; _shotSndAtR=nw; return f; }
+  const f=(nw-_shotSndAt)>0.4; _shotSndAt=nw; return f;
+}
 const _SHOT_LAYERS = {
   shotgun:{ sub:[52,0.11,0.20], body:{freq:150, type:'square', dur:0.15, vol:0.17, slideTo:55}, crack:{dur:0.17, vol:0.30, filterFreq:1400, type:'lowpass'}, tail:[0.30,0.12,900,120] },
   smg:    { sub:[70,0.05,0.10], body:{freq:380, type:'square', dur:0.05, vol:0.10, slideTo:150}, crack:{dur:0.05, vol:0.15, filterFreq:3000, type:'highpass'}, tail:[0.12,0.05,1200,70] },
@@ -6828,16 +6851,7 @@ const _SHOT_LAYERS = {
 const SFX = {
   shoot(){ _duckMusic(); if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;   /* build 1374: a shot dips the music on EVERY path - sample, suppressed or synth (explode below does the same) */
     if(typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].suppressed){ tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass'}); return; }   // build 964: suppressed 'phut' (deliberately tail-less — that is what a suppressor is for)
-    const L=_SHOT_LAYERS[curWep]||_SHOT_LAYERS.rifle;
-    /* build 1363: per-shot variation. Each tonal layer jitters freq +-3% / vol +-10%, the tail delay
-       wanders +-15 ms, and the first shot after a >400 ms gap gets a brighter crack (+20%) so a fresh
-       engagement reads louder than the middle of a mag dump. The table values are untouched; only the
-       jitter multiplies them. */
-    const nw=actx?actx.currentTime:0, first=(nw-_shotSndAt)>0.4; _shotSndAt=nw;
-    tone({freq:_sndJit(L.sub[0],0.03), type:'sine', dur:L.sub[1], vol:_sndJit(L.sub[2],0.10), slideTo:Math.max(20, L.sub[0]*0.55), attack:L.subA||0.002});
-    tone({freq:_sndJit(L.body.freq,0.03), type:L.body.type, dur:L.body.dur, vol:_sndJit(L.body.vol,0.10), slideTo:L.body.slideTo, attack:L.body.attack||0.005});
-    noise({dur:L.crack.dur, vol:_sndJit(L.crack.vol,0.10)*(first?1.2:1), filterFreq:L.crack.filterFreq, type:L.crack.type});
-    setTimeout(()=>noise({dur:L.tail[0], vol:L.tail[1], filterFreq:L.tail[2], type:'lowpass'}), Math.max(0, Math.round(L.tail[3]+(Math.random()*2-1)*15))); },
+    _shotVoice(curWep, null, _shotFirst(false)); },
   enemyShot(at){ tone({freq:300, type:'square', dur:0.08, vol:0.09, slideTo:105, at}); noise({dur:0.07, vol:0.12, filterFreq:1700, type:'highpass', at}); },
   // ---------- build 1283: THE TELEGRAPHS ARE AUDIBLE ----------
   // Across all 85 SFX call sites, enemies made sound in exactly three: a ranged shot (twice) and death.
@@ -6863,10 +6877,26 @@ const SFX = {
   // gate, a per-tick budget and a near-field exemption rather than left to the wave size. The step rate
   // still wants a live listen — the headless harness can prove three sound and thirty do not, but not that
   // it feels right — so ENEMY_STEP_M is the first thing to try if a wave reads as mud.
-  shootAt(pos){ if(!actx||!sfxBus) return; const gain=_spatialOut(pos); if(!gain) return;   /* build 1208: shared panner replaces the hand-rolled distance-only gain — a shot to your side now reads to your side */
-    const t=actx.currentTime;
-    const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
-    const n=Math.floor(actx.sampleRate*0.07); const buf=actx.createBuffer(1,n,actx.sampleRate); const dd=buf.getChannelData(0); for(let i=0;i<n;i++) dd[i]=(Math.random()*2-1)*(1-i/n); const src=actx.createBufferSource(); src.buffer=buf; const filt=actx.createBiquadFilter(); filt.type='highpass'; filt.frequency.value=2000; const ng=actx.createGain(); ng.gain.value=0.18; src.connect(filt).connect(ng).connect(gain); src.start(t); },
+  /* build 1455 (audio audit): shootAt used to be ONE hardcoded square-plus-noise blip, weapon-agnostic —
+     so every other player's gun, every bot's and every relayed shot sounded identical, and build 1363's
+     six tuned patches plus a creator's own per-weapon samples reached nobody but the shooter. Its only
+     caller already had `wep` in scope (it reads it two lines earlier for noMuzzle). It now runs the SAME
+     voice the local gun does, positioned. Identifying a weapon by ear is a primary information channel
+     in this genre; it was unavailable to everyone but the person pulling the trigger.
+     Three deliberate differences from SFX.shoot, each a defect the other way:
+       - NO music duck. A four-player firefight would hold the score down permanently; the duck is
+         feedback on YOUR trigger, not on the room.
+       - its OWN first-shot clock, so a teammate opening up cannot steal the brightening from the first
+         round out of your gun.
+       - an unknown or absent weapon falls back to the RIFLE patch, exactly as SFX.shoot does for an
+         unknown curWep — rather than preserving the old generic blip, which would be a second voice
+         nothing else in the engine uses. */
+  shootAt(pos, wep){ if(!actx||!sfxBus) return;
+    const w = (wep && _SHOT_LAYERS[wep]) ? wep : 'rifle';
+    if(playSample((curSounds().shoot||{})[wep], {vary:0.04, at:pos})) return;   /* the creator's own clip for THAT weapon, positioned */
+    if(typeof WEAPONS!=='undefined' && wep && WEAPONS[wep] && WEAPONS[wep].suppressed){
+      tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90, at:pos}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass', at:pos}); return; }   /* a suppressed enemy is quiet to you too — that is the whole point of one */
+    _shotVoice(w, pos, _shotFirst(true)); },
   reload(){ const r=curSounds().reload; const u=(r&&typeof r==='object')?(r[curWep]||r._all):r; if(playSample(u)) return;
     /* build 1211: the clicks track the REAL reload — the old pair was hardcoded 550ms apart, so the
        pistol's audio finished late and the sniper's a second early. Start click, mag-out at ~45%,
@@ -34252,7 +34282,7 @@ function remoteFire(pid, o, d, wep){
   if(!(wep && WEAPONS[wep] && WEAPONS[wep].noMuzzle)) muzzleFlashAt(from);   // build 684: respect a flash-less weapon
   const rp=NET.players[pid];
   if(rp){ rp._fireT = performance.now()+480; }   // netInterpolate owns the rp pose (attack vs move+fire); the longer hold bridges the gap between shots so it doesn't flicker shot-to-shot
-  if(typeof SFX!=='undefined' && SFX.shootAt){ SFX.shootAt(from); }   // distance-attenuated shot (falls back to nothing if unsupported)
+  if(typeof SFX!=='undefined' && SFX.shootAt){ SFX.shootAt(from, wep); }   // build 1455: the WEAPON, so a remote sniper and a remote SMG are tellable apart
 }
 function tracer(from, to, force){
   const tc=tracerCfg; if(!tc.on && !force) return;
@@ -34699,7 +34729,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1454 · 2026-08-09';
+const BUILD_VERSION = 'build 1455 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
