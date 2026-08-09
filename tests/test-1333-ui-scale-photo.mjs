@@ -72,7 +72,15 @@ const src = gameSource();
   const la = extractFunction('loadA11y');
   assert(/Math\.max\(0, Math\.min\(1,/.test(la), 'loadA11y still clamps its own keys to 0..1');
   assert(!/uiScale/.test(la), 'and knows nothing about the interface size');
-  assert(/A11Y_DEFAULT = \{ shake:1, flash:1, blur:1, sway:1, hitstop:1 \}/.test(src), 'the motion blob is unchanged');
+  // A pin that quotes a WHOLE literal is a pin against the literal, not against what it says (builds 519,
+  // 928, 1411) — build 1447 legitimately added `rumble` to this blob. The property is the one that matters:
+  // every key here is a 0..1 effect multiplier, and the interface scale is not one of them.
+  {
+    const blob = (src.match(/const A11Y_DEFAULT = \{([^}]*)\}/) || [, ''])[1];
+    for (const k of ['shake', 'flash', 'blur', 'sway', 'hitstop'])
+      assert(new RegExp('\\b' + k + ':1\\b').test(blob), 'the motion blob still carries ' + k + ' at 1');
+    assert(!/uiScale/.test(blob), '...and the interface size is not in it, because it reaches 1.75');
+  }
   // but the fold's own "Restore defaults" covers the row that sits in it
   assert(/uiScale = 1; applyUiScale\(\); saveUiScale\(\);/.test(extractFunction('a11yRestoreAll')),
     'Restore defaults restores the size too — the row is in that fold');

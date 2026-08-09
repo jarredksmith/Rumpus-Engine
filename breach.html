@@ -1610,6 +1610,7 @@
       <label class="paLbl">Motion blur<input type="range" id="a11yBlur" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yBlurV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <label class="paLbl">Damage flash<input type="range" id="a11yFlash" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yFlashV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <label class="paLbl">Slow-mo on kills<input type="range" id="a11yHitstop" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yHitstopV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Rumble<input type="range" id="a11yRumble" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yRumbleV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <label class="paLbl">Interface size<input type="range" id="a11yUiScale" min="75" max="175" step="5" style="margin-left:auto;flex:1"><span id="a11yUiScaleV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <div class="row2" style="margin-top:5px"><button id="a11yReduce" class="pBtnGhost">Reduce all motion</button><button id="a11yRestore" class="pBtnGhost">Restore defaults</button></div>
       <label class="paLbl">Colour vision<select id="a11yCbMode" style="margin-left:auto;flex:1"></select></label>
@@ -31577,7 +31578,63 @@ let shake = 0;                 // current trauma 0..1, decays each frame
 let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0, _fireFov = 0;
 /* build 1313: EVERY shake in the engine goes through here — blasts, hits, kills, car impacts, the melee
    thump — so scaling it at this one point covers all of them, and a future one for free. */
-function addShake(amt){ shake = Math.min(1, shake + amt * ((typeof a11y!=='undefined') ? a11y.shake : 1)); }
+/* ---- build 1447: haptics ------------------------------------------------------------------------------
+   Greped `vibrat|hapticActuators|vibrationActuator` across the engine: the only two hits were PROSE about
+   enemy separation. So there was no rumble of any kind, on a game that ships a full gamepad prefs panel and
+   a touch layout editor — the same "it clearly intends those inputs to be first-class" argument build 1316
+   made for the aim assist.
+
+   It rides `addShake`, which is already the ONE chokepoint for "the world just jolted": build 1313 routed
+   blasts, hits, kills, car impacts, the melee thump and every weapon's fire through it precisely so a single
+   scale could cover them. So every jolt-worthy event gets haptics with one call site, INCLUDING the ones
+   nobody has written yet — and the amount is already a magnitude, so it maps across without a second table
+   of numbers to keep in step.
+
+   It reads the RAW amount, before build 1313's `a11y.shake` scale. Those are different senses: a player who
+   turned the camera down because motion makes them ill has not asked for their controller to go quiet, and
+   a player who dislikes rumble has not asked to lose the camera. Two sliders, one event. */
+const RUMBLE_GAP = 40;      // ms — a smaller jolt inside this window must not cut a bigger one short
+let _rumbleAt = -1e9, _rumbleLast = 0;
+function _rumble(amt){
+  /* `a11y` is a `let` declared ~3,000 lines below this, and `typeof` does NOT guard a temporal dead zone —
+     it THROWS for an uninitialised binding, which is the trap builds 1127, 1331, 1350, 1383 and 1411 each
+     lost something to. A try/catch is what actually guards one. addShake is not reachable during module
+     evaluation today, so this is belt and braces on a function that must never be able to take the frame
+     loop down for a comfort setting. */
+  let pref = 1; try{ pref = a11y.rumble; }catch(e){}
+  if(!(pref > 0) || !(amt > 0.004)) return;              // 0 is off, and a hair of trauma is not a jolt
+  const now = (typeof performance!=='undefined') ? performance.now() : Date.now();
+  if(now - _rumbleAt < RUMBLE_GAP && amt <= _rumbleLast) return;
+  _rumbleAt = now; _rumbleLast = amt;
+  const a = Math.min(1, amt) * pref;
+  const ms = Math.round(50 + a * 220);                   // duration tracks amplitude, as SHAKE_DECAY's does
+  try{
+    const pads = navigator.getGamepads ? navigator.getGamepads() : null;
+    const gp = pads ? pads[(typeof padIndex==='number' && padIndex>=0) ? padIndex : 0] : null;
+    if(gp){
+      /* strong is the low-frequency body of the rumble, weak the buzz. Doubling the weak channel is what
+         makes a gunshot (amt ~0.1) read as a crisp tick rather than as nothing, while a blast still has
+         both. A rejected promise here would reach build 1330's error overlay as a red bar on screen, so
+         the catch is not optional. */
+      if(gp.vibrationActuator && gp.vibrationActuator.playEffect){
+        const p = gp.vibrationActuator.playEffect('dual-rumble',
+          { startDelay:0, duration:ms, strongMagnitude:a, weakMagnitude:Math.min(1, a*2) });
+        if(p && p.catch) p.catch(()=>{});
+      } else if(gp.hapticActuators && gp.hapticActuators[0] && gp.hapticActuators[0].pulse){
+        const p = gp.hapticActuators[0].pulse(a, ms);
+        if(p && p.catch) p.catch(()=>{});
+      }
+    }
+    /* A phone has no strength channel, so the DURATION carries the whole magnitude — and it is kept short,
+       because a long buzz on a handheld reads as a fault rather than as feedback. Touch only: a desktop
+       browser that exposes navigator.vibrate has nothing to vibrate. */
+    if(typeof isTouch!=='undefined' && isTouch && navigator.vibrate) navigator.vibrate(Math.round(8 + a*45));
+  }catch(e){}
+}
+function addShake(amt){
+  shake = Math.min(1, shake + amt * ((typeof a11y!=='undefined') ? a11y.shake : 1));
+  _rumble(amt);   /* build 1447: the RAW amount — rumble is its own sense and its own slider */
+}
 /* build 1358: smooth trauma noise. Three sines at incommensurate rates — dominant ~24 Hz, which is what
    reads as a shake rather than as sparkle — summing to +/-1. A function of TIME, so the motion a player
    sees is the same at any refresh rate; the previous Math.random() per frame was literally a different
@@ -34479,7 +34536,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1446 · 2026-08-09';
+const BUILD_VERSION = 'build 1447 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34683,7 +34740,12 @@ try{ const _ms = parseFloat(localStorage.getItem('breach_mouse_sens')); if(isFin
 //    once; asking again is the accessibility failure one level up. `prefers-reduced-motion: reduce` sets the
 //    defaults to a calm baseline on first run, and an explicit choice always wins after that.
 const A11Y_KEY = 'breach_a11y';
-const A11Y_DEFAULT = { shake:1, flash:1, blur:1, sway:1, hitstop:1 };
+/* build 1447: `rumble` belongs in this blob rather than beside the gamepad bindings, and the blob is what
+   decides where the slider goes. Every key here answers one question — HOW HARD DOES THE GAME PHYSICALLY
+   AFFECT ME — and rumble is that question for the hands rather than the eyes. It also inherits the blob's
+   0..1 clamp, its persistence and its Restore-defaults button for nothing, which build 1333 could not do
+   for interface size because that one reaches 1.75. */
+const A11Y_DEFAULT = { shake:1, flash:1, blur:1, sway:1, hitstop:1, rumble:1 };
 let a11y = Object.assign({}, A11Y_DEFAULT);
 function _a11yOsReduced(){ try{ return !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){ return false; } }
 function loadA11y(){
@@ -54172,7 +54234,7 @@ function bindPauseMenu(){
       if(mc){ mc.checked=!!mouseAimMatch; mc.onchange=()=>{ mouseAimMatch=!!mc.checked; saveMouseAimMatch(); }; } }
     /* build 1313: motion & comfort. One loop over the keys rather than five copies of the same six lines —
        adding a sixth effect is then one entry here and one <input> above it. */
-    { const A11Y_ROWS = [['shake','a11yShake'],['sway','a11ySway'],['blur','a11yBlur'],['flash','a11yFlash'],['hitstop','a11yHitstop']];
+    { const A11Y_ROWS = [['shake','a11yShake'],['sway','a11ySway'],['blur','a11yBlur'],['flash','a11yFlash'],['hitstop','a11yHitstop'],['rumble','a11yRumble']];
       const _a11ySync=()=>{ for(const [key,id] of A11Y_ROWS){
         const r=document.getElementById(id), v=document.getElementById(id+'V');
         if(r) r.value=String(Math.round(a11y[key]*100));

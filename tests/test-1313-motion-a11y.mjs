@@ -95,7 +95,9 @@ const store = () => {
 {
   // SHAKE: one chokepoint, so blasts, hits, kills, car impacts and the melee thump are all covered — and
   // so is the next one somebody adds.
-  const fn = new Function('a11y', 'ST', 'let shake=0;\n' + extractFunction('addShake') + '; return { add:addShake, get:()=>shake };');
+  // `_rumble` is supplied INERT: this rig's subject is the camera-shake scale, and build 1447's haptics are
+  // a different sense with a different slider (proven at their own site, where the pad is what is measured).
+  const fn = new Function('a11y', 'ST', 'let shake=0; const _rumble=()=>{};\n' + extractFunction('addShake') + '; return { add:addShake, get:()=>shake };');
   for (const [set, want] of [[1, 0.4], [0.5, 0.2], [0.25, 0.1], [0, 0]]) {
     const r = fn({ shake: set }); r.add(0.4);
     near(r.get(), want, 1e-9, 'addShake(0.4) at ' + (set * 100) + '% gives ' + want);
@@ -156,8 +158,21 @@ const store = () => {
   assert(/These are yours, not the level's/.test(html),
     '...and a hint that says they follow the player into other people’s levels, which is the point');
   // one loop, not five copies — adding a sixth effect is one row here and one input above
-  assert(/const A11Y_ROWS = \[\['shake','a11yShake'\],\['sway','a11ySway'\],\['blur','a11yBlur'\],\['flash','a11yFlash'\],\['hitstop','a11yHitstop'\]\];/.test(src),
-    'the wiring is one table rather than five copies of six lines');
+  // ...and this pin's own comment predicted its own move: build 1447 added the sixth row. Quoting the whole
+  // literal was a pin against the LIST; what it means is that every effect is wired by membership of one
+  // table, so assert THAT (builds 519/928/1411's trap, third kind).
+  {
+    const rows = (src.match(/const A11Y_ROWS = \[([\s\S]*?)\];/) || [, ''])[1];
+    for (const k of ['shake', 'sway', 'blur', 'flash', 'hitstop'])
+      assert(new RegExp("\\['" + k + "','a11y").test(rows), k + ' is wired by the table');
+    const keys = (src.match(/const A11Y_DEFAULT = \{([^}]*)\}/) || [, ''])[1].split(',').filter((x) => x.trim());
+    eq((rows.match(/\['/g) || []).length, keys.length,
+      'and there is exactly one row per key in the blob — nothing wired twice, nothing left unwired');
+    for (const kv of keys) {
+      const k = kv.split(':')[0].trim();
+      assert(new RegExp("\\['" + k + "','a11y").test(rows), k + ' has a row, so its slider wires itself');
+    }
+  }
   assert(/saveA11y\(\);/.test(src), 'and every change persists immediately');
 }
 { // it is a DEVICE setting, like the volume — not level data

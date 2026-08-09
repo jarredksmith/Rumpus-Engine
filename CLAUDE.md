@@ -1940,6 +1940,80 @@ arriving for reviewers: *a critic cannot silently review a build that is not in 
 reason it did not poison the results is that they were told to state what they could not verify, and did.
 Every finding acted on was re-verified against the recovered tree first.
 
+## The game had no sense of touch (build 1447)
+
+`grep -c "vibrat|hapticActuators|vibrationActuator"` returned **2**, and both were prose about enemy
+separation. So a game that ships a full gamepad prefs panel (909), two touch look sliders (1042), a touch
+layout editor and build 1316's stick-only aim assist — all of which say *this input is first-class* — had no
+rumble of any kind. Every other feedback channel is there: the camera shakes, the frame flashes, the hit
+marker ticks, the audio pans. The one channel a controller has and a screen does not was empty.
+
+**`addShake` is the whole feature, because build 1313 already made it the one chokepoint.** That build routed
+blasts, hits taken, kills, car impacts, the melee thump and every weapon's fire through it precisely so a
+single comfort scale could cover them — so haptics gets all of it from ONE call site, including the events
+nobody has written yet, and the amount is already a magnitude that maps across without a second table of
+numbers to keep in step.
+
+### It reads the RAW amount, before the camera-shake scale
+
+Two different senses. A player who turned the camera down because motion makes them ill has not asked for
+their controller to go quiet, and a player who dislikes rumble has not asked to lose the camera. Measured
+with `a11y.shake = 0`: the camera moves **0.0000** and the pad still rumbles at **0.6**.
+
+The pref lives in the `a11y` blob rather than beside the gamepad bindings, which decides where the slider
+goes as well: every key in that blob answers *how hard does the game physically affect me*, and rumble is
+that question for the hands. It inherits the 0..1 clamp, the persistence and the Restore-defaults button for
+free — which build 1333 could **not** do for interface size, because that one reaches 1.75.
+
+### Four decisions in `_rumble`, each a defect the other way
+
+- **`RUMBLE_GAP = 40 ms`, and a smaller jolt inside the window does not cut a bigger one short.** A shotgun
+  is one `addShake`; a grenade beside a crowd is several in a frame. Without the coalesce the last tiny one
+  would replace the blast; with a naive coalesce the blast would be dropped by whichever arrived first.
+- **Duration tracks amplitude** (`50 + a*220` ms), as the shake decay does — a blast rumbles longer *and*
+  harder than an SMG round rather than being the same tick at a different strength.
+- **`weakMagnitude = min(1, a*2)`.** Strong is the low-frequency body, weak the buzz. A gunshot is
+  `addShake(0.13)`, and 13% of the body channel alone reads as nothing; doubling the buzz is what makes it a
+  crisp tick while a blast still gets both.
+- **Every promise is caught.** `playEffect` rejects on a pad that has lost permission, and an uncaught
+  rejection reaches build 1330's overlay as a red error bar across the player's screen.
+
+A phone has no strength channel, so `navigator.vibrate` carries the whole magnitude in its DURATION, kept
+short — a long buzz on a handheld reads as a fault rather than as feedback — and it is gated on `isTouch`,
+because a desktop browser that exposes the API has nothing to vibrate.
+
+### The TDZ, for the sixth time
+
+`const pref = (typeof a11y!=='undefined') ? a11y.rumble : 1;` — **`typeof` throws for an uninitialised
+`let`**, and `a11y` is declared thousands of lines below `addShake`. Builds 1127, 1331, 1350, 1383 and 1411
+each lost something to exactly this. It is a `try/catch`, which is what actually guards a temporal dead
+zone, and `test-1447` executes the call *inside a real dead zone* rather than asserting the shape.
+
+### Measured live, through the real events
+
+```
+one rifle round     strong 0.13   weak 0.26   79 ms
+a grenade at 1 m    strong 0.86   weak 1.00   239 ms
+taking 18 damage    strong 0.33   weak 0.65   122 ms
+addShake 0.6 / 0.05        ordered in BOTH strength and duration
+CONTROL: rumble 0    0 rumbles from all three events, camera still shakes 1.00
+return: rumble 1     0.6 again
+a11y.shake = 0       pad 0.6, camera 0.0000        <- two senses
+the slider           on screen in the comfort panel, 35% -> pref 0.35, label "35%"
+```
+
+**Two probe faults, both mine, both the same rule.** A stub pad with no `buttons`/`axes` threw once per
+frame into the error overlay, because the engine polls `getGamepads` every frame and maps over them; and
+`explodeAt` takes a `Vector3`, not a plain `{x,y,z}`. *Read the consumer before faking its input* — the
+build-1433 lesson, twice in one probe.
+
+**Three pins moved, and two of them were the whole-list trap.** `test-1333` quoted `A11Y_DEFAULT`'s entire
+literal to mean *the interface scale is not in this blob*, and `test-1313` quoted `A11Y_ROWS`' entire literal
+under a comment reading *"adding a sixth effect is one row here"* — which is exactly what happened. Both
+assert membership now, and 1313's is stronger: **one row per key in the blob**, so an effect wired twice or
+left unwired fails there. The third (`test-1313`'s executing `addShake` rig) is handed an inert `_rumble`,
+because that rig's subject is the camera scale and the pad is measured at its own site.
+
 ## The frame meter had one door, and it was a key no phone has (build 1436)
 
 Asked from use: *"Can there be a way to open the dev hud on a touch device? I want to see FPS but I can't
