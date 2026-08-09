@@ -245,8 +245,10 @@ function runKit(level, opts) {
     assert(/homepageCfg = _sanitizeHomepage\(level\.homepage\);/.test(t), who + ' applies the title screen');
     assert(/lobbyBgUrl = \(typeof _sanitizeLobbyBg==='function'\)/.test(t), '...and the lobby backdrop');
   }
-  assert(/_persistLoad\(_persistNSFrom\(level\.homepage\)\)/.test(net),
-    'and build 1215\'s per-game persist namespace still derives from it, which is all the client ever did');
+  // build 1454: this moved into _applyLevelSections, which both loaders reach — so what this always meant
+  // ("the namespace derives from the level being loaded") is now true on both paths by construction.
+  assert(/_persistLoad\(_persistNSFrom\(level\.homepage\)\)/.test(extractFunction('_applyLevelSections')),
+    'build 1215\'s per-game persist namespace still derives from the level being loaded');
 
   // build 1165's format check: it never ran on the multiplayer path — the ONE path where a stale cached
   // client meets a newer level most often, since the host picks the build.

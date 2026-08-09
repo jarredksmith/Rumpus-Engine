@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 // build 671: the in-game radial Deploy menu is per-level configurable (radialCfg). Each slot is a built-in shape
 // or a custom model URL with its own colour / texture / scale / explosive / label-icon. Saved with the level;
@@ -52,6 +52,6 @@ assert(/function renderBuildMenuPanel\(\)\{/.test(src), 'a Build-menu editor pan
 assert(/sec\('Build menu', 'buildmenu', '<div id="edBuildMenu"><\/div>'\)/.test(src), 'the section is registered');
 assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','logic','cutscenes'\]/.test(src), 'it lives in the Gameplay mode');
 assert(/radial: _sanitizeRadial\(radialCfg\)/.test(src), 'serialized with the level');
-assert((src.match(/radialCfg = _sanitizeRadial\(level\.radial\)/g)||[]).length===2, 'restored in both load paths');
+appliedOnceByBothLoaders(/radialCfg = _sanitizeRadial\(level\.radial\)/g, 'restored in both load paths');
 
 done('build 671: configurable radial build menu (shapes/models + materials)');

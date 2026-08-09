@@ -1,4 +1,4 @@
-import { gameSource, html, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, html, extractFunction, assert, eq, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 // build 665: per-level HUD customization — a new "HUD" editor mode lets creators theme the HUD (accent + health
 // + score colours, UI/display fonts, panel shape & background opacity, border) and toggle which elements show in
@@ -58,6 +58,6 @@ assert(/document\.body\.classList\.toggle\('hudPreview', editorMode==='hud'\)/.t
 
 // --- serialize + restore (both load paths) ---
 assert(/hud: _sanitizeHud\(hudCfg\)/.test(src), 'serialized with the level');
-assert((src.match(/hudCfg = _sanitizeHud\(level\.hud\); if\(typeof applyHudCfg==='function'\) applyHudCfg\(\)/g)||[]).length===2, 'restored + applied in both load paths');
+appliedOnceByBothLoaders(/hudCfg = _sanitizeHud\(level\.hud\); if\(typeof applyHudCfg==='function'\) applyHudCfg\(\)/g, 'restored + applied in both load paths');
 
 done('build 665: per-level HUD customization (theme + visibility)');

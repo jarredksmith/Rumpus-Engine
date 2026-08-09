@@ -12712,6 +12712,462 @@ That is the same fault class as 1289 — a gameplay quantity derived from the ar
 with a compatibility story, because every level that has already tuned `tpHeight` did so against this pivot.
 
 
+## A level's sections are applied in one place (build 1454)
+
+The nine-domain audit's code-quality CRITICAL, verified at the line and then found to be worse than
+reported. An **18-line block** was written out twice — `loadLevelFromNet` (campaign / co-op) and
+`restoreLevel` (every editor open and every Ctrl+Z) — covering the extraction spot, audio zones,
+triggers, death zones, jump pads, ladders, fire/water/effect zones, waterfalls, the impact and death
+fx, the logic graph, persistence, model rigs, custom anims, HUD widgets, action binds, prefab defs,
+the tracer/decal/bolt configs, the HUD theme, the radial menu and the character roster.
+
+**It had ALREADY DRIFTED, which is what makes this a bug fix rather than tidying.** Seventeen of the
+eighteen lines were byte-identical; the eighteenth was not. The net copy ended with
+`refreshExtractMarker()` and the editor copy stopped one call short:
+
+```
+loadLevelFromNet  extractSpot = …; if(level.extractFx){ … applyExtractFx(); } refreshExtractMarker();
+restoreLevel      extractSpot = …; if(level.extractFx){ … applyExtractFx(); }
+```
+
+`refreshExtractMarker` appears nowhere else in `restoreLevel`, so **loading a level in the editor — or
+pressing undo — left the extraction beacon on the PREVIOUS level's spot**, or lingering when the new
+level had none. It self-healed only if the creator happened to be sitting on the extract tab, which
+re-renders the marker for its own reasons (`renderEditorFields`). What ships is the UNION, build 1401's
+rule, so closing the duplication closes the bug.
+
+Measured live (`tools/probe/extract-marker-load.mjs`), driving the real editor loader:
+
+```
+A: authored spot          spot (120, -80)   marker (120, -80)
+B: restoreLevel, new spot spot (-35,  55)   marker (-35,  55)   <- FOLLOWED
+C: restoreLevel, no spot  spot null         marker (0, -30) = extractAutoPos()
+```
+
+### Twenty-five harnesses were enforcing the duplication
+
+Every one asserted a **count of 2** over the source to mean *"restored on both load paths"*. That is
+build 1280's own finding — *a test that counts copies of a thing is a test of the copying* — in its
+worst form: those pins made **removing** the defect fail the suite, so the duplication was
+test-enforced. And they proved nothing about behaviour: deleting one copy of any field left the suite
+fully green.
+
+They now go through `appliedOnceByBothLoaders(re, msg)` in `harness.mjs`, which states the property
+they always meant and **cannot be satisfied by a second copy appearing elsewhere**: the statement
+occurs exactly once inside `_applyLevelSections`, exactly once engine-wide, and both loaders reach the
+applier. One helper instead of 25 spellings of one idea.
+
+### The sweep produced a false positive, exactly as build 1400 warned
+
+A blanket regex over the test tree rewrote `test-1193`'s `_fxSpeedFor` assertion, which legitimately
+counts **two** sites (bots and enemies) and has nothing to do with loaders. Build 1400 recorded this
+class after doing it once; I did it again. **The only reason it was caught in one run is that the
+helper THROWS on a pattern it cannot find inside the applier rather than passing** — a converter that
+degraded silently would have left a green test measuring nothing.
+
+### `deathZones` had zero assertions in 1,190 harnesses
+
+Which is why `test-1454` is executable rather than a pin sweep: it runs the real applier against a
+level carrying all 24 sections at non-default values and reads the module state back, then against an
+EMPTY level (every list must come back empty rather than `undefined`, or the next consumer to iterate
+it takes the frame loop down — and the marker must still refresh, which is how a stale one clears),
+then A-then-B to prove nothing of the first level survives the second. 141 checks.
+
+**Recorded, not fixed:** `tools/probe/lint.mjs` now has a false-POSITIVE class to sit beside build
+1413's false-negative one — it flags legitimate `` ` + var + ` `` concatenation and nested `${...}` in
+`decal-ghost.mjs` and `ranged-windup.mjs`, both of which run correctly. A checker that cries wolf is
+one people stop reading, which is the same failure mode from the other side.
+
+## Every other player's gun sounded the same (build 1455)
+
+The audio audit's HIGH, verified at the line. `SFX.shootAt(pos)` was one hardcoded square-plus-noise
+blip, weapon-agnostic — and it is the voice of **every relayed shot**: other players, bots, the host's
+guns on a client. So build 1363's six tuned per-weapon patches, and every creator's own
+`curSounds().shoot[wep]` sample, reached **nobody but the person pulling the trigger**.
+
+In this genre, identifying an enemy's weapon by ear is a primary information channel. A sniper and an
+SMG were indistinguishable to everyone except their owner.
+
+**Its only caller already had the answer in scope.** `remoteFire(pid, o, d, wep)` reads `wep` two lines
+earlier for `noMuzzle` and passed only a position. One argument.
+
+### One voice, not a second synth
+
+The fix is structural rather than a per-weapon copy of the blip: `_shotVoice(wep, at, first)` plays the
+layer table, called by the local gun with `at = null` and by the remote path with a position.
+**`_spatialOut` returns the bus for a falsy position**, so "unpositioned" is the same code path rather
+than a parallel one — and the two callers can no longer come to different answers about what a shotgun
+sounds like, which is what the old shape guaranteed they would.
+
+Three differences from `SFX.shoot` are deliberate, each a defect the other way:
+- **No music duck.** A four-player firefight would hold the score down permanently; build 1374's duck
+  is feedback on YOUR trigger, not on the room.
+- **Its own first-shot clock.** The >400 ms brightening is per-shooter, so a teammate opening up beside
+  you must not flatten the first round out of your own gun. Executed: a remote shot leaves
+  `_shotSndAt` byte-identical.
+- **An unknown or absent weapon falls back to the RIFLE patch**, exactly as `SFX.shoot` does for an
+  unknown `curWep`. This is a **stated deviation** from the finding's "reproduce the old blip
+  byte-for-byte": keeping that blip would mean keeping a second voice nothing else in the engine uses,
+  which is the thing this build removes. The control that matters is that a weaponless relay is never
+  SILENT, and it is not.
+
+A suppressed weapon phuts tail-lessly on the remote path too — that is what a suppressor is for, and a
+remote one you cannot hear correctly is a gameplay signal lost.
+
+### Measured live, through the real `remoteFire`
+
+Build 1277's rule — pinning the two ends of a wire proves nothing about the wire — so the probe fires
+the function the network handler calls and reads what reached the audio graph:
+
+```
+                   body Hz   crack            positioned
+remoteFire sniper       96   lowpass  0.26     yes
+remoteFire smg         386   highpass 0.05     yes
+remoteFire shotgun     150   lowpass  0.17     yes
+remoteFire NO weapon   328   highpass 0.07     yes   <- the control: never silent
+local SFX.shoot          -   -                 NO    <- unchanged, and still on the plain bus
+```
+
+`layers: 3` rather than 4 in that readout is honest and not a defect: the tail is on a real
+`setTimeout` and the probe reads synchronously, so it lands after the sample.
+
+**Five pins moved** (1208, 1211 ×3 as one block, 75 ×2, 1363), every intent kept — 1211's three layer
+pins are byte-identical values at a new address, and 1208's is now *stronger*: shootAt is spatialised
+**and** per-weapon. Two of them are executing rigs that genuinely lacked the new dependency; each is
+handed `_shotVoice` / `_shotFirst` / the remote clock **lifted from source**, never restated.
+
+**And my own new pin was wrong before the engine was:** `\bat\b(?=[,}])` counted 5, because
+`_shotVoice`'s own `at` PARAMETER matched. A pin on a bare identifier counts the declaration too — the
+same trap this file records for prose, one step along. It counts the call sites (`, at}`) now.
+
+## Options on the title screen (build 1456)
+
+The UI audit's CRITICAL, verified at the line: eleven menu buttons — Deploy, Build, Multiplayer,
+Community, two campaign entries, Instructions, Field manual, Help, Credits, and a controls-mode
+**cycler** (not a panel). Volumes, mute, all six comfort sliders, colour-vision correction with
+strength, interface size, mouse sensitivity, keybinds and the touch-layout editor lived **only** in the
+pause card. So a photosensitive, motion-sick, colour-blind or low-vision player had to **Deploy into
+live combat and then pause** before they could protect themselves.
+
+### It opens the SAME element, and that is the whole design
+
+`bindPauseMenu` reads every control by id, so lifting the markup into a second panel means duplicate
+ids or a second set of bindings — the defect this file records more than any other. One card, one
+binding, nothing to drift. `test-1456` asserts each of nineteen control ids exists **exactly once**.
+
+**It closes through `resumeGame`**, which is the one chokepoint the Resume button, the pad's B and the
+pad's Start already use — so the title-screen card closes by every one of those with no second list of
+call sites, the mistake builds 1152 and 1158 had to fix twice. The route sits **before** the
+`if(!paused) return;` guard, which would otherwise swallow it; the test asserts that ordering directly.
+
+Four decisions, each a defect the other way:
+- **`paused` is never written.** There is no match to pause, and setting it would make the frame loop's
+  gates disagree with the world. Asserted by executing and by grepping the function.
+- **The pointer is never grabbed** on close — there is no game to look around in.
+- **It refuses outright while a match is running or already paused**, so it can never fight `openPause`.
+- **Three controls hide** — Exit to main menu, Edit HUD layout, Loadout — not because they are
+  dangerous but because their consequence is absent. The test asserts that **nothing else** is hidden,
+  which is the entire point of the build.
+
+### Measured live (`tools/probe/settings-on-title.mjs`) — 32 controls, no match started
+
+```
+clicked Settings   shown, setOnly, title SETTINGS, on screen, gameOn false, paused false
+GAME     7 controls   missing 0  offscreen 0  unbound 0
+CONTROLS 3           AUDIO 4           COMFORT 13     — all clean
+gamepad block        hidden with no pad -> SHOWN when one appears (build 909, intact)
+match-only           pauseExit / pauseEditHud / pauseLoadout all zero-size
+comfort slider       a11y.shake 1 -> 0.30 -> 1, label follows
+Escape               closed, setOnly dropped, title back to PAUSED, paused still false
+```
+
+**The first probe run reported six failures and the engine was right every time.** `#pauseCtl` and its
+five pad sliders are `display:none` until a pad has been *seen* — build 909's own behaviour, and
+correct, since pad sliders shown to someone with no pad are noise. `pauseCtl` is also a container, not
+a control, so my "has a handler" check was wrong about it. The instrument now tests the real property:
+the block is hidden with no pad and **revealed** when one appears, from the title screen.
+
+### Two pins moved, and both were mine to break
+
+- **`test-1023`** deliberately puts Play campaign first in the sub row, and my first placement put
+  Settings ahead of it. That is a prior build's design decision, not an obstacle: Settings moved to the
+  head of the utility group (Instructions / Manual / Help / Credits) instead, which is also where a
+  player looks for it. 1023's assertion is untouched.
+- **`test-1347`** matched *any* capture-phase keydown listener with a lazy window, and this build added
+  one that now comes **first in the file**. It was always about the accessibility handler, so it
+  requires `_a11yArm` inside the window now. That is build 1411's first-match trap in a regex rather
+  than an `indexOf` — **a pin that matches "the first thing shaped like X" is a pin on file order.**
+
+## The ladder could not reach the biggest lever (build 1457)
+
+The performance audit's CRITICAL, verified at the line. `_adaptResTick` sheds motion blur, then
+MSAA+SSAO, then RESOLUTION, then the sun's shadow map — and **never touched `lodPx`**, whose default has
+been 0 since build 1273. So the single largest scaling lever in the engine was opt-in and unreachable by
+the one system whose entire job is finding relief: a struggling device got pixel-count relief and went on
+submitting every draw call it always had.
+
+`_lodPxNow` now returns the larger of the creator's value and a **per-rung floor**, `[0, 0, 1, 2, 3]`.
+
+**Build 1273 is not reversed, and that distinction is the build.** Its argument stands — a perf feature
+that DELETES a creator's prop does not get to be on by default, and it could not reproduce the report
+behind it. What it does not cover is a device already at 60–66% of native with its antialiasing and its
+ambient occlusion gone. The ladder engaging *is* the engine saying this machine is in trouble; spending
+draw calls there is the trade every other rung already makes.
+
+### Measured, 659 props — and the isolation is the number that counts
+
+```
+rung   px   draw calls   triangles   culled
+0      0        2062       323,928        0
+1      0        1552       240,296        0
+2      1         907        90,104      272
+3      2         426        25,468      455
+ctrl   0        2062       323,928        0    <- returns
+
+ISOLATED at rung 3 (same rung, same post pipeline, only the floor moves):
+without    px 0   1040 calls    0 culled
+withFloor  px 2    426 calls  455 culled     -> 59.0%
+control    px 0   1040 calls    0 culled     <- returns EXACTLY
+```
+
+**The top-to-bottom figure would have been dishonest.** Rung 0 → 1 already drops 510 calls with `px 0`
+and nothing culled: SSR sheds at rung 1 and its G-buffer is a **full scene pass**. That is pre-existing
+behaviour. The A/B above changes nothing but the floor — `_LADDER_LOD_PX` is a `const` binding holding a
+*mutable* array, which is what makes it possible without a second build.
+
+Four guards, each executed: rungs 0 and 1 are exactly 0 (no full-quality frame moves, and neither does
+the first resolution downshift); it is a FLOOR, never a cap (an authored 4 px survives every rung);
+`_adaptOn === false` returns 0, because build 1342 made "off" a promise of full quality; and
+`LOD_NEAR_KEEP` is untouched, so **44 props within 40 m, 0 culled, at the worst rung** — which is what
+makes 1273's reported symptom structurally unreachable rather than merely unlikely. The editor culls
+nothing at rung 3 either.
+
+**The floor deliberately does NOT repeat the tick's editor gate.** `_lodTick` already returns early while
+authoring — build 1267 put that gate at the one place that acts on the number — and repeating it here
+would make the ladder case **unreportable**, because Level Check renders in the editor. So `lodReport`
+carries the authored value, the floor and who is responsible, and the row names the **scaler** when the
+scaler raised it: telling a creator to "set Cull below (px) back to 0" when their slider already reads 0
+is a control lying about its own engine, the defect builds 1310 and 1348 exist to remove.
+
+### Container rollback #26, and the guard that could not see it
+
+The tree reverted to **build 1431** mid-build, and I applied 1457's edits to that stale base before
+noticing — the tell was `BUILD_VERSION` reading 1431 under an assert and the suite reporting **1170**
+harnesses against 1193. So the first probe run measured 1431 + 1457, not 1456 + 1457.
+
+Build 1414's staging guard is keyed on a content hash of `probe-out` against the repo, and **both were
+the rolled-back tree**, so they agreed. That build recorded the limitation in one line — *the guard
+detects disagreement, not recency* — and this is the first time it has cost anything. It cost one probe
+run: recovery was `git log`, `git fetch`, `reset --hard FETCH_HEAD`, re-apply, re-measure. The rescued
+untracked files (the new test and probe) survived `reset --hard` by definition; the tracked edits did not,
+which is the split build 1405 recorded.
+
+**The re-measurement changed the answer by 0.8 points (58.2% → 59.0%)** — nothing between 1432 and 1456
+touches LOD, so it could hardly have differed. That is not a reason to have skipped it: I could not have
+known that without re-running, and the figures written into the source comment were wrong until I did.
+
+**Four rigs needed the new dependency** (1267, 1270, 1273, 1274), each supplied `_lodFloorNow` and the
+table **lifted from source** with the scaler off at rung 0 — byte-identical to pre-1457. Deliberately not
+stubbed to 0: 1273's whole subject is the default, and a stub would hide the interaction.
+
+**And my own pin was satisfied by my own comment, for the ninth time.** `!/editorOpen/` over
+`_lodFloorNow` matched the comment explaining that it does not gate on `editorOpen`. It pins the
+STATEMENT now (`!/if\([^)]*editorOpen/`).
+
+## The joiner was hit with no warning at all (build 1458)
+
+The audio audit's CRITICAL, verified at the line: the whole enemy-AI block is
+`if(!isClient && !duelMode){`, and inside it live build 627's melee wind-up, the charger's lunge tell,
+build 1448's ranged wind-up **and build 1367's visual telegraph**. So a co-op **joiner** received none of
+them — not the sounds, not the pulse, not the squash — and was hit with **zero warning of any kind**.
+Three builds exist specifically to give the player counterplay; all three reached the host alone.
+
+### One question, asked once
+
+`_teleLive(en, nowMs)` is now the single place that decides WHICH telegraph is live. The visual pulse and
+the network wire both need that answer, and if they asked separately they could disagree about which tell
+a player is seeing — this file's most-repeated defect. `_telegraphFrac` no longer names a single timer;
+it reads `_teleLive` and divides. `test-1458` proves the arithmetic unchanged across all three windows
+including build 1449's authored `aimMs` and `lungeWind`.
+
+It returns a **hoisted scratch object**, never a fresh one: this runs per enemy per frame, and build 1168
+removed exactly that allocation everywhere else.
+
+### The wire is two fields that do not churn
+
+`tg` (the kind) and `tgd` (its full duration), both **constant while the tell is live**. That is the whole
+bandwidth argument: build 1197's delta key is what decides whether an entity is re-sent, so a
+*remaining-time* field would have re-sent every winding-up enemy **every frame**. Constant means twice per
+attack — once when it starts, once when it ends — and both fields are absent entirely when nothing is
+pending, so a quiet wave adds no bytes.
+
+The client arms its mirror with the same timer fields the host sets and then runs **the host's own
+`_telegraphTick`** on it. No second visual language, and the capsule gate is inherited unchanged, so a
+custom model still shows its attack clip. The end time is computed from the **client's** clock, so clock
+skew is impossible: the tell begins when that player learns about it, which is the honest moment for a
+warning.
+
+### Measured live (`tools/probe/telegraph-net.mjs`) — the whole wire, not its ends
+
+Build 1277's rule: pinning both ends proves nothing about the middle. A real enemy winds up, the real
+`serializeWorld()` builds the packet, the real `upsertEnemyMesh` applies it, the real `_telegraphTick`
+runs on the mirror.
+
+```
+CONTROL, no telegraph   no `tg` field at all
+winding up              tg 1, tgd 320
+client                  armed, and meleeWind fired ONCE at [200, 200] — positional
+two more identical packets   still 1 cue: it is an edge, not a level
+the mirror pulses       emissive 0.600 -> 0.651 -> 1.801   scale 1.000 -> 1.040 / 0.920
+host stops              no `tg` field; client disarms silently
+restore                 0.600 / 1.000 / 1.000 — byte-exact
+CONTROL, a mirror that never telegraphs   unmoved, and silent
+charger / ranged        lungeWind with lungeWind 700, rangedWind with aimMs 500 (build 1449 reaches the client)
+```
+
+### Deliberately NOT replicated, with the reason
+
+**Footsteps and the sapper fuse.** They are CONTINUOUS — driven by distance accumulation on the host —
+rather than event-shaped, and build 1315 explicitly deferred their density question ("40 enemies in a wave
+is a mud of overlapping noise if that is wrong"). That question is still unanswered, and replicating a
+per-step event before answering it would be chatty and probably wrong. `test-1458` asserts their absence
+from the snapshot so this stays a decision rather than an oversight.
+
+**Two pins moved** (1367, 1448), both executing rigs that legitimately lacked `_teleLive`; each is handed
+it **lifted from source**. And 1367's zero-allocation pin failed on my hoisted scratch — `=\s*\{` matched
+the declaration — which is build 1168's own approved pattern being caught by a test of build 1168's own
+rule. The declaration is excluded from that concatenation now and asserted separately: hoisted to module
+scope, returned by reference, never rebuilt. **A pin against "allocation" has to distinguish allocating
+once from allocating per frame, or it fails for the opposite of the reason it exists.**
+
+## The audit's shadow fix died, and the measurement named the real one (build 1459)
+
+The performance audit asked for `_shDirty` to be gated on whether a mover sits inside the NEAR cascade's
+fitted volume. **The premise is true and the fix does not work**, and the numbers are worth keeping so
+nobody re-derives it:
+
+- Both cascades share ONE dirty counter (`_shadowDirtyFrames` → `renderer.shadowMap.needsUpdate`), so a
+  mover inside the **far** volume genuinely needs the refresh. The honest test is against that one.
+- Measured (`tools/probe/shadow-dirty-scope.mjs`): the far half-extent is **240** at the shipped defaults,
+  against an arena of **70**.
+
+```
+THIS arena inside the far volume    1681 / 1681 = 100%
+a build-1372 wave ring              192 / 192   = 100%
+coverage by arena size   70:100%  200:93.5%  500:21.9%  1000:5.5%  2000:1.4%
+```
+
+So the proposed test buys **0.0%** of wave frames on any level under ~500 half-extent. `_shDirty` is
+therefore **unchanged**, and `test-1459` asserts that it is — so the rejection stays a decision rather
+than something a later reader mistakes for an oversight.
+
+### What was real, and what r149 makes possible
+
+The far map's **cost**: measured at **358 of 990 draw calls** in a shadow frame. And r149 checks a
+**per-light** gate after the global one —
+
+```js
+if ( shadow.autoUpdate === false && shadow.needsUpdate === false ) continue;   // three.cjs:20914
+shadow.needsUpdate = false;                                                    // three.cjs:20989
+```
+
+— and clears the flag itself once rendered. So the far light opts out of the global refresh and takes
+every second one. **No define, no light-count change, no recompile**, which is what every other approach
+here would have cost (builds 636/977/1153).
+
+```
+draw calls   both cascades 990    near only 632    control 990 (returns exactly)
+average      far every frame 990  far every 2nd 811     -> 18.1% of shadow-frame draw calls
+cadence      [0,1,0,1,0,1], and a refit on frame 3 forces one out of turn
+```
+
+**`FAR_SHADOW_EVERY = 2` is derived, not picked.** A caster lags at most (N−1) frames; at run speed
+(14 u/s, 60 fps) that is (N−1) × 0.233 m. The far cascade only DRAWS beyond the near volume's edge
+(build 1185's coverage select), so the worst case is at that boundary, E = 60 m, where 444 screen px per
+radian gives **(N−1) × 1.7 px**. N=2 stays under two pixels; N=3 would be 3.5, which is visible on a
+sprinting caster. `test-1459` recomputes that arithmetic rather than trusting the comment.
+
+**A refit forces a refresh out of turn**, because the far VOLUME moved — a map stale in the wrong *place*
+is a different fault from one stale by a frame, and no cadence may skip it. It consumes itself without
+resetting the counter, so the phase is preserved. Quiet frames bank no credit: the global gate skips the
+whole pass, so the first frame of movement does not owe several refreshes.
+
+### Two test-writing notes, both mine
+
+- **My expectation was wrong and the engine was right.** I asserted a refit-then-cadence run would read
+  `1010`; it reads `1101`, because the refit fires frame 0 and frame 1 then fires *on its own turn*.
+  That IS the phase being preserved — only frame 0 differs from the unforced run. The test now asserts
+  both runs side by side so the property is visible rather than asserted from memory.
+- **A pin must not fail on code it does not own.** My "never flips castShadow or visibility" check sliced
+  2,600 characters after `const moonFar` and reached build 1185's legitimate `moonFar.visible =
+  moon.visible` mirror line. Scoped to the block this build added. The character-budget trap, in its
+  other direction: not a window that grew past its needle, but one that swallowed a neighbour.
+
+One pin moved (256), and its intent is unchanged: this build put the far cadence between its two
+statements, so it asserts them separately — the countdown drains one frame at a time, and a spent
+countdown leaves the map frozen.
+
+## Two per-frame costs removed, and the third declined with a number (build 1460)
+
+The performance audit named three. Two were real; the third is arithmetic and is deliberately left, which
+`test-1460` asserts so nobody "finishes the sweep" later on the audit's word.
+
+**`_lodGeoTick` made every prop pay for one model's level.** It ran a full-subtree traverse **and
+allocated a closure** for each of the 128 props it examines per frame, whether or not that prop had a
+level to swap — `_lodGeoN` gates the whole tick and says nothing about the individual prop. So a single
+simplified model taxed the entire level. A `_hasGeoLod` flag on the root, raised **in the same act** as
+the mesh's own `_lodHi` so the two cannot disagree, skips it before the traverse and before the closure.
+
+```
+one levelled model, 559-prop level:   125 traverses/frame -> 1     (control returns to 1)
+```
+
+**A joiner re-pinned sleeping bodies forever.** `stepClientPlayerPhys` wrote
+`setTranslation + setRotation + setLinvel + setAngvel` for every dynamic prop every frame — **800
+JS-to-WASM crossings a frame at 200 props** — for bodies pinned to the host's poses and never simulated.
+Now skipped when the body is **asleep** and already at the pose it would be pinned to. The sleep test is
+what makes this safe rather than merely cheaper: a sleeping body does not integrate, so re-stating where
+it is buys nothing, while an **awake** one is pinned exactly as before, because that is the case the pin
+exists for.
+
+```
+200 sleeping props   frame 1: 800 crossings   frame 2: 0   host moves one: 4
+200 awake props      800 every frame
+no isSleeping API    4 every frame — the skip fails CLOSED
+```
+
+### `_vehicleMeshes` — measured and declined
+
+The audit listed it beside the other two. Measured on a 559-prop level: **0.028 ms/frame**. It is a
+property test and a push over an array the frame already walks several times for other reasons, with no
+allocation and no traverse — arithmetic, not a hotspot.
+
+Every way of removing it trades that non-cost for a correctness hazard. Maintaining the list at
+spawn/despawn requires every site that WRITES `userData.vehicle` to remember — the editor checkbox,
+`setPropDynamic`, `_applyPropEntry` — which is the hand-kept-list defect this file records more than any
+other. Rebuilding only when `propModels.length` changes misses a flag toggled in place. So it stays, and
+the test asserts that it stays.
+
+### Container rollback #27, and the same blind guard
+
+The tree reverted to **build 1431** again, mid-build, and I applied 1460's edits to that stale base before
+the `BUILD_VERSION` assert caught it — suite reading **1170** harnesses against 1196. Identical to #26 two
+builds ago, including the reason build 1414's staging guard cannot see it: `probe-out` and the repo were
+**both** the rolled-back tree, so the content hashes agreed. *The guard detects disagreement, not
+recency.*
+
+Recovery was the documented sequence and cost one probe run. The re-measurement on the correct base gave
+**identical** LOD figures (125 → 1) — nothing between 1432 and 1459 touches that tick — and the vehicle
+walk moved 0.054 → 0.028 ms, which is run-to-run noise on a timing figure under SwiftShader and is exactly
+why the decision rests on the ORDER of magnitude rather than the digits.
+
+**One probe-writing note.** My control asserted 1 traverse and measured 0, and the engine was right:
+`_lodGeoTick`'s cursor ROLLS 128 props a frame, so the second call examines a different window that does
+not contain the flagged prop. The control resets `_lodGeoCursor` now. *A control has to be pointed at the
+same thing the measurement was.*
+
+Zero pins moved.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

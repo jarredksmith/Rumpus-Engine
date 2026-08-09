@@ -2,7 +2,7 @@
 // (scrolling streak bands, soft edges, whiter/mistier toward the plunge), a foam-pool disc at the base,
 // and positional looping sound via the audio-zone recipe (buffer -> gain -> sfxBus), so master/SFX
 // volume and mute apply and bigger falls are audible further. Still zero render targets, zero particles.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---- audible-radius + gain math run executably ----
@@ -30,7 +30,7 @@ assert(/setTargetAtTime\(vol, actx\.currentTime, 0\.1\)/.test(upd), 'smooth gain
 
 // ---- plumbing ----
 assert(/waterfalls: waterfalls\.map\(f=>\(\{ x:\+f\.x, z:\+f\.z, y:\+f\.y, h:\+f\.h, w:\+f\.w, yaw:/.test(src), 'waterfalls serialize with the level');
-eq((src.match(/waterfalls = Array\.isArray\(level\.waterfalls\) \? level\.waterfalls\.map\(_migrateWaterfall\) : \[\];/g)||[]).length, 2, '...and restore on both load paths');
+appliedOnceByBothLoaders(/waterfalls = Array\.isArray\(level\.waterfalls\) \? level\.waterfalls\.map\(_migrateWaterfall\) : \[\];/g, '...and restore on both load paths');
 assert(/waterfalls\.length=0; if\(typeof refreshWaterfalls==='function'\) refreshWaterfalls\(\);/.test(src), 'wipe clears them');
 assert(/updateWaterfalls\(dt\);/.test(src.match(/updateWaterZones\(dt\);[^\n]*/)[0]), 'ticked beside the water zones');
 assert(/_renderWaterfallsUI\(host\);/.test(src), 'the Waterfalls UI renders inside the Water tool');

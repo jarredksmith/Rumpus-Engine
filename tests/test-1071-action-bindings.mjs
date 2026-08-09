@@ -7,7 +7,7 @@
 // animation, and optionally a Logic event. The action deliberately does NO gameplay itself — it
 // plays the clip and pulses the graph, and the graph already owns damage/spawn/score/win, so
 // "dodge grants a speed burst" is three visible nodes instead of a hidden checkbox.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---- the slots this feature exists to reach really had no driver before ----
@@ -125,7 +125,7 @@ assert(/if\(rp\._actT && performance\.now\(\) < rp\._actT\) _st=rp\._actSlot;/.t
 assert(/let actionBinds = _sanitizeActions\(savedLevel && savedLevel\.actions\);/.test(src), 'actions boot from the saved level');
 assert(/actions: \(\(typeof actionBinds!=='undefined' && actionBinds\.length\) \? _sanitizeActions\(actionBinds\) : undefined\),/.test(src),
   'and serialize with it');
-eq((src.match(/actionBinds = _sanitizeActions\(level\.actions\);/g) || []).length, 2, 'both level-load paths restore them');
+appliedOnceByBothLoaders(/actionBinds = _sanitizeActions\(level\.actions\);/g, 'both level-load paths restore them');
 
 // ---- the editor lives on the Player tab, under Animation states ----
 {

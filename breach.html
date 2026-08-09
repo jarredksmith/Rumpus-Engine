@@ -1091,6 +1091,14 @@
   .pPanel { display:none; flex-direction:column; gap:10px; }
   .pPanel.on { display:flex; }
   #pauseFooter { width:100%; flex:0 0 auto; display:flex; flex-direction:column; gap:8px; }
+  /* build 1456: the SAME pause card, opened from the title screen. Everything in it is a per-device
+     preference except three controls that need a match running - Exit to main menu (there is nothing
+     to exit), Edit HUD layout (it hides the card and edits the live play HUD) and Loadout (it reads the
+     weapons you currently own). Hiding those is safer than showing controls whose consequence is absent,
+     and it needs no second copy of the markup: one element, one set of bindings, nothing to drift. */
+  #pauseMenu.setOnly #pauseExit,
+  #pauseMenu.setOnly #pauseEditHud,
+  #pauseMenu.setOnly #pauseLoadout { display:none !important; }
   #pauseMenu h2 {
     font-family:var(--display-font); color:var(--accent); letter-spacing:8px;
     font-size:30px; margin:0 0 6px;
@@ -1411,6 +1419,7 @@
   <div class="menuBtns menuSub">
     <button id="campaignBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.5 12.9 17 22l-5-3-5 3 1.5-9.1"/></svg>Play campaign</button>
     <button id="loadCampBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>Load campaign</button>
+    <button id="settingsBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
     <button id="instrBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Instructions</button>
     <button id="manualBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Field manual</button>
     <button id="helpBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Help &amp; tutorials</button>
@@ -1560,7 +1569,7 @@
 <button id="pauseBtn" title="Pause (Esc)" style="display:none">❚❚</button>
 <div id="pauseMenu" class="hidden">
   <div class="pauseCard">
-    <h2>PAUSED</h2>
+    <h2 id="pauseTitle">PAUSED</h2>
     <!-- build 1375: the pause card is TABBED. It had grown into the whole settings surface (36 controls
          in one scrolling column, Exit to main menu below the fold at 900px), so the rows are grouped
          into four panels and the footer (Resume / Help / Exit) never scrolls away. Every control row
@@ -6813,6 +6822,29 @@ const _sndJit = (v,r)=> v*(1+(Math.random()*2-1)*r);
 // body+crack pair the guns always had (byte-identical values, so nothing authored moved), (c) a delayed
 // lowpassed noise re-trigger as a pseudo-tail (the space). Per-weapon: the sniper and shotgun get the
 // longest tails and deepest subs, the SMG stays snappy. sub:[freq,dur,vol] tail:[dur,vol,cutoff,delayMs].
+/* build 1455: ONE shot voice, two callers — the local gun (unpositioned) and every relayed/bot shot
+   (positioned). Before this the layer table was played out in SFX.shoot only, and shootAt had its own
+   hardcoded blip, so the two could never agree about what a shotgun sounds like. `at` of null is the
+   unpositioned path by construction: _spatialOut returns the bus for a falsy position. */
+function _shotVoice(wep, at, first){
+  const L=_SHOT_LAYERS[wep]||_SHOT_LAYERS.rifle;
+  /* build 1363: per-shot variation. Each tonal layer jitters freq +-3% / vol +-10%, the tail delay
+     wanders +-15 ms, and the first shot after a >400 ms gap gets a brighter crack (+20%) so a fresh
+     engagement reads louder than the middle of a mag dump. The table values are untouched; only the
+     jitter multiplies them. */
+  tone({freq:_sndJit(L.sub[0],0.03), type:'sine', dur:L.sub[1], vol:_sndJit(L.sub[2],0.10), slideTo:Math.max(20, L.sub[0]*0.55), attack:L.subA||0.002, at});
+  tone({freq:_sndJit(L.body.freq,0.03), type:L.body.type, dur:L.body.dur, vol:_sndJit(L.body.vol,0.10), slideTo:L.body.slideTo, attack:L.body.attack||0.005, at});
+  noise({dur:L.crack.dur, vol:_sndJit(L.crack.vol,0.10)*(first?1.2:1), filterFreq:L.crack.filterFreq, type:L.crack.type, at});
+  setTimeout(()=>noise({dur:L.tail[0], vol:L.tail[1], filterFreq:L.tail[2], type:'lowpass', at}), Math.max(0, Math.round(L.tail[3]+(Math.random()*2-1)*15)));
+}
+/* Separate clocks: a remote shot must not reset the local gun's first-shot brightening, or a teammate
+   firing beside you would flatten the first round out of your own weapon. */
+let _shotSndAtR = -9;
+function _shotFirst(remote){
+  const nw = actx ? actx.currentTime : 0;
+  if(remote){ const f=(nw-_shotSndAtR)>0.4; _shotSndAtR=nw; return f; }
+  const f=(nw-_shotSndAt)>0.4; _shotSndAt=nw; return f;
+}
 const _SHOT_LAYERS = {
   shotgun:{ sub:[52,0.11,0.20], body:{freq:150, type:'square', dur:0.15, vol:0.17, slideTo:55}, crack:{dur:0.17, vol:0.30, filterFreq:1400, type:'lowpass'}, tail:[0.30,0.12,900,120] },
   smg:    { sub:[70,0.05,0.10], body:{freq:380, type:'square', dur:0.05, vol:0.10, slideTo:150}, crack:{dur:0.05, vol:0.15, filterFreq:3000, type:'highpass'}, tail:[0.12,0.05,1200,70] },
@@ -6828,16 +6860,7 @@ const _SHOT_LAYERS = {
 const SFX = {
   shoot(){ _duckMusic(); if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;   /* build 1374: a shot dips the music on EVERY path - sample, suppressed or synth (explode below does the same) */
     if(typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].suppressed){ tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass'}); return; }   // build 964: suppressed 'phut' (deliberately tail-less — that is what a suppressor is for)
-    const L=_SHOT_LAYERS[curWep]||_SHOT_LAYERS.rifle;
-    /* build 1363: per-shot variation. Each tonal layer jitters freq +-3% / vol +-10%, the tail delay
-       wanders +-15 ms, and the first shot after a >400 ms gap gets a brighter crack (+20%) so a fresh
-       engagement reads louder than the middle of a mag dump. The table values are untouched; only the
-       jitter multiplies them. */
-    const nw=actx?actx.currentTime:0, first=(nw-_shotSndAt)>0.4; _shotSndAt=nw;
-    tone({freq:_sndJit(L.sub[0],0.03), type:'sine', dur:L.sub[1], vol:_sndJit(L.sub[2],0.10), slideTo:Math.max(20, L.sub[0]*0.55), attack:L.subA||0.002});
-    tone({freq:_sndJit(L.body.freq,0.03), type:L.body.type, dur:L.body.dur, vol:_sndJit(L.body.vol,0.10), slideTo:L.body.slideTo, attack:L.body.attack||0.005});
-    noise({dur:L.crack.dur, vol:_sndJit(L.crack.vol,0.10)*(first?1.2:1), filterFreq:L.crack.filterFreq, type:L.crack.type});
-    setTimeout(()=>noise({dur:L.tail[0], vol:L.tail[1], filterFreq:L.tail[2], type:'lowpass'}), Math.max(0, Math.round(L.tail[3]+(Math.random()*2-1)*15))); },
+    _shotVoice(curWep, null, _shotFirst(false)); },
   enemyShot(at){ tone({freq:300, type:'square', dur:0.08, vol:0.09, slideTo:105, at}); noise({dur:0.07, vol:0.12, filterFreq:1700, type:'highpass', at}); },
   // ---------- build 1283: THE TELEGRAPHS ARE AUDIBLE ----------
   // Across all 85 SFX call sites, enemies made sound in exactly three: a ranged shot (twice) and death.
@@ -6863,10 +6886,26 @@ const SFX = {
   // gate, a per-tick budget and a near-field exemption rather than left to the wave size. The step rate
   // still wants a live listen — the headless harness can prove three sound and thirty do not, but not that
   // it feels right — so ENEMY_STEP_M is the first thing to try if a wave reads as mud.
-  shootAt(pos){ if(!actx||!sfxBus) return; const gain=_spatialOut(pos); if(!gain) return;   /* build 1208: shared panner replaces the hand-rolled distance-only gain — a shot to your side now reads to your side */
-    const t=actx.currentTime;
-    const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
-    const n=Math.floor(actx.sampleRate*0.07); const buf=actx.createBuffer(1,n,actx.sampleRate); const dd=buf.getChannelData(0); for(let i=0;i<n;i++) dd[i]=(Math.random()*2-1)*(1-i/n); const src=actx.createBufferSource(); src.buffer=buf; const filt=actx.createBiquadFilter(); filt.type='highpass'; filt.frequency.value=2000; const ng=actx.createGain(); ng.gain.value=0.18; src.connect(filt).connect(ng).connect(gain); src.start(t); },
+  /* build 1455 (audio audit): shootAt used to be ONE hardcoded square-plus-noise blip, weapon-agnostic —
+     so every other player's gun, every bot's and every relayed shot sounded identical, and build 1363's
+     six tuned patches plus a creator's own per-weapon samples reached nobody but the shooter. Its only
+     caller already had `wep` in scope (it reads it two lines earlier for noMuzzle). It now runs the SAME
+     voice the local gun does, positioned. Identifying a weapon by ear is a primary information channel
+     in this genre; it was unavailable to everyone but the person pulling the trigger.
+     Three deliberate differences from SFX.shoot, each a defect the other way:
+       - NO music duck. A four-player firefight would hold the score down permanently; the duck is
+         feedback on YOUR trigger, not on the room.
+       - its OWN first-shot clock, so a teammate opening up cannot steal the brightening from the first
+         round out of your gun.
+       - an unknown or absent weapon falls back to the RIFLE patch, exactly as SFX.shoot does for an
+         unknown curWep — rather than preserving the old generic blip, which would be a second voice
+         nothing else in the engine uses. */
+  shootAt(pos, wep){ if(!actx||!sfxBus) return;
+    const w = (wep && _SHOT_LAYERS[wep]) ? wep : 'rifle';
+    if(playSample((curSounds().shoot||{})[wep], {vary:0.04, at:pos})) return;   /* the creator's own clip for THAT weapon, positioned */
+    if(typeof WEAPONS!=='undefined' && wep && WEAPONS[wep] && WEAPONS[wep].suppressed){
+      tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90, at:pos}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass', at:pos}); return; }   /* a suppressed enemy is quiet to you too — that is the whole point of one */
+    _shotVoice(w, pos, _shotFirst(true)); },
   reload(){ const r=curSounds().reload; const u=(r&&typeof r==='object')?(r[curWep]||r._all):r; if(playSample(u)) return;
     /* build 1211: the clicks track the REAL reload — the old pair was hardcoded 550ms apart, so the
        pistol's audio finished late and the sniper's a second early. Start click, mag-out at ~45%,
@@ -9417,6 +9456,26 @@ scene.add(moon);
 // moonFar is seated at BOOT (the light count must never change during play — builds 636/977/1153/1155),
 // desktop only: a phone keeps one cascade and one shadow pass, decided once before the first compile.
 const moonFar = IS_COARSE ? null : new THREE.DirectionalLight(0x9fd8ff, 0.9);
+/* build 1459: the FAR cascade refreshes on its own cadence. r149's shadow pass checks a PER-LIGHT gate
+   after the global one (`if(shadow.autoUpdate === false && shadow.needsUpdate === false) continue;`, and
+   it clears `needsUpdate` itself once rendered), so opting this one light out costs no define, no light
+   count change and no recompile — which every other approach here would have.
+
+   WHY THE AUDIT'S OWN PROPOSAL WAS NOT BUILT. It suggested gating `_shDirty` on whether a mover sits
+   inside the NEAR cascade's fitted volume. Measured (tools/probe/shadow-dirty-scope.mjs): both cascades
+   share ONE dirty counter, so the honest test is against the FAR volume - and at the shipped defaults
+   that volume is 240 half-extent against an arena of 70. ONE HUNDRED PERCENT of the default arena, and
+   100% of a build-1372 wave ring, sit inside it. The proposed test buys 0.0% of wave frames on any level
+   under ~500 half-extent. What is real is the far map's COST, so that is what this build addresses.
+
+   FAR_SHADOW_EVERY IS DERIVED, not picked. A caster lags at most (N-1) frames; at run speed (14 u/s,
+   60 fps) that is (N-1) x 0.233 m. The far cascade only DRAWS beyond the near volume's edge (build
+   1185's coverage select), so the worst case is at that boundary, E = 60 m, where 444 screen px per
+   radian gives (N-1) x 1.7 px. N = 2 keeps the lag under two pixels; N = 3 would be 3.5, which is
+   visible on a sprinting caster. */
+const FAR_SHADOW_EVERY = 2;
+let _farShN = 0, _farShRefit = true;
+if(moonFar && moonFar.shadow) moonFar.shadow.autoUpdate = false;
 const _sunTargetFar = new THREE.Object3D(); scene.add(_sunTargetFar);
 const _fitL2 = new THREE.Vector3();
 if(moonFar){
@@ -11729,7 +11788,41 @@ const LOD_SHADOW_MUL = 4;    // below lodPx * this, a prop still DRAWS but no lo
 const LOD_NEAR_KEEP = 40;
 const LOD_BUDGET = 128;      // props examined per frame; the cursor rolls, so a 2,000-prop level costs a fixed slice
 let _lodCursor = 0, _lodAnyCulled = false;
-function _lodPxNow(){ const v = (typeof worldCfg!=='undefined' && worldCfg) ? +worldCfg.lodPx : 0; return (v>0 && isFinite(v)) ? Math.min(16, v) : 0; }
+/* build 1457 (performance audit CRITICAL): the single largest scaling lever in the engine was OFF by
+   default and the adaptive ladder could not reach it. `_adaptResTick` sheds motion blur, then MSAA+SSAO,
+   then RESOLUTION, then the sun's shadow map - and never touched `lodPx`, whose default is 0 (build
+   1273). So a struggling device got pixel-count relief and submitted every draw call it always had.
+
+   Build 1273's argument for the 0 default is intact and is NOT being reversed: a perf feature that
+   DELETES a creator's prop does not get to be on by default, and that build could not reproduce the
+   report behind it. What it does not cover is a device already running at 60-66% of native resolution
+   with its antialiasing and its ambient occlusion gone. The ladder is the engine saying "this machine is
+   in trouble"; spending draw calls at that point is the same trade every other rung already makes.
+
+   Measured, 659 props, ISOLATED at the bottom rung (same rung, same post pipeline, only the floor moves):
+   1,040 draw calls -> 426, and the control returns to 1,040 exactly.
+
+   Four things keep it honest:
+     - RUNGS 0 AND 1 ARE EXACTLY 0, so no frame at full quality moves by a pixel, and neither does the
+       first resolution downshift. It engages only where the machine is genuinely struggling.
+     - It is a FLOOR, never a cap: a creator who authored 4 px keeps 4 px at every rung.
+     - `_adaptOn === false` returns 0. Turning the scaler off is a promise of full quality (build 1342),
+       and this build must not be the thing that quietly breaks it.
+     - Build 1273's LOD_NEAR_KEEP is untouched, so nothing within 40 m can vanish at any rung - which is
+       what makes the reported symptom structurally unreachable rather than merely unlikely. */
+const _LADDER_LOD_PX = [0, 0, 1, 2, 3];
+function _lodFloorNow(){
+  if(typeof _adaptOn==='undefined' || !_adaptOn) return 0;
+  /* Deliberately NOT gated on editorOpen. `_lodTick` already returns early while authoring (build 1267's
+     own gate, at the one place that acts on the number), so nothing can vanish in the editor either way -
+     and gating HERE would make the ladder case unreportable, because Level Check renders in the editor.
+     A creator must be able to see that their machine is culling in play. */
+  const i = (typeof _prStepI==='undefined') ? 0 : Math.max(0, Math.min(_LADDER_LOD_PX.length-1, _prStepI|0));
+  return _LADDER_LOD_PX[i];
+}
+function _lodPxNow(){ const v = (typeof worldCfg!=='undefined' && worldCfg) ? +worldCfg.lodPx : 0;
+  const authored = (v>0 && isFinite(v)) ? v : 0;
+  return Math.min(16, Math.max(authored, _lodFloorNow())); }
 // Eligibility is decided ONCE per prop and cached, because two of the three tests are a full subtree walk.
 function _lodEligible(o){
   const u = o.userData;
@@ -11785,7 +11878,14 @@ function lodReport(){
     if(u._lodCull) culled++;
     if(u._lodNoShadow) noShadow++;
   }
-  return { px:_lodPxNow(), culled, noShadow, eligible, minR:(minR===Infinity?0:minR), minName };
+  /* build 1457: `px` is the EFFECTIVE threshold, which the adaptive ladder can now raise above what the
+     creator authored. Reporting only that would tell a creator their level is culling at 2 px when their
+     own setting reads 0 - the exact "a number I never set and cannot find" that build 1274 exists to
+     prevent. So the report carries both, and who is responsible. */
+  const authored = (typeof worldCfg!=='undefined' && worldCfg && +worldCfg.lodPx > 0) ? Math.min(16, +worldCfg.lodPx) : 0;
+  const floor = _lodFloorNow();
+  return { px:_lodPxNow(), authored, floor, fromLadder: floor > authored,
+           culled, noShadow, eligible, minR:(minR===Infinity?0:minR), minName };
 }
 function _lodRestoreAll(){
   _lodGeoRestoreAll();   // build 1431: the editor shows the authored mesh, never a decimated one
@@ -11872,15 +11972,19 @@ function buildGeoLOD(){
       if(!m.isMesh || m.isSkinnedMesh || !m.geometry || !m.geometry.index) return;      // a skin's bones move the vertices
       if(m.userData._lodHi) return;                                                     // already levelled
       if(m.geometry.index.count/3 < LOD_GEO_TRI_MIN) return;
-      want.push(m); });
+      want.push([m, o]); });   /* build 1460: carry the ROOT, so the per-frame tick can skip a prop that has no level at all */
   }
   if(!want.length) return;
   _ensureSimplifier().then(S=>{
     if(!S) return;   // offline or the CDN is unreachable: every mesh keeps its full geometry, silently
-    for(const m of want){
+    for(const [m, root] of want){
       const lo = _lodGeoSimplify(S, m.geometry);
       if(!lo) continue;
       m.userData._lodHi = m.geometry; m.userData._lodLo = lo; _lodGeoN++;
+      /* build 1460: set in the SAME statement group as _lodHi, so the root flag and the mesh's level
+         cannot disagree — a prop flagged without a level is a wasted traverse, and one levelled without
+         the flag is a level that never swaps. */
+      if(root && root.userData) root.userData._hasGeoLod = true;
       /* build 1263's rule: a perf change may not remove work something else relies on. The PLAYER'S SHOTS
          raycast real triangles (build 1159), so a swapped-down mesh would quietly move where a distant
          bullet lands. Raycasting stays on the FULL geometry — and this CHAINS build 1097's BVH raycast
@@ -11897,7 +12001,7 @@ function buildGeoLOD(){
 // teardown must not leave a decimated silhouette behind.
 function _lodGeoRestoreAll(){
   if(!_lodGeoN || typeof propModels==='undefined') return;
-  for(const o of propModels){ if(!o) continue; o.traverse(m=>{
+  for(const o of propModels){ if(!o || !(o.userData && o.userData._hasGeoLod)) continue; o.traverse(m=>{   /* build 1460: the same skip — the flag and _lodHi are set together, so they cannot disagree */
     if(m.userData && m.userData._lodHi && m.geometry !== m.userData._lodHi){ m.geometry = m.userData._lodHi; m.userData._lodOn = false; } }); }
 }
 function _lodTick(){
@@ -12012,6 +12116,11 @@ function _lodGeoTick(){
     const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
     const sp = (d > 0.01) ? ((u0._lodR||1) / d) * k : 1e9;
     const wantLo = (d >= LOD_NEAR_KEEP) && (sp < LOD_GEO_PX);
+    /* build 1460: ONE simplified model made every prop in the level pay a full-subtree traverse plus a
+       closure allocation, 128 props a frame, whether or not it had a level to swap. `_lodGeoN` gates the
+       whole tick but says nothing about the individual prop. Build 1168 removed exactly this class of
+       per-frame closure everywhere else. Measured live: 125 traverses a frame -> 1. */
+    if(!u0._hasGeoLod) continue;
     o.traverse(m=>{
       /* build 1432: _lodLo can be NULLED when the bake supersedes the geometry it was derived from, and
          assigning null here would hand the renderer a mesh with no geometry at all. */
@@ -22571,6 +22680,7 @@ renderer.domElement.addEventListener('drop', (e)=>{
   e.preventDefault();
   if(typeof _importLocalModel==='function') _importLocalModel(f, null);
 });
+document.addEventListener('keydown', (e)=>{ if(e.code==='Escape' && _settingsOpen){ e.preventDefault(); e.stopPropagation(); closeSettings(); } }, true);   // build 1456: on the title screen nothing else owns Escape (there is no pointer lock to release)
 document.addEventListener('pointerlockchange', ()=>{ const was=locked; locked = document.pointerLockElement === renderer.domElement; if(locked && !was){ lookFresh = true; _lastLookDX=0; _lastLookDY=0; if(paused) resumeGame(); }
   if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !(typeof _hwCursorFree!=='undefined' && _hwCursorFree)) openPause(); });   // Esc releases the lock -> show the pause menu (but not when opening chat, or when build 1255's HUD buttons freed the cursor on purpose — LIVE-PROBED: without this, making a button clickable was itself what paused the game and covered it with the pause menu)
 // Ctrl+W (crouch + forward) is the browser's close-tab shortcut and can't be cancelled from a keydown.
@@ -28274,6 +28384,36 @@ function _lobbyDlTick(){
   netStatus(n>0 ? ('Downloading level models \u2014 '+n+' left\u2026') : 'Connected \u00b7 level models loaded');
 }
 function _lobbyDlWatch(){ if(_lobbyDlT) clearInterval(_lobbyDlT); _lobbyDlT=setInterval(_lobbyDlTick, 500); _lobbyDlTick(); }
+// ---------------------------------------------------------------------------------------------------
+// build 1454: the ONE applier for a level's non-prop sections - zones, fx, logic, persistence, rigs,
+// custom anims, HUD widgets, action binds, prefab defs, the four fx configs, the HUD, the radial and
+// the character roster. It was written out TWICE, in loadLevelFromNet and in restoreLevel, and it had
+// already DRIFTED: the net copy refreshed the extraction marker after moving `extractSpot` and the
+// editor copy did not, so loading a level (or pressing undo) left the marker on the PREVIOUS level's
+// spot unless you happened to be sitting on the extract tab, which re-renders it. That is build 1280's
+// finding one tier up - two implementations of one behaviour and only one maintained - and what ships
+// is the UNION (build 1401's rule). Every future level-format field is added HERE, once. See test-1454.
+function _applyLevelSections(level){
+  extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
+  audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
+  triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
+  logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; persistInv = !!level.persistInv; persistCp = !!level.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace; build 1227: flags set BEFORE the load so the blob's __inv/__cp are picked up (and stale carried state from a previous level never leaks)
+  modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
+  customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
+  hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
+  actionBinds = _sanitizeActions(level.actions); if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){}   // build 1071
+  if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
+  tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
+  decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
+  boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
+  hudCfg = _sanitizeHud(level.hud); if(typeof applyHudCfg==='function') applyHudCfg(); if(typeof renderHudPanel==='function') renderHudPanel();   // build 665: per-level HUD theme
+  radialCfg = _sanitizeRadial(level.radial); if(typeof renderBuildMenuPanel==='function') renderBuildMenuPanel();   // build 671: per-level build menu
+  charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
+}
+
 function loadLevelFromNet(level){
   if(!level) return;
   // build 1401: build 1165's format check never ran here — and this is the path where a stale cached client
@@ -28325,24 +28465,7 @@ function loadLevelFromNet(level){
   // `grip` (held-gun placement) halves ARE level-wide and ride along with that exclusion. Splitting
   // applyPlayerLevel into its per-player and level-wide halves is its own build.
   if(level.game) _applyGameCfg(level.game);
-  extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
-  audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
-  triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
-  fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
-  logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; persistInv = !!level.persistInv; persistCp = !!level.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace; build 1227: flags set BEFORE the load so the blob's __inv/__cp are picked up (and stale carried state from a previous level never leaks)
-  modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
-  customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
-  hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
-  actionBinds = _sanitizeActions(level.actions); if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){}   // build 1071
-  if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
-  tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
-  decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
-  boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
-  hudCfg = _sanitizeHud(level.hud); if(typeof applyHudCfg==='function') applyHudCfg(); if(typeof renderHudPanel==='function') renderHudPanel();   // build 665: per-level HUD theme
-  radialCfg = _sanitizeRadial(level.radial); if(typeof renderBuildMenuPanel==='function') renderBuildMenuPanel();   // build 671: per-level build menu
-  charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
+  _applyLevelSections(level);
   // build 1401: the client read `level.homepage` only to derive the persist namespace and never APPLIED it,
   // so a joiner returning to the menu got the engine's title screen and the engine's lobby backdrop.
   homepageCfg = _sanitizeHomepage(level.homepage); lobbyBgUrl = (typeof _sanitizeLobbyBg==='function') ? _sanitizeLobbyBg(level.lobbyBg) : ''; if(typeof renderHomePanel==='function') renderHomePanel(); if(typeof _syncGameHome==='function') _syncGameHome();   // build 971: creator title screen (absent = off) + 1009 lobby backdrop
@@ -29963,6 +30086,24 @@ function upsertEnemyMesh(e){
   }
   em.target.set(e.p[0], e.p[1], e.p[2]);
   em.hd=e.hd||0; em.hs=e.hs||0;
+  /* build 1458: the enemy telegraphs a co-op client never received. The whole enemy-AI block is
+     `if(!isClient && !duelMode)`, so a joiner got NO melee wind-up, NO charger tell, NO ranged tell —
+     neither the sound nor build 1367's visual pulse — and was hit with zero warning of any kind. Builds
+     1283, 1448 and 1367 exist to make an attack readable; they reached the host alone.
+     The edge is what matters: the cue fires ONCE when the tell begins, and the mirror is armed with the
+     same timer fields the host uses so `_telegraphTick` runs on it verbatim. The end time is computed
+     from the CLIENT's own clock, so no clock skew is possible — the tell starts when this player learns
+     about it, which is the honest moment for a warning. */
+  const _tg = e.tg|0;
+  if(_tg !== (em._tg|0)){
+    em._tg = _tg;
+    const spec = TELE_NET[_tg];
+    if(spec){
+      const dur = +e.tgd || 320;
+      spec.arm(em, performance.now() + dur, dur);
+      if(typeof SFX!=='undefined' && SFX[spec.snd]) SFX[spec.snd](em.mesh.position);
+    } else { em._windupT = 0; em._aimT = 0; em._lungePending = false; em._lungeWind = 0; }
+  }
   if(e.ty!=null){ em.ty=e.ty; em.hp=e.hp; }   /* build 1201: keyframe type+hp, adopted verbatim if this client is ever promoted */
 }
 function upsertCoinMesh(c){
@@ -30012,9 +30153,15 @@ function serializeWorld(){
   const _nConn = Object.keys(NET.conns).length;
   const full = (_snapN % 10 === 1) || _nConn !== _snapConnN;   /* keyframe cadence + a fresh join always starts from a keyframe */
   _snapConnN = _nConn;
+  /* build 1458: the TELEGRAPH rides the snapshot. `tg` is the kind and `tgd` its full duration, both
+     CONSTANT while the tell is live — so the delta key changes twice per attack (start and end) rather
+     than every frame, which a remaining-time field would have cost. Absent when nothing is pending, so a
+     quiet wave adds no bytes at all. */
+  const _teleNow = performance.now();
   const Eall=enemies.map(e=>{ const o={ id:e.id, p:[q2(e.mesh.position.x),q2(e.mesh.position.y),q2(e.mesh.position.z)], hd:e._netHitDir||0, hs:e._netHitSeq||0 };
+    const L=_teleLive(e, _teleNow); if(L && !e.dead){ o.tg=L.kind; o.tgd=Math.round(L.dur); }
     if(full){ o.ty=e.type; o.hp=q2(e.hp); } return o; });   /* build 1201: keyframes carry type+hp so a promoted host can rebuild the wave */
-  const _ed=_snapDelta(full, Eall, _snapPrevE, e=>e.p[0]+'|'+e.p[1]+'|'+e.p[2]+'|'+e.hd+'|'+e.hs);
+  const _ed=_snapDelta(full, Eall, _snapPrevE, e=>e.p[0]+'|'+e.p[1]+'|'+e.p[2]+'|'+e.hd+'|'+e.hs+'|'+(e.tg||0));
   const E=_ed.list, Ex=_ed.gone;
   const Call=coins.map(c=>({ id:c.id, p:[q2(c.mesh.position.x),q2(c.mesh.position.z)] }));
   const _cs=JSON.stringify(Call); const C=(full || _cs!==_snapPrevC) ? Call : undefined; _snapPrevC=_cs;
@@ -30389,9 +30536,11 @@ function netInterpolate(dt){
   _syncRemoteTurrets();   // build 548: aim every turret a remote player is manning to their synced look; rest the unmanned ones
   if(NET.mode==='client'){
     for(const id in NET.powerupMeshes){ const m=NET.powerupMeshes[id]; if(m.visible) _animatePickup(m, dt); }
+    const _teleNow = performance.now();
     for(const id in NET.enemyMeshes){ const em=NET.enemyMeshes[id];
       const _px=em.mesh.position.x, _pz=em.mesh.position.z;
       em.mesh.position.lerp(em.target, k);
+      _telegraphTick(em, _teleNow);   /* build 1458: the host's own pulse, on the mirror — capsule-gated exactly as it is there */
       const _ey=Math.atan2(player.pos.x - em.mesh.position.x, player.pos.z - em.mesh.position.z) + (em.mesh.userData.hasModel ? (em.mesh.userData.faceOff||0) : 0);
       em.mesh.rotation.set(0, turnToward(em.mesh.rotation.y, _ey, dt, TURN_RATE), 0);
       if(em.mesh.userData.hasModel && em.mesh.userData.visual && em.mesh.userData.visual.userData.stateActions){
@@ -34239,7 +34388,7 @@ function remoteFire(pid, o, d, wep){
   if(!(wep && WEAPONS[wep] && WEAPONS[wep].noMuzzle)) muzzleFlashAt(from);   // build 684: respect a flash-less weapon
   const rp=NET.players[pid];
   if(rp){ rp._fireT = performance.now()+480; }   // netInterpolate owns the rp pose (attack vs move+fire); the longer hold bridges the gap between shots so it doesn't flicker shot-to-shot
-  if(typeof SFX!=='undefined' && SFX.shootAt){ SFX.shootAt(from); }   // distance-attenuated shot (falls back to nothing if unsupported)
+  if(typeof SFX!=='undefined' && SFX.shootAt){ SFX.shootAt(from, wep); }   // build 1455: the WEAPON, so a remote sniper and a remote SMG are tellable apart
 }
 function tracer(from, to, force){
   const tc=tracerCfg; if(!tc.on && !force) return;
@@ -34686,7 +34835,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1453 · 2026-08-09';
+const BUILD_VERSION = 'build 1460 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36868,10 +37017,22 @@ function damageProp(obj, dmg, point, dir, power, byId, showNum){
 // Prop bodies are pinned to their host-synced mesh poses so they stay solid obstacles instead of free-falling.
 function stepClientPlayerPhys(dt){
   if(!physWorld) return;
-  for(const o of dynamicProps){ const b=o.userData.phys && o.userData.phys.body; if(!b) continue;
+  /* build 1460: a joiner wrote setTranslation + setRotation + setLinvel + setAngvel for EVERY dynamic
+     prop EVERY frame — 800 JS-to-WASM crossings a frame at 200 props, for bodies pinned to the host's
+     poses and never simulated. Skipped when the body is ASLEEP and already at the pose it would be pinned
+     to: a sleeping body does not integrate, so re-stating where it is buys nothing.
+     The sleep test is what makes this safe rather than merely cheaper. An AWAKE body — something in the
+     local step nudged it — is pinned exactly as before, because that is the case the pin exists for, and
+     a Rapier build with no isSleeping pins every frame, so the skip fails CLOSED. */
+  for(const o of dynamicProps){ const ud=o.userData, b=ud.phys && ud.phys.body; if(!b) continue;
+    const q=o.quaternion;
+    if(b.isSleeping && b.isSleeping() && ud._pinX===o.position.x && ud._pinY===o.position.y && ud._pinZ===o.position.z
+       && ud._pinQx===q.x && ud._pinQy===q.y && ud._pinQz===q.z && ud._pinQw===q.w) continue;
     b.setTranslation({x:o.position.x,y:o.position.y,z:o.position.z}, false);
-    const q=o.quaternion; if(b.setRotation) b.setRotation({x:q.x,y:q.y,z:q.z,w:q.w}, false);
+    if(b.setRotation) b.setRotation({x:q.x,y:q.y,z:q.z,w:q.w}, false);
     if(b.setLinvel) b.setLinvel({x:0,y:0,z:0}, false); if(b.setAngvel) b.setAngvel({x:0,y:0,z:0}, false);
+    ud._pinX=o.position.x; ud._pinY=o.position.y; ud._pinZ=o.position.z;
+    ud._pinQx=q.x; ud._pinQy=q.y; ud._pinQz=q.z; ud._pinQw=q.w;
   }
   physAccum += Math.min(dt, 0.1);
   // (build 914: the buoyancy call moved to updatePhysics — here the bodies are pinned to host poses and the impulse was wiped)
@@ -38297,19 +38458,35 @@ function _telegraphPulse(t){
   const m = osc > t ? osc : t;
   return TELE_EMI_LO + (TELE_EMI_HI - TELE_EMI_LO)*m;
 }
-function _telegraphFrac(en, nowMs){
-  /* Which telegraph is live and how far through it. Returns -1 when neither is pending — and that
-     return keys the RESTORE: build 1209 heavy-hit interrupt zeroes _windupT/_lungeWind, a landed
-     strike zeroes _windupT, the dash consumes _lungePending. Every exit reads -1 on the next frame,
-     so the restore follows the STATE and never a timer of its own. */
-  if(en._windupT && nowMs < en._windupT) return 1 - (en._windupT - nowMs)/ENEMY_MELEE_WINDUP_MS;
+/* build 1458: WHICH telegraph is live, asked ONCE. The visual pulse and the network wire both need the
+   answer, and if they asked separately they could disagree about which tell a player is seeing — the
+   defect this file records more than any other. Reused scratch, never a fresh object: this runs per enemy
+   per frame and build 1168 removed exactly that allocation everywhere else.
+   Returns -1 / null when nothing is pending, and THAT return keys the restore: build 1209's heavy-hit
+   interrupt zeroes _windupT/_lungeWind, a landed strike zeroes _windupT, the dash consumes _lungePending.
+   Every exit reads empty on the next frame, so the restore follows the STATE and never a timer of its own. */
+const _TL = { kind:0, end:0, dur:1 };
+function _teleLive(en, nowMs){
+  if(en._windupT && nowMs < en._windupT){ _TL.kind=1; _TL.end=en._windupT; _TL.dur=ENEMY_MELEE_WINDUP_MS; return _TL; }
   /* build 1448: the ranged wind-up is the same kind of thing — a commitment the player can act on — so it
      rides the same pulse rather than growing a second visual language. Its own window, because a 260 ms
      tell measured against melee's 320 would read as already half-finished the moment it started. */
-  if(en._aimT && nowMs < en._aimT) return 1 - (en._aimT - nowMs)/(en.aimMs || RANGED_AIM_MS);
-  if(en._lungePending && en._lungeWind > nowMs) return 1 - (en._lungeWind - nowMs)/(en.lungeWind||520);
-  return -1;
+  if(en._aimT && nowMs < en._aimT){ _TL.kind=2; _TL.end=en._aimT; _TL.dur=(en.aimMs || RANGED_AIM_MS); return _TL; }
+  if(en._lungePending && en._lungeWind > nowMs){ _TL.kind=3; _TL.end=en._lungeWind; _TL.dur=(en.lungeWind||520); return _TL; }
+  return null;
 }
+function _telegraphFrac(en, nowMs){
+  const L = _teleLive(en, nowMs);
+  return L ? 1 - (L.end - nowMs)/L.dur : -1;
+}
+/* The client's half of the same table: kind -> the cue to fire once on the rising edge, and the timer
+   field to set so `_telegraphTick` runs on a mirror VERBATIM. One table, so a fourth telegraph cannot be
+   added to the visual and forgotten on the wire. */
+const TELE_NET = {
+  1: { snd:'meleeWind',  arm:(em, end)=>{ em._windupT = end; } },
+  2: { snd:'rangedWind', arm:(em, end, dur)=>{ em._aimT = end; em.aimMs = dur; } },
+  3: { snd:'lungeWind',  arm:(em, end, dur)=>{ em._lungePending = true; em._lungeWind = end; em.lungeWind = dur; } },
+};
 function _telegraphTick(en, nowMs){
   const ud = en.mesh && en.mesh.userData; if(!ud) return;
   const v = ud.visual;
@@ -40567,8 +40744,18 @@ function loop(){
   if(typeof _fitSunShadow==='function' && _fitSunShadow(camera)){
     if(typeof _sunOrbit==='function' && typeof worldCfg!=='undefined') _sunOrbit(worldCfg.sunAzim||0, Math.max(5, worldCfg.sunElev||61));
     _dirtyShadows(1);
+    _farShRefit = true;   /* build 1459: the far VOLUME moved — a stale map is now stale in the wrong place, which no cadence may skip */
   }
-  if(_shadowDirtyFrames>0){ renderer.shadowMap.needsUpdate = true; _shadowDirtyFrames--; }
+  if(_shadowDirtyFrames>0){ renderer.shadowMap.needsUpdate = true; _shadowDirtyFrames--;
+    /* build 1459: the near map follows the global flag as it always has; the far one takes every Nth
+       refresh, plus any frame its own volume was refitted. three clears `needsUpdate` after rendering,
+       so this only ever has to raise it. The counter advances on DIRTY frames alone — a still scene
+       skips the whole pass at the global gate and must not bank credit toward the next one. */
+    if(moonFar && moonFar.shadow){
+      _farShN++;
+      if(_farShRefit || (_farShN % FAR_SHADOW_EVERY === 0)){ moonFar.shadow.needsUpdate = true; _farShRefit = false; }
+    }
+  }
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
   let dt = rawDt;
@@ -45381,24 +45568,7 @@ function restoreLevel(level){
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
   refreshPlayerSpawnMarker();
-  extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); }
-  audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
-  triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
-  fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
-  logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; persistInv = !!level.persistInv; persistCp = !!level.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace; build 1227: flags set BEFORE the load so the blob's __inv/__cp are picked up (and stale carried state from a previous level never leaks)
-  modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
-  customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
-  hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
-  actionBinds = _sanitizeActions(level.actions); if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){}   // build 1071
-  if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
-  tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
-  decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
-  boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
-  hudCfg = _sanitizeHud(level.hud); if(typeof applyHudCfg==='function') applyHudCfg(); if(typeof renderHudPanel==='function') renderHudPanel();   // build 665: per-level HUD theme
-  radialCfg = _sanitizeRadial(level.radial); if(typeof renderBuildMenuPanel==='function') renderBuildMenuPanel();   // build 671: per-level build menu
-  charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
+  _applyLevelSections(level);
   homepageCfg = _sanitizeHomepage(level.homepage); lobbyBgUrl = (typeof _sanitizeLobbyBg==='function') ? _sanitizeLobbyBg(level.lobbyBg) : ''; if(typeof renderHomePanel==='function') renderHomePanel(); if(typeof _syncGameHome==='function') _syncGameHome();   // build 971: creator title screen (absent = off) + 1009 lobby backdrop
   if(level.grenade){ const G=level.grenade; if(G.model!=null) GRENADE.model=G.model||''; if(G.scale!=null) GRENADE.scale=G.scale; if(G.radius!=null) GRENADE.radius=G.radius; if(G.damage!=null) GRENADE.damage=G.damage; if(G.fuse!=null) GRENADE.fuse=G.fuse; if(G.throwForce!=null) GRENADE.throwForce=G.throwForce; loadGrenadeModel(); if(editorTargets.grenade.sync) editorTargets.grenade.sync(); }
   // gun / aim / mounts / inventory / station / chest / coin — build 1401: one applier, shared with the
@@ -47011,10 +47181,18 @@ function levelIssues(){
     if(typeof lodReport==='function'){
       const r=lodReport();
       if(r && r.px>0 && (r.culled>0 || r.noShadow>0))
-        issues.push('Culling is on (below '+r.px+'px): '+r.culled+' prop'+(r.culled===1?'':'s')+' hidden and '
+        /* build 1457: the threshold can now come from the ADAPTIVE LADDER rather than from the creator,
+           and "set Cull below (px) back to 0" is false advice when their setting already IS 0 - a control
+           that lies about its own engine, which is the defect builds 1310 and 1348 exist to remove. The
+           row names whoever is responsible and gives the fix that matches. */
+        issues.push('Culling is on (below '+r.px+'px'
+          +(r.fromLadder ? ', raised from '+r.authored+' by the adaptive quality scaler because this device is struggling' : '')
+          +'): '+r.culled+' prop'+(r.culled===1?'':'s')+' hidden and '
           +r.noShadow+' not casting shadows, of '+r.eligible+' eligible. Smallest measured prop radius is '
           +r.minR.toFixed(2)+'m'+(r.minName?(' \u2014 '+r.minName):'')
-          +'. If something large is disappearing, set Cull below (px) back to 0; that radius is the number to report.');
+          +'. If something large is disappearing, '
+          +(r.fromLadder ? 'turn off Adaptive resolution in the pause menu' : 'set Cull below (px) back to 0')
+          +'; that radius is the number to report.');
     }
     // build 1167: failed asset loads lead the list — "my prop vanished" is the #1 support thread and the
     // answer was sitting in the console. The url's tail is shown because Poly Pizza urls only differ there.
@@ -53566,6 +53744,7 @@ function bindMenu(){
   try{ localStorage.setItem('breach_seen','1'); }catch(e){}
   const hb=document.getElementById('manualBtn'); if(hb) hb.onclick=()=>{ try{ window.open('breach-help.html','_blank'); }catch(e){} };   // build 850: the field manual ships beside the game again (it was a dead link — and this button shared helpBtn's id, so Help & tutorials had stolen its click)
   const crb=document.getElementById('creditsBtn'); if(crb) crb.onclick=openCredits;   // build 549: player-facing credits + license screen
+  const stb=document.getElementById('settingsBtn'); if(stb) stb.onclick=()=>{ if(typeof openSettings==='function') openSettings(); };   // build 1456: options WITHOUT starting a match
   const hlb=document.getElementById('helpBtn'); if(hlb) hlb.onclick=openHelp;   // build 848: help & tutorials from the home menu
   const cmb=document.getElementById('commBtn'); if(cmb) cmb.onclick=openCommunity;   // build 851: the community level library
   const cb=document.getElementById('ctrlBtn');
@@ -54060,7 +54239,43 @@ function openPause(){
   const eh=document.getElementById('pauseEditHud'); if(eh) eh.style.display = isTouch ? '' : 'none';
   const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.remove('hidden');
 }
+/* build 1456 (UI audit): the main menu had ELEVEN buttons and none of them opened settings. Volumes,
+   mute, all six comfort sliders, colour-vision correction, interface size, mouse sensitivity, keybinds
+   and the touch-layout editor lived ONLY in the pause card - so a photosensitive, motion-sick,
+   colour-blind or low-vision player had to Deploy into live combat and then pause before they could
+   protect themselves. Every console TRC and every engine template puts Options on the title screen.
+
+   It opens the SAME element rather than lifting the markup into a second panel: bindPauseMenu reads
+   every control by id, so a copy would mean duplicate ids or a second set of bindings, which is the
+   defect this file records more than any other. One card, one binding, nothing to drift.
+
+   `paused` is deliberately NOT touched - there is no match to pause, and writing it would make the
+   frame loop's gates disagree with the world. */
+let _settingsOpen = false;
+function openSettings(){
+  if(_settingsOpen || paused || gameOn) return;   /* in a match, the pause menu is the door */
+  if(typeof bindPauseMenu==='function') try{ bindPauseMenu(); }catch(e){}   /* build 907: re-sync from live state */
+  const pm=document.getElementById('pauseMenu'); if(!pm) return;
+  _settingsOpen = true;
+  pm.classList.add('setOnly'); pm.classList.remove('hidden');
+  const t=document.getElementById('pauseTitle'); if(t) t.textContent='SETTINGS';
+  const r=document.getElementById('pauseResume'); if(r) r.textContent='Close';
+  if(typeof SFX!=='undefined' && SFX.uiOpen) SFX.uiOpen();
+}
+function closeSettings(){
+  if(!_settingsOpen) return;
+  _settingsOpen = false;
+  const pm=document.getElementById('pauseMenu'); if(pm){ pm.classList.add('hidden'); pm.classList.remove('setOnly'); }
+  const t=document.getElementById('pauseTitle'); if(t) t.textContent='PAUSED';
+  const r=document.getElementById('pauseResume'); if(r) r.textContent='Resume';
+  if(typeof SFX!=='undefined' && SFX.uiClose) SFX.uiClose();
+}
 function resumeGame(){
+  /* build 1456: resumeGame is the ONE chokepoint every close path already goes through - the Resume
+     button, the pad's B, the pad's Start, and pointer-lock recovery. Routing settings through it means
+     the title-screen card closes by every one of those with no second list of call sites to keep in
+     step, which is the mistake builds 1152/1158 had to fix twice. */
+  if(_settingsOpen){ closeSettings(); return; }
   if(!paused) return;
   paused = false; SFX.uiClose();   /* build 1363 */
   const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.add('hidden');

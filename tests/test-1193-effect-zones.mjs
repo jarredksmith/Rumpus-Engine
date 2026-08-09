@@ -4,7 +4,7 @@
 // fountain, a tar pit, a speed lane or a moon-gravity court was unauthorable. One tool now carries five
 // effects with an audience (players / enemies / both), serialized like every zone, clamped on the way in
 // so a hostile file cannot ship a 1e9-amount zone, damaging through fire's exact tick pattern.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- the migrator, executed
@@ -47,8 +47,7 @@ const src = gameSource();
 {
   assert(/const sp = speedBase \* \(buffs\.speed>0\?1\.4:1\) \* moveScale \* run\.speedMul \* \(typeof _fxSpeedFor==='function' \? _fxSpeedFor\(player\.pos\.x, player\.pos\.y-EYE, player\.pos\.z, 'player'\) : 1\);/.test(src),
     'the player\'s speed target takes the multiplier — through 1171\'s acceleration model, so slow/haste have the same mass as everything else');
-  eq((src.match(/_fxSpeedFor\(b\.pos\.x|_fxSpeedFor\(en\.mesh\.position\.x/g) || []).length, 2,
-    'bots and enemies take it at their existing water-slow sites — one multiplier chain, three actors');
+  eq((src.match(/_fxSpeedFor\(b\.pos\.x|_fxSpeedFor\(en\.mesh\.position\.x/g)||[]).length, 2, 'bots and enemies take it at their existing water-slow sites — one multiplier chain, three actors');
   assert(/if\(m\.grav<1\) player\.vel\.y \+= GRAV\*dt\*\(1-m\.grav\);/.test(src),
     'low gravity undoes part of THIS frame\'s gravity — the water-swim pattern, framerate-honest');
   assert(/if\(_fxHurtT>=0\.35\)\{ const dmg=_fxHurtAcc; _fxHurtAcc=0; _fxHurtT=0;/.test(src) &&
@@ -58,8 +57,7 @@ const src = gameSource();
     'enemy heal/hurt runs host-side only — enemies are host-simulated');
   assert(/fxZones: fxZones\.map\(z=>\(\{ x:\+z\.x, z:\+z\.z, r:\+z\.r, y:\+z\.y, h:\+z\.h, kind:z\.kind, amt:\+z\.amt, who:z\.who \}\)\),/.test(src),
     'the list serializes with the level');
-  eq((src.match(/fxZones = Array\.isArray\(level\.fxZones\) \? level\.fxZones\.map\(_migrateFxZone\) : \[\];/g) || []).length, 2,
-    'both loaders migrate it (and a level without the field gets an empty list, not a crash)');
+  appliedOnceByBothLoaders(/fxZones = Array\.isArray\(level\.fxZones\) \? level\.fxZones\.map\(_migrateFxZone\) : \[\];/g, 'both loaders migrate it (and a level without the field gets an empty list, not a crash)');
   /* build 1320: the + menu's if/else chain of zone adders became ZONE_ADDERS, keyed by the same type
      string as ZONE_TYPES — the chain had drifted (triggers were missing from the menu entirely). Same
      assertion: the chip, the host and a reachable add-button. */

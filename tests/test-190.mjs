@@ -1,10 +1,10 @@
-import { gameSource, extractFunction, evalIn, assert, near, done } from './harness.mjs';
+import { gameSource, extractFunction, evalIn, assert, near, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // data + serialize + restore round-trip presence
 assert(/let audioZones = \(savedLevel && Array\.isArray\(savedLevel\.audioZones\)\)/.test(src), 'audioZones not declared/loaded from savedLevel');
 assert(/audioZones: audioZones\.map\(z=>\(\{ x:\+z\.x, z:\+z\.z, r:\+z\.r, url:z\.url\|\|'', vol:\+z\.vol, loop:!!z\.loop \}\)\)/.test(src), 'audioZones not serialized');
-assert((src.match(/audioZones = Array\.isArray\(level\.audioZones\)/g)||[]).length === 2, 'audioZones must restore in BOTH loadLevelFromNet and restoreLevel');
+appliedOnceByBothLoaders(/audioZones = Array\.isArray\(level\.audioZones\)/g, 'audioZones must restore in BOTH loadLevelFromNet and restoreLevel');
 
 // the loop drives proximity each frame, self-silencing off-play
 assert(/if\(typeof updateAudioZones==='function'\) updateAudioZones\(\);/.test(src), 'updateAudioZones not hooked into the loop');

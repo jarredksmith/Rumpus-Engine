@@ -76,8 +76,18 @@ const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   assert(/SFX\.explode\(pos\)/.test(src), 'explosions pass the blast centre');
   assert(/SFX\.kill\(en\.type, en\.mesh\.position\)/.test(src), 'an enemy kill pans to the enemy');
   assert(/SFX\.shatter\(_shCtr\)/.test(src) && /SFX\.shatter\(ctr\)/.test(src), 'a shattered prop pans to where it broke (local and networked)');
-  assert(/shootAt\(pos\)\{ if\(!actx\|\|!sfxBus\) return; const gain=_spatialOut\(pos\); if\(!gain\) return;/.test(src),
+  // build 1455: shootAt stopped building its own nodes and now plays the SAME layer voice the local gun
+  // does, positioned — so it reaches the panner through tone/noise's own `at` rather than a private
+  // _spatialOut call. The intent is unchanged and is now stronger: it is spatialised AND per-weapon.
+  assert(/shootAt\(pos, wep\)\{ if\(!actx\|\|!sfxBus\) return;/.test(src),
+    'shootAt takes the weapon as well as the position');
+  assert(/_shotVoice\(w, pos, _shotFirst\(true\)\);/.test(src),
     'the pre-existing distance-only shootAt now uses the shared panner — a shot to your side reads to your side');
+  {
+    const v = extractFunction('_shotVoice');
+    eq((v.match(/, at\}/g) || []).length, 4,
+      '...because all four layers carry the position through to _spatialOut');
+  }
 }
 
 done('build 1208: positional audio — _spatialOut executed against a fake WebAudio graph (right/left/ahead pans, distance attenuation, out-of-range null-skip, camera-basis tracking under yaw, and graceful fallback to plain sfxBus with no position / no camera / no StereoPanner), plus tone/noise/playSample threaded with `at` and passed at the enemy-fire, explosion, kill and shatter sites — the largest single gameplay-feel gap is closed');

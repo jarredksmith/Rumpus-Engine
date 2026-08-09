@@ -4,7 +4,7 @@
 // verb; actions OUT via a 'do' node speaking _applySignalAction's whole verb vocabulary (the
 // existing per-action MP broadcasts ride along). Host/solo authoritative; a per-frame pulse
 // budget means a mis-wired loop can never lock the game. Serialized as level.logic.
-import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---- executable: the whole interpreter, with stubbed world hooks ----
@@ -180,7 +180,7 @@ assert(/if\(typeof logicStart==='function'\) logicStart\(\);/.test(src), 'every 
 assert(/updateLogic\(dt\);\s+\/\/ logic graph timers/.test(src), 'timers tick on the main loop');
 assert(/_lgFireEvents\('onkill',''\)/.test(src) && /_lgFireEvents\('onwave',''\)/.test(src), 'kill + wave entries are hooked');
 assert(/logic: \(logicGraph\.nodes\.length \? _sanitizeLogic\(logicGraph\) : undefined\),/.test(src), 'the graph serializes with the level (absent when empty)');
-eq((src.match(/logicGraph = _sanitizeLogic\(level\.logic\);/g)||[]).length, 2, 'restored (sanitized) at both level-load sites');
+appliedOnceByBothLoaders(/logicGraph = _sanitizeLogic\(level\.logic\);/g, 'restored (sanitized) at both level-load sites');
 assert(/let logicGraph = _sanitizeLogic\(savedLevel && savedLevel\.logic\);/.test(src), 'boot restores it too');
 
 done('build 1027: logic graph runtime — vars, branches, counters, timers, loops, random, functions, budget-guarded');

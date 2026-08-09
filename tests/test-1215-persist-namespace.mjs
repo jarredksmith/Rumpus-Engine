@@ -5,7 +5,7 @@
 // each other's progress — a trust-destroying bug for anyone who plays more than one creator's game. The key
 // is now namespaced by the published /game/ slug (build 972) or the slugified homepage title; a level with
 // neither keeps the BARE key, so every existing single-game save loads unchanged (the migration).
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, done , appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- the namespace + key, executed
@@ -53,8 +53,7 @@ const api = new Function(
     'store writes the namespaced key (live homepageCfg, correct at commit time)');   // build 1227: the blob is campaignVars plus the reserved __inv/__cp keys — same key, same commit-time namespace
   assert(/localStorage\.removeItem\(_persistKey\(\)\)/.test(extractFunction('clearPersistent')),
     'clear removes only THIS game\'s save, not every game\'s');
-  eq((src.match(/_persistLoad\(_persistNSFrom\(level\.homepage\)\)/g) || []).length, 2,
-    'both loaders derive the namespace from the level being loaded');
+  appliedOnceByBothLoaders(/_persistLoad\(_persistNSFrom\(level\.homepage\)\)/g, 'both loaders derive the namespace from the level being loaded');
 }
 
 done('build 1215: persistent saves namespaced per game — nsFrom/key executed proving slug>title>bare precedence, two games land on different keys while the same game is stable, the bare key preserved as the legacy namespace so existing saves migrate for free, slugify hardened against length, and both loaders pass the level-derived namespace while store/clear read the live homepageCfg');

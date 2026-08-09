@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 // build 637: ranged-enemy gunfire is now an authorable look (Weapons > Enemy gunfire), not a hardcoded glowing
 // ball. A style preset sets the base shape; size/streak/opacity/colours/trail/muzzle refine it. Serialized.
@@ -32,6 +32,6 @@ assert(/function renderBoltFxPanel\(\)/.test(src), 'editor panel exists');
 assert(/sec\('Enemy gunfire', 'boltfx'/.test(src), 'section registered in the editor');
 assert(/enemies: \['enemies','gizmo','object','transform','boltfx'\]/.test(src), 'shown in the Enemies mode (moved from Weapons in build 647 — it describes enemies, not your kit)');
 assert(/bolt: Object\.assign\(\{\}, boltCfg\)/.test(src), 'serialized with the level');
-assert((src.match(/boltCfg = _sanitizeBolt\(level\.bolt\)/g)||[]).length===2, 'restored in both load paths');
+appliedOnceByBothLoaders(/boltCfg = _sanitizeBolt\(level\.bolt\)/g, 'restored in both load paths');
 
 done('enemy gunfire: realistic tracer look + full editor control (build 637)');

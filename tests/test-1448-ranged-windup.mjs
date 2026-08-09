@@ -164,6 +164,10 @@ assert(/out\[f\] = \(m && m\[f\]!=null\) \? m\[f\] : b\[f\]/.test(src),
 {
   const frac = new Function('EN', 'NOW',
     'const ENEMY_MELEE_WINDUP_MS = ' + MELEE + ', RANGED_AIM_MS = ' + AIM + ';' +
+    /* build 1458: the frac now delegates the "which telegraph" question to _teleLive, so the rig needs
+       it too — lifted from source rather than restated. */
+    (src.match(/const _TL = \{ kind:0, end:0, dur:1 \};/) || [''])[0] + '\n' +
+    extractFunction('_teleLive', src) + '\n' +
     extractFunction('_telegraphFrac', src) + '; return _telegraphFrac(EN, NOW);');
   eq(frac({ _aimT: 0 }, 100), -1, 'no wind-up, no pulse');
   near(frac({ _aimT: 260, aimMs: 260 }, 0), 0, 1e-9, 'the pulse starts at 0 when the wind-up does');

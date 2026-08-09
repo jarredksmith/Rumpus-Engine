@@ -1,4 +1,4 @@
-import { gameSource, html, extractFunction, assert, done } from './harness.mjs';
+import { gameSource, html, extractFunction, assert, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 const page = html;
 // build 448: jump pads — zones that launch the player + bots + enemies straight up by an editor-set amount,
@@ -9,7 +9,7 @@ assert(/function _migrateJumpPad\(z\)\{ return \{ x:\+z\.x\|\|0, z:\+z\.z\|\|0, 
 assert(/let jumpPads = \(savedLevel && Array\.isArray\(savedLevel\.jumpPads\)\)/.test(src), 'jump pads load from the saved level');
 assert(/jumpPads: jumpPads\.map\(z=>\(\{ x:\+z\.x, z:\+z\.z, r:\+z\.r, y:\(\+z\.y\|\|0\), h:\(z\.h!=null\?\+z\.h:2\), power:\(\+z\.power\|\|22\) \}\)\)/.test(src), 'jump pads serialized with the level');
 // client load path (must reach MP joiners) — appears in loadLevelFromNet
-assert((src.match(/jumpPads = Array\.isArray\(level\.jumpPads\) \? level\.jumpPads\.map\(z=>_migrateJumpPad\(z\)\) : \[\];/g)||[]).length >= 2, 'jump pads adopted on the client level-load path (carries to joiners)');
+appliedOnceByBothLoaders(/jumpPads = Array\.isArray\(level\.jumpPads\) \? level\.jumpPads\.map\(z=>_migrateJumpPad\(z\)\) : \[\];/g, 'jump pads adopted on the client level-load path (carries to joiners)');
 
 // editor: section in the World/scene tab + panel + bounce control
 assert(/sec\('Zones', 'zones',/.test(src) && /id="edJumpPads" class="zoneHost" data-zone="jumppads"/.test(src), 'Jump pads host registered under the grouped Zones section (build 649)');

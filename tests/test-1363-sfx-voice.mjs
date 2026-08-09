@@ -79,7 +79,13 @@ function shootRig(rnd, times){
     'const tone=(o)=>calls.push({k:"tone",freq:o.freq,vol:o.vol,dur:o.dur,attack:o.attack,_at:_dly});\n' +
     'const noise=(o)=>calls.push({k:"noise",vol:o.vol,dur:o.dur,filterFreq:o.filterFreq,_at:_dly});\n' +
     'let _dly=0; const setTimeout=(fn,ms)=>{ _dly=ms; fn(); _dly=0; };\n' +
+    // build 1455: the layer playback moved out of SFX.shoot into the shared _shotVoice (one voice for
+    // the local gun and every relayed shot). This rig's subject is the per-shot VARIATION, so the new
+    // dependencies are lifted from source rather than restated — a rig that restates a helper keeps
+    // passing against a stale copy.
     layersTable + '\n' + stateLine + jitLine +
+    (src.match(/let _shotSndAtR = -?[\d.]+;/) || [''])[0] + '\n' +
+    extractFunction('_shotVoice') + '\n' + extractFunction('_shotFirst') + '\n' +
     'const actx={currentTime:0};\n' +
     'const SFXt={' + shootSrc + '};\n' +
     'for(const t of times){ actx.currentTime=t; SFXt.shoot(); }\n' +

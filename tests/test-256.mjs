@@ -9,7 +9,13 @@ assert(/new THREE\.WebGLRenderer\(\{ antialias: true, powerPreference: 'high-per
 assert(/renderer\.shadowMap\.autoUpdate = false; renderer\.shadowMap\.needsUpdate = true;/.test(src), 'shadows static by default, dirty once at startup');
 assert(/function _dirtyShadows\(n\)\{ _shadowDirtyFrames = Math\.max\(_shadowDirtyFrames, n\|\|2\); \}/.test(src), '_dirtyShadows raises the dirty-frame countdown');
 const loop = extractFunction('loop');
-assert(/if\(_shadowDirtyFrames>0\)\{ renderer\.shadowMap\.needsUpdate = true; _shadowDirtyFrames--; \}\s*else renderer\.shadowMap\.needsUpdate = false;/.test(loop), 'loop drains the countdown, else leaves shadows frozen');
+// build 1459: the far cascade took its own cadence inside this block, so the two statements are no
+// longer adjacent. What this assertion is ABOUT — the countdown drains one frame at a time and a spent
+// countdown freezes the map — is unchanged and is asserted directly.
+assert(/if\(_shadowDirtyFrames>0\)\{ renderer\.shadowMap\.needsUpdate = true; _shadowDirtyFrames--;/.test(loop),
+  'loop drains the countdown one frame at a time');
+assert(/else renderer\.shadowMap\.needsUpdate = false;/.test(loop),
+  '...and a spent countdown leaves the shadow map frozen rather than re-rendering it');
 assert(/if\(editorOpen \|\| _cineActive\) _dirtyShadows\(1\);/.test(loop), 'editing + cinematics keep shadows live');
 assert(/a\.on&&a\.ph>0&&a\.ph<1\)\{ _shDirty=true; break; \}/.test(loop), 'a mechanism mid-travel keeps shadows live');
 // build 807/808: movers refresh the (otherwise static) sun shadow, in two tiers — fast movers live, transient every 3rd frame

@@ -51,12 +51,16 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- the wiring
 {
-  assert(/tone\(\{freq:_sndJit\(L\.sub\[0\],0\.03\), type:'sine', dur:L\.sub\[1\], vol:_sndJit\(L\.sub\[2\],0\.10\), slideTo:Math\.max\(20, L\.sub\[0\]\*0\.55\), attack:L\.subA\|\|0\.002\}\);/.test(src),
-    'shoot() fires the sub layer with a fast attack (a thump, not a hum) — jittered per shot since 1363; the launcher slows it via subA');
-  assert(/tone\(\{freq:_sndJit\(L\.body\.freq,0\.03\), type:L\.body\.type, dur:L\.body\.dur, vol:_sndJit\(L\.body\.vol,0\.10\), slideTo:L\.body\.slideTo, attack:L\.body\.attack\|\|0\.005\}\);/.test(src)
-      && /noise\(\{dur:L\.crack\.dur, vol:_sndJit\(L\.crack\.vol,0\.10\)\*\(first\?1\.2:1\), filterFreq:L\.crack\.filterFreq, type:L\.crack\.type\}\);/.test(src),
+  // build 1455: these three lines moved out of SFX.shoot into the shared _shotVoice, so the local gun
+  // and every relayed shot play ONE voice. Every value below is byte-identical; only the address moved,
+  // and each line gained `at`, which is null on the local path.
+  const VOICE = extractFunction('_shotVoice');
+  assert(/tone\(\{freq:_sndJit\(L\.sub\[0\],0\.03\), type:'sine', dur:L\.sub\[1\], vol:_sndJit\(L\.sub\[2\],0\.10\), slideTo:Math\.max\(20, L\.sub\[0\]\*0\.55\), attack:L\.subA\|\|0\.002, at\}\);/.test(VOICE),
+    'the voice fires the sub layer with a fast attack (a thump, not a hum) — jittered per shot since 1363; the launcher slows it via subA');
+  assert(/tone\(\{freq:_sndJit\(L\.body\.freq,0\.03\), type:L\.body\.type, dur:L\.body\.dur, vol:_sndJit\(L\.body\.vol,0\.10\), slideTo:L\.body\.slideTo, attack:L\.body\.attack\|\|0\.005, at\}\);/.test(VOICE)
+      && /noise\(\{dur:L\.crack\.dur, vol:_sndJit\(L\.crack\.vol,0\.10\)\*\(first\?1\.2:1\), filterFreq:L\.crack\.filterFreq, type:L\.crack\.type, at\}\);/.test(VOICE),
     '...then the tuned body+crack pair — the values still come from the table byte-for-byte, only the jitter multiplies them');
-  assert(/setTimeout\(\(\)=>noise\(\{dur:L\.tail\[0\], vol:L\.tail\[1\], filterFreq:L\.tail\[2\], type:'lowpass'\}\), Math\.max\(0, Math\.round\(L\.tail\[3\]\+\(Math\.random\(\)\*2-1\)\*15\)\)\);/.test(src),
+  assert(/setTimeout\(\(\)=>noise\(\{dur:L\.tail\[0\], vol:L\.tail\[1\], filterFreq:L\.tail\[2\], type:'lowpass', at\}\), Math\.max\(0, Math\.round\(L\.tail\[3\]\+\(Math\.random\(\)\*2-1\)\*15\)\)\);/.test(VOICE),
     '...then the delayed tail (its delay wanders +-15 ms since 1363)');
   assert(/suppressed 'phut' \(deliberately tail-less/.test(src), 'the suppressed branch stays a bare phut — that is what a suppressor is FOR');
   assert(/_cmp\.threshold\.value=-18/.test(src) && /_cmp\.ratio\.value=4/.test(src) && /sfxBus\.connect\(_cmp\); _cmp\.connect\(masterBus\);/.test(src),

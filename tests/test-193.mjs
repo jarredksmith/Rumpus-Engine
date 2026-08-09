@@ -1,11 +1,11 @@
-import { gameSource, extractFunction, evalIn, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, evalIn, assert, eq, done, appliedOnceByBothLoaders } from './harness.mjs';
 const src = gameSource();
 
 // data + serialize + restore (both load paths)
 assert(/let charRoster = \(savedLevel && Array\.isArray\(savedLevel\.roster\)\)/.test(src), 'charRoster not declared from savedLevel');
 assert(/let myRosterIdx = -1;/.test(src), 'myRosterIdx not declared');
 assert(/roster: charRoster\.map\(c=>\(\{ name:c\.name, url:c\.url, scale:c\.scale/.test(src), 'roster not serialized');
-assert((src.match(/charRoster = Array\.isArray\(level\.roster\) \? level\.roster\.map\(_sanitizeCharCfg\)/g)||[]).length === 2, 'roster must restore in BOTH load paths');
+appliedOnceByBothLoaders(/charRoster = Array\.isArray\(level\.roster\) \? level\.roster\.map\(_sanitizeCharCfg\)/g, 'roster must restore in BOTH load paths');
 
 // myCharCfg returns the picked roster character when one is selected, else the player model
 const mk = (idx) => evalIn(extractFunction('myCharCfg'), {
