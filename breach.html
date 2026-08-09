@@ -34152,6 +34152,11 @@ function _aimAssistScan(){
   _aaSlow = 1; _aaYaw = 0; _aaPitch = 0; _aaK = 0;
   const amt = (padPrefs && padPrefs.aim != null) ? +padPrefs.aim : 1;
   if(!(amt > 0) || !gameOn || editorOpen || paused || drivingCar || mountedTurret) return;
+  /* build 1439: the look slowdown is read by the pad look and the two touch look axes and by nothing else — a
+     mouse is never assisted (build 1316), yet the scan ran every frame for everyone. Asking first who is
+     holding the thing costs one boolean, removes the whole pass for a mouse player, and is what makes the
+     prop sweep below affordable. */
+  if(!isTouch && !padSeen) return;
   if(typeof player==='undefined' || (player.hp != null && player.hp <= 0)) return;
   _aaForward(_aaF);
   const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
@@ -34172,7 +34177,28 @@ function _aimAssistScan(){
       if(typeof sameTeam==='function' && sameTeam(NET.myId, +id)) continue;
       consider(rp.posEye.x, rp.posEye.y, rp.posEye.z); }
   } else if(typeof enemies!=='undefined'){
-    for(const en of enemies){ if(!en || en.dead || !en.mesh) continue; consider(en.mesh.position.x, en.mesh.position.y+0.6, en.mesh.position.z); }
+    /* build 1439: an ally is not a target. `killEnemy` already refuses to reward killing one (1226/1355)
+       while the assist was actively DRAGGING the crosshair onto it — the PvP branch above has filtered
+       teammates since 1316 and this branch never filtered anything. */
+    for(const en of enemies){ if(!en || en.dead || !en.mesh) continue;
+      if(en.friendly || (typeof _enFac==='function' && _enFac(en) === 0)) continue;
+      consider(en.mesh.position.x, en.mesh.position.y+0.6, en.mesh.position.z); }
+    /* ...and if nothing that shoots back is in the cone, the things you CAN shoot are. A shooting range
+       is built from build-1390 static targets, which live in neither `enemies` nor `dynamicProps` — so on
+       a stick or a thumb the booth's whole activity got no assist at all, while the enemies beside it
+       felt magnetic. `damageableProps()` is build 1392's canonical answer to "what can be hurt".
+       ONLY when no enemy qualified: a live threat outranks scenery, or a crate would steal the crosshair
+       from the brute standing behind it. */
+    if(bestC < 0 && typeof damageableProps === 'function'){
+      for(const o of damageableProps()){
+        if(!o || !o.visible || (o.userData && o.userData._shattered)) continue;
+        /* the collider box's centre, not the origin: an imported wall's origin can sit metres off its
+           mass, which is build 1311's lesson for the melee arc one system along */
+        const b = o.userData && o.userData.box;
+        if(b) consider((b.min.x+b.max.x)*0.5, (b.min.y+b.max.y)*0.5, (b.min.z+b.max.z)*0.5);
+        else consider(o.position.x, o.position.y, o.position.z);
+      }
+    }
   }
   if(bestC < 0) return;
   /* how centred it is: 1 dead on, 0 at the rim. Squared, so the assist concentrates near the middle
@@ -34308,7 +34334,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1438 · 2026-08-08';
+const BUILD_VERSION = 'build 1439 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

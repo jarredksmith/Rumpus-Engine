@@ -1743,6 +1743,59 @@ working. The rule from the logic booth stands: **read the object before authorin
 Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
 `explodeAt + _blastProps` now, every assertion unchanged in intent.
 
+## The aim assist stuck to allies and ignored the range (build 1439)
+
+The audit's third finding. Build 1316's PvE branch was one line, and it filtered nothing:
+
+```js
+for(const en of enemies){ if(!en || en.dead || !en.mesh) continue; consider(...); }
+```
+
+- **No ally filter.** The PvP branch directly above it has skipped teammates since 1316. This one skipped
+  nobody, so a stick or thumb player sweeping past a build-1226 villager or a build-1355 ally had their
+  crosshair **dragged onto them** — while `killEnemy` refuses to reward that kill. The assist was fighting
+  the player toward the one thing they must not shoot.
+- **No props.** A shooting range is built from build-1390 static targets, which are in neither `enemies`
+  nor `dynamicProps`. So the plates felt slippery while the enemies beside them felt magnetic, for a reason
+  nothing on screen explains — and the booth's headline activity was the one thing the assist declined.
+
+Both fixed by asking build 1392's `damageableProps()` — the canonical answer to *"what can be hurt"*, which
+exists precisely because that question kept being answered three different ways.
+
+**Props are considered only when no enemy qualified.** A live threat outranks scenery, or a crate would
+steal the crosshair from the brute standing behind it. And the aim point is the **collider box's centre**,
+not the origin: an imported wall's origin can sit metres off its mass, which is build 1311's lesson for the
+melee arc one system along.
+
+### The device gate pays for the prop sweep
+
+`_aaSlow` is read by the pad look and the two touch look axes and by nothing else — *a mouse is never
+assisted* is 1316's own rule — yet the scan ran every frame for everybody, walking the enemy list and
+casting sightlines for players it was forbidden to help. `if(!isTouch && !padSeen) return;` removes it
+entirely for a mouse session, which is what makes walking the damageable set affordable at all. Asking who
+is holding the thing costs one boolean.
+
+**Two of the test's own assertions were backwards, and the engine was right both times.** Forward is
+`(-sin yaw, 0, -cos yaw)`, so aiming further **-X** means yaw **increases** — a target at +x produces a
+NEGATIVE correction. Worth writing down beside the test, because it is the kind of sign convention that
+reads either way until you derive it.
+
+### Prose broke a pin twice in this one build, in both directions
+
+`!/dynamicProps/` failed against correct code because this build's own comment names `dynamicProps` while
+explaining what it does *not* use — a pin **defeated** by prose. Fixed by pinning the STATEMENT
+(`for(const o of damageableProps())`) rather than the bare word.
+
+Then build 1316's *"the slowdown is declared, cleared, computed and read by exactly the pad and the two
+touch axes"* — a COUNT of `_aaSlow`, which is a real property worth holding — went 6 to 7, because the new
+comment spelled the identifier while stating that very property. A pin **satisfied** by prose.
+
+Two directions, one cause, in the build whose own entry was already writing the rule down. The count pin
+was left exactly as its author intended and the comment was reworded to say *"the look slowdown"*, because
+the assertion is true and worth keeping strict. The general form, now stated for both sides: **an engine
+comment must not spell an identifier a nearby pin counts, and a pin must not match a bare word a comment
+can contain.**
+
 ## The Signals fold edited one prop while ten were highlighted (build 1438)
 
 The second finding from the same audit, and it is **build 1299's own defect surviving in the one fold a

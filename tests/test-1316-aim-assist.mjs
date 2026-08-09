@@ -42,6 +42,13 @@ const rig = (opts = {}) => {
     'const segmentBlocked = () => ST.blocked;\n' +
     'const _aaF = { x:0, y:0, z:0 };\n' +
     'let editorOpen = false, paused = false, drivingCar = null, mountedTurret = null;\n' +
+    // build 1439: the scan now asks first WHO IS HOLDING THE THING — _aaSlow is read only by the pad
+    // look and the two touch look axes, so it no longer runs for a mouse it is forbidden to help.
+    // This rig is about the assist's behaviour when it runs, so it stands in as a pad session; the
+    // mouse-pays-nothing property is asserted in test-1439.
+    'const isTouch = false, padSeen = true;\n' +
+    'const _enFac = (e)=> (e && e.faction != null ? (e.faction|0) : 1);\n' +
+    'const damageableProps = ()=> (ST.props || []);\n' +
     'const AA_CONE = ' + CONE + ', AA_SLOW_MIN = ' + SLOW_MIN + ', AA_MAG = ' + MAG + ', AA_RANGE = ' + RANGE + ';\n' +
     extractFunction('_aaForward') + '\n' + extractFunction('_aimAssistScan') + '\n' + extractFunction('_aimAssistPull') + '\n' +
     'return { scan:()=>{ editorOpen=ST.editorOpen; paused=ST.paused; drivingCar=ST.drivingCar; mountedTurret=ST.mountedTurret; _aimAssistScan(); },' +
