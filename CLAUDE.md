@@ -1646,6 +1646,62 @@ value exactly.
 engine HOLDS, not what you asked it to hold. And #1/#3 are build 1124's rule for the third time in this
 session — know what is in the frame before attributing anything to it.
 
+## Every zone can be clicked (build 1464)
+
+Reported from play: *"Not all zones can be clicked on in the editor to get control with their gizmos.
+Water, waterfalls, death zones, etc you can't click — you have to open the World tab and scroll all the way
+to the bottom and then click on the zone's Select button. It's very inconvenient."*
+
+Build 1326 made `ZONE_EDIT` the one place a zone type declares itself and routed the **resolver** through
+it — the half that decides what a clicked object BELONGS to. The click path's raycast **target list**, the
+half that decides what can be HIT AT ALL, stayed hand-written with three of the eight types in it. So the
+resolver's branches for the other five were dead code.
+
+**That is build 1158's pattern and build 1277's, together** — a fix complete for the half it was tested
+against, and a test that pins both ends of a wire. 1326's own test asserted the resolver handles every type
+and never asked whether a ray could reach one.
+
+Measured before the fix by driving the REAL click handler from a posed editor camera:
+
+```
+type          marker  visible  meshes  resolver names it   in raycast list
+triggers        yes     yes       5     triggers                0/1
+jumppads        yes     yes       5     jumppads                0/1
+firezones       yes     yes       2     firezones               0/1
+waterzones      yes     yes       3     waterzones              0/1
+fxzones         yes     yes       2     fxzones                 0/1
+deathzones / ladders / audiozones                               1/1
+```
+
+After: **8/8 select dead-centre**, with a prop as the control. The list is derived from the same table now,
+so a ninth zone type is clickable the day it is added.
+
+**The effect zone had a HOLE.** Its ring is an annulus and its wall an OPEN cylinder, so even once it was
+in the list it could only be clicked ON ITS OUTLINE — measured, it hit at NDC `[0.12, 0]` and missed at
+`[0,0]`, which is where a creator clicks. It gets a faint filled disc, which is both the pick surface and
+the reason it now reads as an area rather than a hoop. It is deliberately not `visible:false`: three skips
+an invisible object in a raycast.
+
+### Four instrument faults, and the control caught every one
+
+The probe reported all eight types failing — **including the three that already worked** — four separate
+times, and each null was mine:
+
+| it reported | why |
+|---|---|
+| every type fails | the pick listens for **`click`**, and a synthesised `mousedown`+`mouseup` does not produce one |
+| the control resolves a *jump pad* | the control prop was spawned on top of a zone marker — a fixture collision |
+| the control finds nothing at all | `spawnProp`'s tuple is `[x,y,z, rx,ry,rz, sx,sy,sz]`; I put the scale in the rotation slots and made a **zero-size box**, which is invisible to a raycast and reads exactly like a broken click path |
+| `fxzones` fails at every offset | the offsets were NDC, and at 26 m up with fov 78 that is **7.4 m** — outside a 4 m zone. Only the centre was ever tested, and the centre of a ring is its hole |
+
+A fifth was a diagnostic rather than the feature: my own `directHits` readings used the **shared**
+raycaster, whose `far` this engine leaves at `null` — build 1295 gave melee its own for exactly that
+reason. A diagnostic must state its own `near`/`far`.
+
+Two pins moved (test-507's, which quoted the two hand-written lines). Their intent — a ladder and an audio
+zone are click-selectable — is unchanged and now stronger: it is a property of every zone type rather than
+of two remembered ones.
+
 ## The air dash, and a control that found a regression that was not there (build 1463)
 
 Build 1301 closed variable jump height and named what it deliberately left: *"double jump, wall jump,

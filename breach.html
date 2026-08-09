@@ -25591,6 +25591,13 @@ function refreshFxZoneMarkers(){
     ring.rotation.x=-Math.PI/2; ring.position.y=z.y+0.06; grp.add(ring);
     const wall=new THREE.Mesh(new THREE.CylinderGeometry(z.r, z.r, z.h, 36, 1, true), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:sel?0.16:0.08, side:THREE.DoubleSide, depthWrite:false }));
     wall.position.y=z.y+z.h/2; grp.add(wall);
+    /* build 1464: a FILLED centre. The ring is an annulus and the wall is an open cylinder, so this
+       marker had a HOLE where every other zone type has something — measured, an effect zone could only
+       be clicked ON ITS OUTLINE, and clicking the middle of the zone (which is what a creator does) hit
+       nothing. It doubles as a readability fix: the other seven read as areas and this one read as a
+       hoop. Very faint, and it is the pick surface, so it is not `visible:false`. */
+    const disc=new THREE.Mesh(new THREE.CircleGeometry(Math.max(0.3, z.r-0.3), 40), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:sel?0.14:0.07, side:THREE.DoubleSide, depthWrite:false }));
+    disc.rotation.x=-Math.PI/2; disc.position.y=z.y+0.05; grp.add(disc);
     grp.position.set(z.x, 0, z.z); grp.visible=!!(typeof editorOpen!=='undefined' && editorOpen);
     grp.userData.zoneIdx=i; scene.add(grp); fxZoneFx.push(grp);
   }
@@ -34938,7 +34945,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1463 · 2026-08-09';
+const BUILD_VERSION = 'build 1464 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -52318,12 +52325,23 @@ renderer.domElement.addEventListener('click', (e)=>{
   for(const g of spawnMarkers){ if(g.visible && !g.userData.edLock) targets.push(g); }
   for(const m of pickupMarkers){ if(m && m.visible) targets.push(m); }
   for(const m of lootMarkers){ if(m && m.visible) targets.push(m); }
-  for(const m of deathZoneMarkers){ if(m && m.visible) targets.push(m); }
-  // build 657: every placeable thing must be click-selectable. Adds turrets, ladders, audio zones, the player
-  // start marker, and the extract zone (their markers/visuals are already visible during editing).
-  for(const g of turretModels){ if(g && g.visible && !(g.userData && g.userData.edLock)) targets.push(g); }   // build 1036: outliner lock/hide
-  for(const m of ladderMarkers){ if(m && m.visible) targets.push(m); }
-  for(const m of audioZoneMarkers){ if(m && m.visible) targets.push(m); }
+  /* build 1464: EVERY zone type, from the same table the resolver reads.
+     Reported from play: "not all zones can be clicked — water, waterfalls, death zones, you have to open
+     the World tab and scroll to the bottom and click the zone's Select button."
+     Build 1326 made ZONE_EDIT the one place a zone type declares itself and routed the RESOLVER through
+     it — the half that decides what a hit BELONGS to — and left this list, the half that decides what can
+     be HIT AT ALL, hand-written with three of the eight types in it. So the resolver's branches for the
+     other five were dead code: measured, triggers / jump pads / fire zones / water zones / effect zones
+     each had a visible marker with real meshes and a resolver that named it correctly, and no ray could
+     reach any of them. That is build 1158's pattern (a fix complete for the half it was tested against)
+     and build 1277's (pinning both ends of a wire proves nothing about the wire). */
+  for(const type in ZONE_EDIT){
+    for(const m of (ZONE_EDIT[type].markers() || [])){ if(m && m.visible) targets.push(m); }
+  }
+  // build 657: every placeable thing must be click-selectable. Adds turrets, the player start marker and
+  // the extract zone (their markers/visuals are already visible during editing); the zone markers that
+  // used to be listed here by hand now arrive through ZONE_EDIT above.
+  for(const g of turretModels){ if(g && g.visible && !(g.userData && g.userData.edLock)) targets.push(g); }
   if(playerSpawnMarker && playerSpawnMarker.visible) targets.push(playerSpawnMarker);
   if(extractZone && extractZone.visible) targets.push(extractZone);
   if(!targets.length) return;

@@ -8,8 +8,14 @@ const src = gameSource();
 
 // --- the new targets are pushed into the ray list ---
 assert(/for\(const g of turretModels\)\{ if\(g && g\.visible && !\(g\.userData && g\.userData\.edLock\)\) targets\.push\(g\); \}/.test(src), 'turrets added to the pick targets (build 1036: unless outliner-locked/hidden)');
-assert(/for\(const m of ladderMarkers\)\{ if\(m && m\.visible\) targets\.push\(m\); \}/.test(src), 'ladders added to the pick targets');
-assert(/for\(const m of audioZoneMarkers\)\{ if\(m && m\.visible\) targets\.push\(m\); \}/.test(src), 'audio zones added to the pick targets');
+/* build 1464: these two used to be hand-written lines in the pick path, and are now derived from
+   ZONE_EDIT along with the other six zone types — which is why the hand-written form is gone. What this
+   build asserted, that a ladder and an audio zone are click-selectable, is unchanged and stronger: it is
+   now a property of every zone type rather than of two remembered ones. */
+assert(/for\(const type in ZONE_EDIT\)/.test(src) && /ZONE_EDIT\[type\]\.markers\(\) \|\| \[\]\)\)\{ if\(m && m\.visible\) targets\.push\(m\); \}/.test(src),
+  'every zone type is pushed into the pick targets from ZONE_EDIT');
+for(const t of ['ladders', 'audiozones'])
+  assert(new RegExp('\\b' + t + ':\\s*\\{').test(src), t + ' is a ZONE_EDIT row, so it is in that list');
 assert(/if\(playerSpawnMarker && playerSpawnMarker\.visible\) targets\.push\(playerSpawnMarker\);/.test(src), 'the player-start marker is pickable when visible');
 assert(/if\(extractZone && extractZone\.visible\) targets\.push\(extractZone\);/.test(src), 'the extract zone is pickable when visible');
 
