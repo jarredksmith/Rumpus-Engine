@@ -34908,7 +34908,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1461 · 2026-08-09';
+const BUILD_VERSION = 'build 1462 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -44876,7 +44876,8 @@ function clearSave(){ try { localStorage.removeItem(SAVE_KEY); }catch(e){} try{ 
 const CAMPAIGN_KEY='breach_campaign_v1';
 function loadCampaign(){ try{ const j=JSON.parse(localStorage.getItem(CAMPAIGN_KEY)); if(j && Array.isArray(j.levels)) return j; }catch(e){} return { levels:[] }; }
 let campaign = loadCampaign();
-function saveCampaign(){ try{ localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(campaign)); return true; }catch(e){ return false; } }
+function saveCampaign(){ if(typeof _foreignCampaign!=='undefined' && _foreignCampaign) return false;   /* build 1462: a campaign from a link is adopted explicitly, never by a side effect */
+  try{ localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(campaign)); return true; }catch(e){ return false; } }
 // Export the whole campaign (all levels) to one .json the player can share. Levels reference assets by
 // URL / sketchfab id (not embedded), so the recipient needs those reachable (and a Sketchfab token for
 // sketchfab models). Import accepts a campaign file OR a single-level file (wrapped as a 1-level campaign).
@@ -44914,6 +44915,55 @@ function _importCampaignFile(file, onDone){
     else _doImport();
   };
   reader.readAsText(file);
+}
+/* build 1462: A CAMPAIGN CAN BE SHARED.
+   A campaign lived only in localStorage. It could be EXPORTED to a file and nothing else — no share
+   link, no /game/ page, no community entry — so a creator who split a gauntlet into five rooms (which
+   is exactly what build 1394's doorway invites) could not ship it at all. Every publishing path in the
+   engine serializes ONE level.
+
+   The obvious fix is a server change, and it is the wrong one: `publish.php` is deployed by hand to a
+   cPanel host, so a payload the server has to learn about strands every creator until that upload
+   happens. So a shared campaign is ONE LEVEL — its first room — CARRYING the rest in `level.campaign`.
+   The server's own validator asks for `props`/`world`, which the first room has, so it accepts the
+   payload UNCHANGED and no upload is needed for any of this to work.
+
+   Room 1 is therefore in the file twice: as the level body and as `campaign.levels[0]`. That is not
+   waste, it is the compatibility story — a client that predates this build finds a perfectly ordinary
+   level and plays room 1, instead of finding a payload it cannot read. Gzip eats the duplication almost
+   entirely: measured on the stock level, 20 rooms cost 8,299 code bytes against 4,669 for one.
+
+   The ceiling is the SERVER's, not ours: `COMM_LIMITS['json']` is 500,000 DECODED bytes, so ~6 rooms of
+   substantial content. `_campaignShareFits` reports the number rather than letting the upload fail with
+   the server's own wording. */
+const CAMPAIGN_JSON_CAP = 500000;   /* mirrors COMM_LIMITS['json'] in server/api/_community_lib.php */
+function _campaignShareLevel(){
+  if(!campaign || !campaign.levels || !campaign.levels.length) return null;
+  const rooms = campaign.levels;
+  const first = rooms[0];
+  if(!first || typeof first !== 'object') return null;
+  return Object.assign({}, first, { campaign: { v:1, levels: rooms } });
+}
+/* Whether the payload will survive the server, answered HERE rather than by a failed upload. */
+function _campaignShareFits(lvl){
+  let n = 0; try{ n = JSON.stringify(lvl).length; }catch(e){ return { ok:false, bytes:0 }; }
+  return { ok: n <= CAMPAIGN_JSON_CAP, bytes: n };
+}
+/* build 1254's rule, one tier up: a campaign that arrived from a link must never quietly overwrite the
+   one the visitor built. Nothing autosaves a campaign — all ten writers are explicit gestures in the
+   panel — so the flag lives in `saveCampaign` itself, where no call site has to remember it. */
+let _foreignCampaign = false;
+function _adoptSharedCampaign(lvl){
+  const c = lvl && lvl.campaign;
+  if(!c || !Array.isArray(c.levels) || c.levels.length < 2) return false;   /* one room is just a level */
+  const rooms = [];
+  for(const r of c.levels){ if(r && typeof r === 'object' && (r.props || r.world)) rooms.push(r); }
+  if(rooms.length < 2) return false;
+  campaign = { levels: rooms };
+  _foreignCampaign = true;
+  campaignEditIdx = -1;
+  if(typeof renderCampaignPanel === 'function'){ try{ renderCampaignPanel(); }catch(e){} }
+  return true;
 }
 let campaignActive=false, campaignIdx=0, _campaignComplete=false;
 let campaignEditIdx=-1;   // campaign slot currently loaded in the editor for re-editing (-1 = none)
@@ -45500,6 +45550,17 @@ function renderCampaignPanel(){
   const info=document.createElement('div'); info.className='hint'; info.style.margin='2px 0 6px';
   info.innerHTML='Chain levels into a solo campaign. Build a level, <b>Add</b> it, repeat, then <b>Play</b>. Each level ends on its win condition (set <b>Extraction</b> as the exit) and loads the next \u2014 weapons + health carry over.';
   host.appendChild(info);
+  /* build 1462: a campaign that arrived from a link is FOREIGN until adopted — `saveCampaign` refuses
+     while it is, so nothing the visitor does in this panel can quietly overwrite the campaign they
+     built. Build 1254's rule for levels, one tier up. It has to SAY so, or every button in the panel
+     appears to do nothing. */
+  if(typeof _foreignCampaign!=='undefined' && _foreignCampaign){
+    const b=document.createElement('div'); b.style.cssText='margin:2px 0 8px;padding:7px 9px;border:1px solid #6a5a2a;border-radius:6px;background:rgba(120,96,32,.16);color:#ffe3a6;font-size:11px;line-height:1.5;';
+    const t=document.createElement('div'); t.textContent='This campaign came from a link \u2014 it is NOT saved, and edits here will not stick. Your own campaign is untouched.'; b.appendChild(t);
+    const ad=document.createElement('button'); ad.textContent='Keep this campaign (replaces yours)'; ad.style.cssText='margin-top:6px;width:100%;';
+    ad.onclick=()=>{ uiConfirm('Replace your saved campaign with this ' + campaign.levels.length + '-level one?', ()=>{ _foreignCampaign=false; const ok=saveCampaign(); if(typeof flashToast==='function') flashToast(ok?'Campaign is yours now':'Could not save (storage blocked)'); renderCampaignPanel(); }, 'Keep it'); };
+    b.appendChild(ad); host.appendChild(b);
+  }
   const row=document.createElement('div'); row.className='row2';
   const addB=document.createElement('button'); addB.textContent='\u2795 Add current level'; addB.onclick=()=>{ const lv=serializeLevel(); lv.name='Level '+(campaign.levels.length+1); campaign.levels.push(lv); campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); };
   const playB=document.createElement('button'); playB.textContent='\u25b6 Play campaign'; playB.style.cssText='background:rgba(var(--accent-rgb),0.22);color:#eafff7;font-weight:600'; playB.onclick=()=>{ startCampaign(); };
@@ -46895,10 +46956,16 @@ function buildEditorPanel(){
     const note = editorEl.querySelector('#edCopied');
     note.textContent = 'Building link…';
     try{
-      const link = buildShareLink(await encodeLevel(serializeLevel()));
+      /* build 1462: the share link carries a campaign the same way the published page does */
+      let _sl = serializeLevel();
+      if(typeof _campaignShareLevel==='function' && campaign && campaign.levels && campaign.levels.length > 1){
+        const _cl = _campaignShareLevel(); if(_cl && _campaignShareFits(_cl).ok) _sl = _cl;
+      }
+      const link = buildShareLink(await encodeLevel(_sl));
       let copied = false;
       try{ await navigator.clipboard.writeText(link); copied = true; }catch(e){}
-      note.textContent = copied ? ('Share link copied ✓  (' + link.length + ' chars)') : '';
+      const _cn = (_sl.campaign && _sl.campaign.levels) ? _sl.campaign.levels.length : 0;
+      note.textContent = copied ? ((_cn ? ('Campaign link copied ✓  (' + _cn + ' levels, ') : 'Share link copied ✓  (') + link.length + ' chars)') : '';
       if(!copied && typeof uiPromptForm==='function') uiPromptForm('Your share link', [{ label:'COPY THIS LINK', value:link, max:100000 }], ()=>{});   // clipboard blocked -> a selectable modal field
     }catch(e){ note.textContent = 'Could not build a share link here'; }
     clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 5000);
@@ -54196,6 +54263,23 @@ function renderHomePanel(){
     const noteEl=q('#hpPubNote');
     if(!homepageCfg.on){ noteEl.textContent='Turn on the custom title screen first.'; return; }
     let lvl; try{ lvl=serializeLevel(); const th=_commCaptureThumb(); if(th) lvl.thumb=th; }catch(e){ noteEl.textContent='Could not serialize the level'; return; }
+    /* build 1462: a creator with a campaign is publishing the CAMPAIGN — room 1 carries the rest, so the
+       server sees an ordinary level and needs no change. OFFERED, never forced: publishing one room of a
+       campaign on purpose is a real thing to want. _uiDialog rather than uiConfirm, because uiConfirm's
+       Cancel has no callback and this awaits an answer — a cancel that never resolves would hang the
+       publish flow with no way out. */
+    if(typeof _campaignShareLevel==='function' && campaign && campaign.levels && campaign.levels.length > 1){
+      const _cl = _campaignShareLevel();
+      const _fit = _campaignShareFits(_cl);
+      if(!_fit.ok){
+        noteEl.textContent = 'Your campaign is ' + _fit.bytes.toLocaleString() + ' bytes \u2014 the server caps a published game at ' + CAMPAIGN_JSON_CAP.toLocaleString() + '. Publishing this level alone.';
+      } else {
+        const _yes = await new Promise(res=>_uiDialog('Publish the whole CAMPAIGN (' + campaign.levels.length + ' levels), or just this level? A campaign page starts the player at level 1 and runs the whole thing.', [
+          { label:'Just this level', fn:()=>res(false) },
+          { label:'Publish campaign', primary:true, fn:()=>res(true) } ]));
+        if(_yes){ const _th = lvl.thumb; lvl = _cl; if(_th) lvl.thumb = _th; }
+      }
+    }
     let name=homepageCfg.title, author='';
     try{ author=(localStorage.getItem('breach_author_name')||'').trim(); }catch(e){}
     const vals=await new Promise(res=>uiPromptForm('Publish your game page', [
@@ -55608,13 +55692,14 @@ async function _commLoad(entry, toEditor){
   closeModal('communityModal');
   if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();   // Ctrl+Z restores what you had
   if(typeof markForeignLevel==='function') markForeignLevel('"'+(entry.name||file)+'"');   // build 1254: a gallery level never autosaves over yours
+  const _camp = (typeof _adoptSharedCampaign==='function') && _adoptSharedCampaign(level);   /* build 1462 */
   if(toEditor){
     if(!editorOpen){ if(!gameOn && typeof enterEditor==='function') enterEditor(); else if(typeof toggleEditor==='function') toggleEditor(); }
     setTimeout(()=>{ try{ restoreLevel(level); if(typeof flashToast==='function') flashToast('"'+(entry.name||file)+'" opened in the editor'); }catch(e){ console.warn('community level failed to load', e); } }, 200);
   } else {
     restoreLevel(level);
     _playsReport(entry);   // build 1230: loaded FOR PLAY (an editor open is not a play)
-    if(typeof flashToast==='function') flashToast('"'+(entry.name||file)+'" loaded — press Deploy');
+    if(typeof flashToast==='function') flashToast('"'+(entry.name||file)+'" loaded — ' + (_camp ? (campaign.levels.length + ' levels. Press Play campaign') : 'press Deploy'));
   }
 }
 function _helpLoadExample(kind){
@@ -55824,7 +55909,10 @@ if(savedLevel && savedLevel.player) applyPlayerLevel(savedLevel.player);   // se
   if(code){
     try{
       const lvl = await decodeLevel(code);
-      if(lvl && typeof restoreLevel==='function'){ if(typeof markForeignLevel==='function') markForeignLevel('a shared level'); restoreLevel(lvl);
+      if(lvl && typeof restoreLevel==='function'){ if(typeof markForeignLevel==='function') markForeignLevel('a shared level');
+        const _camp = (typeof _adoptSharedCampaign==='function') && _adoptSharedCampaign(lvl);   /* build 1462 */
+        restoreLevel(lvl);
+        if(_camp && typeof flashToast==='function') flashToast('Campaign loaded \u2014 ' + campaign.levels.length + ' levels. Press Play campaign');
         if(homepageCfg.on) _syncGameHome();   // build 971: the creator's title screen fronts the menu
         else flashToast(challenge ? ('Challenge loaded \u2014 beat '+(challenge.s||0)+' pts. Press Deploy') : 'Shared level loaded \u2014 press Deploy'); }
     }catch(e){ console.warn('Could not load shared level from URL:', e && e.message); flashToast('Shared level link looks invalid'); }
@@ -55837,8 +55925,12 @@ if(savedLevel && savedLevel.player) applyPlayerLevel(savedLevel.player);   // se
         const r=await fetch(_commBase()+dir+slug+'.json', { cache:'no-cache' }); if(!r.ok) continue;
         const lvl=await r.json();
         if(lvl && typeof lvl==='object' && (lvl.props||lvl.world) && typeof restoreLevel==='function'){
-          if(typeof markForeignLevel==='function') markForeignLevel('"'+slug+'"'); restoreLevel(lvl); loaded=true;
-          if(homepageCfg.on) _syncGameHome(); else flashToast('"'+slug+'" loaded \u2014 press Deploy');
+          if(typeof markForeignLevel==='function') markForeignLevel('"'+slug+'"');
+          const _camp = (typeof _adoptSharedCampaign==='function') && _adoptSharedCampaign(lvl);   /* build 1462 */
+          restoreLevel(lvl); loaded=true;
+          if(homepageCfg.on) _syncGameHome();
+          else if(_camp) flashToast('"'+slug+'" loaded \u2014 ' + campaign.levels.length + ' levels. Press Play campaign');
+          else flashToast('"'+slug+'" loaded \u2014 press Deploy');
         }
         break;
       }catch(e){}

@@ -42,9 +42,21 @@ globalThis.location.hash = '#nothing'; eq(api.levelCodeFromUrl(), null, 'no code
 
 // --- wiring ---
 assert(/id="edShare"/.test(src) && /_icn\('link'\)\+'Share link/.test(src), 'editor has a share button (build 816: SVG icon; 983: relabelled)');
-assert(/buildShareLink\(await encodeLevel\(serializeLevel\(\)\)\)/.test(src), 'share encodes the live level into a link');
+// build 1462: the share button encodes the LIVE level, which is `serializeLevel()` — or, when the
+// creator has a multi-room campaign, that level carrying the rest. Both go through the one codec, so
+// what this has always meant is asserted as the RELATION rather than as one line's text.
+{
+  const sh = src.slice(src.indexOf("p.querySelector('#edShare').onclick"), src.indexOf("p.querySelector('#edShare').onclick") + 1400);
+  assert(/_sl = serializeLevel\(\)/.test(sh), 'share starts from the live level');
+  assert(/buildShareLink\(await encodeLevel\(_sl\)\)/.test(sh), '...and encodes it into a link');
+}
 assert(/navigator\.clipboard\.writeText\(link\)/.test(src), 'copies to clipboard (with a visible fallback box)');
-assert(/const code = levelCodeFromUrl\(\);/.test(src) && /restoreLevel\(lvl\);\s*\n\s*if\(homepageCfg\.on\) _syncGameHome\(\);/.test(src)
-  && /else flashToast\(challenge \?/.test(src), 'startup loads a shared level via restoreLevel (build 971: title screen fronts the toast)');
+{
+  assert(/const code = levelCodeFromUrl\(\);/.test(src), 'startup reads the shared code off the URL');
+  const boot = src.slice(src.indexOf("const code = levelCodeFromUrl();"), src.indexOf("const code = levelCodeFromUrl();") + 1200);
+  assert(/restoreLevel\(lvl\);/.test(boot), '...and loads it via restoreLevel');
+  assert(/if\(homepageCfg\.on\) _syncGameHome\(\);/.test(boot), '...with the title screen fronting the toast (build 971)');
+  assert(/else flashToast\(challenge \?/.test(boot), '...or the toast when there is none');
+}
 assert(/\(tag === 'g'\) \? await _gunzip\(bytes\) : bytes/.test(src), 'decode handles gzip + raw');
 done('shareable level links (gzip round-trip + url-safe + wiring)');
