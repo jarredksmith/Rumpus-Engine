@@ -12,7 +12,11 @@ import { gameSource, extractFunction, extractConst, assert, eq, near, done } fro
 
 const src = gameSource();
 const pulseSrc = extractFunction('_telegraphPulse', src);
-const fracSrc  = extractFunction('_telegraphFrac', src);
+// build 1458: `_telegraphFrac` now asks `_teleLive` WHICH telegraph is live, because the network wire
+//    needs the same answer and two copies could disagree about which tell a player is seeing. Lifted from
+//    source, never restated — the arithmetic is proven unchanged in test-1458.
+const liveSrc  = (src.match(/const _TL = \{ kind:0, end:0, dur:1 \};/) || [''])[0] + '\n' + extractFunction('_teleLive', src);
+const fracSrc  = liveSrc + '\n' + extractFunction('_telegraphFrac', src);
 const tickSrc  = extractFunction('_telegraphTick', src);
 const endSrc   = extractFunction('_telegraphEnd', src);
 const LO   = Number(extractConst('TELE_EMI_LO', src));
@@ -180,9 +184,17 @@ function mkCapsule(scale){
   assert(src.includes("en.mesh.userData.hasModel && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions"),
     'the MODEL anim path (hasModel && stateActions) is untouched — custom models keep their own telegraph');
   // build 1168: zero per-frame allocation — no new, no clone, no object/array literal in the hot path
-  const all = pulseSrc + fracSrc + tickSrc + endSrc;
+  /* build 1458: the FUNCTION BODIES must still allocate nothing. `_teleLive` returns a module-level
+     scratch object — build 1168's own approved pattern, declared once and reused — so the declaration is
+     excluded here and asserted separately below. Concatenating it in would have failed this pin for the
+     opposite of the reason it exists. */
+  const all = pulseSrc + extractFunction('_teleLive', src) + extractFunction('_telegraphFrac', src) + tickSrc + endSrc;
   assert(!/\bnew\b/.test(all) && !/\.clone\(/.test(all) && !/=\s*\{/.test(all) && !/=\s*\[/.test(all) && !/\bfunction\s*\(|=>/.test(all),
     'the telegraph allocates nothing per frame: numbers stashed on the enemy, no vectors, no closures');
+  assert(/^const _TL = \{ kind:0, end:0, dur:1 \};$/m.test(src),
+    '...and the one object it uses is HOISTED to module scope, allocated once for the life of the page');
+  assert(/return _TL;/.test(extractFunction('_teleLive', src)),
+    '...and handed back by reference, never rebuilt');
   // the per-capsule material fact the gate relies on: useCapsule constructs a fresh material per body
   const bev = extractFunction('buildEnemyVisual', src);
   assert(/const mat = new THREE\.MeshStandardMaterial\(\{ color:0x4a1020/.test(bev),
@@ -190,7 +202,7 @@ function mkCapsule(scale){
   // and the ordering that keeps the constants out of TDZ reach of the frame loop (build 1315 lesson)
   assert(src.indexOf('const TELE_EMI_LO') < src.indexOf('_telegraphTick(en, nowMs);'),
     'the TELE_* constants are declared above the frame-loop call site');
-  assert(src.indexOf('const ENEMY_MELEE_WINDUP_MS') < src.indexOf('function _telegraphFrac'),
+  assert(src.indexOf('const ENEMY_MELEE_WINDUP_MS') < src.indexOf('function _teleLive'),
     'and ENEMY_MELEE_WINDUP_MS is declared above the resolver that reads it');
 }
 

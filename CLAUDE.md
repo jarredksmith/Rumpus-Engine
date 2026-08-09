@@ -12974,6 +12974,72 @@ stubbed to 0: 1273's whole subject is the default, and a stub would hide the int
 `_lodFloorNow` matched the comment explaining that it does not gate on `editorOpen`. It pins the
 STATEMENT now (`!/if\([^)]*editorOpen/`).
 
+## The joiner was hit with no warning at all (build 1458)
+
+The audio audit's CRITICAL, verified at the line: the whole enemy-AI block is
+`if(!isClient && !duelMode){`, and inside it live build 627's melee wind-up, the charger's lunge tell,
+build 1448's ranged wind-up **and build 1367's visual telegraph**. So a co-op **joiner** received none of
+them — not the sounds, not the pulse, not the squash — and was hit with **zero warning of any kind**.
+Three builds exist specifically to give the player counterplay; all three reached the host alone.
+
+### One question, asked once
+
+`_teleLive(en, nowMs)` is now the single place that decides WHICH telegraph is live. The visual pulse and
+the network wire both need that answer, and if they asked separately they could disagree about which tell
+a player is seeing — this file's most-repeated defect. `_telegraphFrac` no longer names a single timer;
+it reads `_teleLive` and divides. `test-1458` proves the arithmetic unchanged across all three windows
+including build 1449's authored `aimMs` and `lungeWind`.
+
+It returns a **hoisted scratch object**, never a fresh one: this runs per enemy per frame, and build 1168
+removed exactly that allocation everywhere else.
+
+### The wire is two fields that do not churn
+
+`tg` (the kind) and `tgd` (its full duration), both **constant while the tell is live**. That is the whole
+bandwidth argument: build 1197's delta key is what decides whether an entity is re-sent, so a
+*remaining-time* field would have re-sent every winding-up enemy **every frame**. Constant means twice per
+attack — once when it starts, once when it ends — and both fields are absent entirely when nothing is
+pending, so a quiet wave adds no bytes.
+
+The client arms its mirror with the same timer fields the host sets and then runs **the host's own
+`_telegraphTick`** on it. No second visual language, and the capsule gate is inherited unchanged, so a
+custom model still shows its attack clip. The end time is computed from the **client's** clock, so clock
+skew is impossible: the tell begins when that player learns about it, which is the honest moment for a
+warning.
+
+### Measured live (`tools/probe/telegraph-net.mjs`) — the whole wire, not its ends
+
+Build 1277's rule: pinning both ends proves nothing about the middle. A real enemy winds up, the real
+`serializeWorld()` builds the packet, the real `upsertEnemyMesh` applies it, the real `_telegraphTick`
+runs on the mirror.
+
+```
+CONTROL, no telegraph   no `tg` field at all
+winding up              tg 1, tgd 320
+client                  armed, and meleeWind fired ONCE at [200, 200] — positional
+two more identical packets   still 1 cue: it is an edge, not a level
+the mirror pulses       emissive 0.600 -> 0.651 -> 1.801   scale 1.000 -> 1.040 / 0.920
+host stops              no `tg` field; client disarms silently
+restore                 0.600 / 1.000 / 1.000 — byte-exact
+CONTROL, a mirror that never telegraphs   unmoved, and silent
+charger / ranged        lungeWind with lungeWind 700, rangedWind with aimMs 500 (build 1449 reaches the client)
+```
+
+### Deliberately NOT replicated, with the reason
+
+**Footsteps and the sapper fuse.** They are CONTINUOUS — driven by distance accumulation on the host —
+rather than event-shaped, and build 1315 explicitly deferred their density question ("40 enemies in a wave
+is a mud of overlapping noise if that is wrong"). That question is still unanswered, and replicating a
+per-step event before answering it would be chatty and probably wrong. `test-1458` asserts their absence
+from the snapshot so this stays a decision rather than an oversight.
+
+**Two pins moved** (1367, 1448), both executing rigs that legitimately lacked `_teleLive`; each is handed
+it **lifted from source**. And 1367's zero-allocation pin failed on my hoisted scratch — `=\s*\{` matched
+the declaration — which is build 1168's own approved pattern being caught by a test of build 1168's own
+rule. The declaration is excluded from that concatenation now and asserted separately: hoisted to module
+scope, returned by reference, never rebuilt. **A pin against "allocation" has to distinguish allocating
+once from allocating per frame, or it fails for the opposite of the reason it exists.**
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

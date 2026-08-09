@@ -30057,6 +30057,24 @@ function upsertEnemyMesh(e){
   }
   em.target.set(e.p[0], e.p[1], e.p[2]);
   em.hd=e.hd||0; em.hs=e.hs||0;
+  /* build 1458: the enemy telegraphs a co-op client never received. The whole enemy-AI block is
+     `if(!isClient && !duelMode)`, so a joiner got NO melee wind-up, NO charger tell, NO ranged tell —
+     neither the sound nor build 1367's visual pulse — and was hit with zero warning of any kind. Builds
+     1283, 1448 and 1367 exist to make an attack readable; they reached the host alone.
+     The edge is what matters: the cue fires ONCE when the tell begins, and the mirror is armed with the
+     same timer fields the host uses so `_telegraphTick` runs on it verbatim. The end time is computed
+     from the CLIENT's own clock, so no clock skew is possible — the tell starts when this player learns
+     about it, which is the honest moment for a warning. */
+  const _tg = e.tg|0;
+  if(_tg !== (em._tg|0)){
+    em._tg = _tg;
+    const spec = TELE_NET[_tg];
+    if(spec){
+      const dur = +e.tgd || 320;
+      spec.arm(em, performance.now() + dur, dur);
+      if(typeof SFX!=='undefined' && SFX[spec.snd]) SFX[spec.snd](em.mesh.position);
+    } else { em._windupT = 0; em._aimT = 0; em._lungePending = false; em._lungeWind = 0; }
+  }
   if(e.ty!=null){ em.ty=e.ty; em.hp=e.hp; }   /* build 1201: keyframe type+hp, adopted verbatim if this client is ever promoted */
 }
 function upsertCoinMesh(c){
@@ -30106,9 +30124,15 @@ function serializeWorld(){
   const _nConn = Object.keys(NET.conns).length;
   const full = (_snapN % 10 === 1) || _nConn !== _snapConnN;   /* keyframe cadence + a fresh join always starts from a keyframe */
   _snapConnN = _nConn;
+  /* build 1458: the TELEGRAPH rides the snapshot. `tg` is the kind and `tgd` its full duration, both
+     CONSTANT while the tell is live — so the delta key changes twice per attack (start and end) rather
+     than every frame, which a remaining-time field would have cost. Absent when nothing is pending, so a
+     quiet wave adds no bytes at all. */
+  const _teleNow = performance.now();
   const Eall=enemies.map(e=>{ const o={ id:e.id, p:[q2(e.mesh.position.x),q2(e.mesh.position.y),q2(e.mesh.position.z)], hd:e._netHitDir||0, hs:e._netHitSeq||0 };
+    const L=_teleLive(e, _teleNow); if(L && !e.dead){ o.tg=L.kind; o.tgd=Math.round(L.dur); }
     if(full){ o.ty=e.type; o.hp=q2(e.hp); } return o; });   /* build 1201: keyframes carry type+hp so a promoted host can rebuild the wave */
-  const _ed=_snapDelta(full, Eall, _snapPrevE, e=>e.p[0]+'|'+e.p[1]+'|'+e.p[2]+'|'+e.hd+'|'+e.hs);
+  const _ed=_snapDelta(full, Eall, _snapPrevE, e=>e.p[0]+'|'+e.p[1]+'|'+e.p[2]+'|'+e.hd+'|'+e.hs+'|'+(e.tg||0));
   const E=_ed.list, Ex=_ed.gone;
   const Call=coins.map(c=>({ id:c.id, p:[q2(c.mesh.position.x),q2(c.mesh.position.z)] }));
   const _cs=JSON.stringify(Call); const C=(full || _cs!==_snapPrevC) ? Call : undefined; _snapPrevC=_cs;
@@ -30483,9 +30507,11 @@ function netInterpolate(dt){
   _syncRemoteTurrets();   // build 548: aim every turret a remote player is manning to their synced look; rest the unmanned ones
   if(NET.mode==='client'){
     for(const id in NET.powerupMeshes){ const m=NET.powerupMeshes[id]; if(m.visible) _animatePickup(m, dt); }
+    const _teleNow = performance.now();
     for(const id in NET.enemyMeshes){ const em=NET.enemyMeshes[id];
       const _px=em.mesh.position.x, _pz=em.mesh.position.z;
       em.mesh.position.lerp(em.target, k);
+      _telegraphTick(em, _teleNow);   /* build 1458: the host's own pulse, on the mirror — capsule-gated exactly as it is there */
       const _ey=Math.atan2(player.pos.x - em.mesh.position.x, player.pos.z - em.mesh.position.z) + (em.mesh.userData.hasModel ? (em.mesh.userData.faceOff||0) : 0);
       em.mesh.rotation.set(0, turnToward(em.mesh.rotation.y, _ey, dt, TURN_RATE), 0);
       if(em.mesh.userData.hasModel && em.mesh.userData.visual && em.mesh.userData.visual.userData.stateActions){
@@ -34780,7 +34806,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1457 · 2026-08-09';
+const BUILD_VERSION = 'build 1458 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38391,19 +38417,35 @@ function _telegraphPulse(t){
   const m = osc > t ? osc : t;
   return TELE_EMI_LO + (TELE_EMI_HI - TELE_EMI_LO)*m;
 }
-function _telegraphFrac(en, nowMs){
-  /* Which telegraph is live and how far through it. Returns -1 when neither is pending — and that
-     return keys the RESTORE: build 1209 heavy-hit interrupt zeroes _windupT/_lungeWind, a landed
-     strike zeroes _windupT, the dash consumes _lungePending. Every exit reads -1 on the next frame,
-     so the restore follows the STATE and never a timer of its own. */
-  if(en._windupT && nowMs < en._windupT) return 1 - (en._windupT - nowMs)/ENEMY_MELEE_WINDUP_MS;
+/* build 1458: WHICH telegraph is live, asked ONCE. The visual pulse and the network wire both need the
+   answer, and if they asked separately they could disagree about which tell a player is seeing — the
+   defect this file records more than any other. Reused scratch, never a fresh object: this runs per enemy
+   per frame and build 1168 removed exactly that allocation everywhere else.
+   Returns -1 / null when nothing is pending, and THAT return keys the restore: build 1209's heavy-hit
+   interrupt zeroes _windupT/_lungeWind, a landed strike zeroes _windupT, the dash consumes _lungePending.
+   Every exit reads empty on the next frame, so the restore follows the STATE and never a timer of its own. */
+const _TL = { kind:0, end:0, dur:1 };
+function _teleLive(en, nowMs){
+  if(en._windupT && nowMs < en._windupT){ _TL.kind=1; _TL.end=en._windupT; _TL.dur=ENEMY_MELEE_WINDUP_MS; return _TL; }
   /* build 1448: the ranged wind-up is the same kind of thing — a commitment the player can act on — so it
      rides the same pulse rather than growing a second visual language. Its own window, because a 260 ms
      tell measured against melee's 320 would read as already half-finished the moment it started. */
-  if(en._aimT && nowMs < en._aimT) return 1 - (en._aimT - nowMs)/(en.aimMs || RANGED_AIM_MS);
-  if(en._lungePending && en._lungeWind > nowMs) return 1 - (en._lungeWind - nowMs)/(en.lungeWind||520);
-  return -1;
+  if(en._aimT && nowMs < en._aimT){ _TL.kind=2; _TL.end=en._aimT; _TL.dur=(en.aimMs || RANGED_AIM_MS); return _TL; }
+  if(en._lungePending && en._lungeWind > nowMs){ _TL.kind=3; _TL.end=en._lungeWind; _TL.dur=(en.lungeWind||520); return _TL; }
+  return null;
 }
+function _telegraphFrac(en, nowMs){
+  const L = _teleLive(en, nowMs);
+  return L ? 1 - (L.end - nowMs)/L.dur : -1;
+}
+/* The client's half of the same table: kind -> the cue to fire once on the rising edge, and the timer
+   field to set so `_telegraphTick` runs on a mirror VERBATIM. One table, so a fourth telegraph cannot be
+   added to the visual and forgotten on the wire. */
+const TELE_NET = {
+  1: { snd:'meleeWind',  arm:(em, end)=>{ em._windupT = end; } },
+  2: { snd:'rangedWind', arm:(em, end, dur)=>{ em._aimT = end; em.aimMs = dur; } },
+  3: { snd:'lungeWind',  arm:(em, end, dur)=>{ em._lungePending = true; em._lungeWind = end; em.lungeWind = dur; } },
+};
 function _telegraphTick(en, nowMs){
   const ud = en.mesh && en.mesh.userData; if(!ud) return;
   const v = ud.visual;
