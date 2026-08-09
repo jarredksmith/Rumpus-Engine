@@ -352,7 +352,7 @@ and from **build 1430** it does: at deploy, 3+ eligible copies are batched into 
 cell**, and each batch carries real bounds so it is frustum-culled like any other object (including in
 the shadow pass). Before 1430 a batch was never culled at all — measured on 24 duplicated props with the
 camera turned away, 528 triangles became 96. Watch the triangle count on the perf HUD (backtick key, or **Performance overlay** in the pause menu's Game tab — build 1436, the only way in on a phone) and
-the Level Check's geometry census; if a level is heavy, the levers are **fewer triangles per model**
+**Cull below (px)** also drives a shadow rung for those batches (build 1440): once a batch is small on screen it stops casting into the sun's shadow map while still drawing, exactly as an individual prop does. Measured on 16 clustered booths — 472 props, 25 batches — a camera in the far corner at 8 px left only 5 of 25 batches casting, and a batch you are standing inside always casts. It is off with the slider at 0, like everything else on it. the Level Check's geometry census; if a level is heavy, the levers are **fewer triangles per model**
 (the optimizer's simplify budget is 40,000) and **Cull below (px)** in World → Camera & view.
 
 **Texture compression (KTX2/Basis) — nothing to configure, and one fixed bug.** Rumpus loads KTX2 models,

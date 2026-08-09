@@ -11751,6 +11751,11 @@ function _lodRestoreAll(){
     if(o.userData._lodCull){ o.userData._lodCull = false; if(!o.userData._pvHidden) o.visible = true; }
     if(o.userData._lodNoShadow){ o.userData._lodNoShadow = false; _lodSetCasting(o, true); }
   }
+  /* build 1440: and the batches, or entering the editor would leave a shed batch shadowless while the
+     creator is looking at exactly the thing they placed */
+  if(typeof instanceMeshes !== 'undefined') for(const im of instanceMeshes){
+    if(im && im.userData && im.userData._castAuth && !im.castShadow) im.castShadow = true;
+  }
   _lodAnyCulled = false;
   if(typeof _dirtyShadows==='function') _dirtyShadows();   // build 1270: the map is STATIC — see below
 }
@@ -11874,6 +11879,11 @@ function _lodTick(){
     const o = propModels[(_lodCursor + i) % n];
     if(!o || !o.userData || o.userData._shattered) continue;
     if(o.userData._pvHidden) continue;                      // the logic graph owns this one's visibility (1170)
+    /* build 1440: batched away — the BATCH draws it and this object is not in the scene at all, so setting
+       its .visible decides nothing, spends a budget slot that a drawn prop needed, and (because the write
+       flips _lodDirty) asks for a full re-render of both shadow cascades for a change with no visible
+       effect. The batches get their own rung at the end of this function. */
+    if(o.userData._instOut) continue;
     if(!_lodEligible(o)) continue;
     const u0 = o.userData;
     // build 1274: to the geometry's centre, not the prop's origin
@@ -11904,8 +11914,40 @@ function _lodTick(){
   // must say so, which is build 1263's lesson arriving from the other direction: a perf change is not
   // allowed to remove work something else was silently relying on, and it is not allowed to skip work
   // something else silently needs either.
+  if(_lodInstShadowTick(px, k, cam)) _lodDirty = true;
   if(_lodDirty && typeof _dirtyShadows==='function') _dirtyShadows();
   _lodCursor = (_lodCursor + lim) % n;
+}
+/* Build 1430 gave every batch real world bounds so a frustum could reject it. Nothing gave it a RUNG: a
+   batch cast into both shadow cascades at any distance, for ever, and on a dense level the batched props
+   are the majority — so build 1270's measured caster relief reached almost none of the level it was
+   written for. The bounds are already computed and there are a few dozen batches, so this needs no budget
+   and no cursor.
+   Same threshold and the same hysteresis as its per-prop twin, and therefore OFF by default with `lodPx`
+   (build 1273): a rung that silently removes a creator's shadows is opt-in, and one consistent rule beats
+   a second default nobody chose. */
+function _lodInstShadowTick(px, k, cam){
+  if(typeof instanceMeshes === 'undefined' || !instanceMeshes.length) return false;
+  const spx = px * LOD_SHADOW_MUL; let dirty = false;
+  for(const im of instanceMeshes){
+    if(!im || !im.geometry) continue;
+    const u = im.userData;
+    /* REMEMBERED, never assumed true. A model batch copies its source part's flag (build 1192), and plenty
+       of geometry legitimately never casts — levelgen's nocollide grass is the standing example, and build
+       1270 had to learn this the same way for props. */
+    if(u._castAuth === undefined) u._castAuth = !!im.castShadow;
+    if(!u._castAuth) continue;
+    const bs = im.geometry.boundingSphere; if(!bs) continue;
+    const dx = bs.center.x - cam.x, dy = bs.center.y - cam.y, dz = bs.center.z - cam.z;
+    const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    /* A batch's sphere spans a whole cell, so the camera is very often INSIDE it — that is the near case,
+       and the near case always casts. */
+    if(d < bs.radius + LOD_NEAR_KEEP){ if(!im.castShadow){ im.castShadow = true; dirty = true; } continue; }
+    const sp = (bs.radius / d) * k;
+    if(im.castShadow){ if(sp < spx){ im.castShadow = false; _lodAnyCulled = true; dirty = true; } }
+    else if(sp > spx * LOD_HYST){ im.castShadow = true; dirty = true; }
+  }
+  return dirty;
 }
 // The geometry rung. Same measurement as the rungs above it — screen size from the geometry's own centre,
 // the same near floor, the same hysteresis band so a prop sitting on the boundary cannot flicker between
@@ -11918,7 +11960,7 @@ function _lodGeoTick(){
   const cam = camera.position, lim = Math.min(n, LOD_BUDGET);
   for(let i = 0; i < lim; i++){
     const o = propModels[(_lodGeoCursor + i) % n];
-    if(!o || !o.userData || o.userData._shattered) continue;
+    if(!o || !o.userData || o.userData._shattered || o.userData._instOut) continue;   /* build 1440: the batch draws it, and a batch has its own wrapper geometry — swapping a level on a mesh nobody renders is a traverse and a budget slot for nothing */
     const u0 = o.userData;
     const dx = (o.position.x + (u0._lodCx||0)) - cam.x,
           dy = (o.position.y + (u0._lodCy||0)) - cam.y,
@@ -34334,7 +34376,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1439 · 2026-08-08';
+const BUILD_VERSION = 'build 1440 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36793,7 +36835,7 @@ function buildInstancing(){
     im.userData._cullGeo = true; im.frustumCulled = true;   /* build 1430: now that its bounds are true */
     im.castShadow = true; im.receiveShadow = true;
     const m = new THREE.Matrix4();
-    list.forEach((o, i)=>{ o.updateMatrixWorld(true); m.copy(o.matrixWorld); im.setMatrixAt(i, m); scene.remove(o); instancedProps.push(o); });
+    list.forEach((o, i)=>{ o.updateMatrixWorld(true); m.copy(o.matrixWorld); im.setMatrixAt(i, m); scene.remove(o); o.userData._instOut = true; instancedProps.push(o); });   /* build 1440: it is drawn by the batch now, so the LOD rungs must leave it alone */
     im.instanceMatrix.needsUpdate = true;
     scene.add(im); instanceMeshes.push(im);
   }
@@ -36825,7 +36867,7 @@ function buildInstancing(){
         im.instanceMatrix.needsUpdate = true;
         scene.add(im); instanceMeshes.push(im);
       }
-      for(const o of list){ scene.remove(o); instancedProps.push(o); }
+      for(const o of list){ scene.remove(o); o.userData._instOut = true; instancedProps.push(o); }   /* build 1440 */
     }
   }
   instancingActive = true;
@@ -36835,7 +36877,7 @@ function teardownInstancing(){
   for(const im of instanceMeshes){ scene.remove(im); _instDisposeCullGeo(im);   /* build 1430: the wrapper, emptied first so the SHARED attributes survive */
     if(!im.userData._sharedMat && im.geometry && im.material && im.material.dispose) im.material.dispose(); }   /* build 1192: model batches share the template's live materials */
   instanceMeshes = [];
-  for(const o of instancedProps){ if(propModels.indexOf(o)>=0) scene.add(o); }   // restore for editing
+  for(const o of instancedProps){ delete o.userData._instOut; if(propModels.indexOf(o)>=0) scene.add(o); }   // restore for editing
   instancedProps = [];
   instancingActive = false;
 }

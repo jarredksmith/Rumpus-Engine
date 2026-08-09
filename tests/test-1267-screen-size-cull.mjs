@@ -55,6 +55,10 @@ function rig(props, opts = {}) {
     'let editorOpen = ' + (opts.editorOpen ? 'true' : 'false') + ';',
     extractFunction('_lodPxNow'), extractFunction('_lodEligible'),
     extractFunction('_lodSetCasting'), extractFunction('_lodRemeasure'),
+    // build 1440: the batches got their own rung inside _lodTick. Supplied LIFTED FROM SOURCE with an
+    // empty batch list, so it runs here as a real no-op rather than a restated stub — these rigs are
+    // about the PER-PROP rungs, and test-1440 owns the batch one.
+    'let instanceMeshes = [];', extractFunction('_lodInstShadowTick'),
     extractFunction('_lodRestoreAll'), extractFunction('_lodTick'),
     'return { tick:_lodTick, restore:_lodRestoreAll, px:_lodPxNow, elig:_lodEligible,',
     '  any:()=>_lodAnyCulled, setEditor:(v)=>{ editorOpen=v; } };',

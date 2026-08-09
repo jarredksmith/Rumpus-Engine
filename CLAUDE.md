@@ -1743,6 +1743,56 @@ working. The rule from the logic booth stands: **read the object before authorin
 Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
 `explodeAt + _blastProps` now, every assertion unchanged in intent.
 
+## The batched majority was invisible to the LOD ladder (build 1440)
+
+The performance audit's first finding. Build 1430 gave every batch real world bounds so a frustum could
+reject it; **nothing gave it a rung, and nothing told the per-prop rungs a batch exists.**
+
+- `im.castShadow = true`, unconditionally, so a batch cast into both cascades at any distance for ever.
+  On a dense level the batched props are the MAJORITY, so build 1270's measured caster relief reached
+  almost none of the level it was written for.
+- A batched prop is removed from the scene but **stays in `propModels`**, so both `_lodTick` and
+  `_lodGeoTick` walked it — spending budget slots deciding the visibility of an object nobody renders,
+  and, because the write flips `_lodDirty`, asking for a full re-render of both cascades for a change
+  with no visible effect.
+
+### Measured — 16 clustered booths, 472 props, 25 batches, 428 instances
+
+```
+lodPx 0 (the shipped default)   25 of 25 batches casting — unchanged
+lodPx 6                         18
+far corner, lodPx 8              5 of 25; the farthest four read 4-21 px against a 32 px threshold
+a 3-prop batch at 182 m          2.4 px  ->  shed
+standing INSIDE a cluster        9 still casting — the near exemption holds
+LOD budget                       115 of 128 slots per sweep no longer spent on batched props
+```
+
+That last line is the half that is **on by default**: the geometry rung (1431) runs whether or not culling
+does, so on this fixture nine tenths of its per-frame budget was being spent on props the batch draws.
+
+The rung itself uses the same threshold and hysteresis as its per-prop twin and is therefore **off by
+default with `lodPx`** — build 1273's rule, that a rung which silently removes a creator's shadows is
+opt-in, and one consistent rule beats a second default nobody chose. `_castAuth` remembers whether a batch
+was ever *meant* to cast (a model batch copies its source part's flag, and levelgen's nocollide grass never
+casts), because build 1270 had to learn that for props the same way.
+
+**A batch's sphere spans its whole cell, so the camera is very often inside it.** That is the near case and
+it always casts — without that term the rung would be asking whether a cluster you are standing in is small
+on screen.
+
+### The instrument was wrong four times, and the fourth is the one to remember
+
+| # | it reported | why |
+|---|---|---|
+| 1 | 420 props, **12 instances** | a thin scatter never reaches 3-per-cell, so the fixture measured itself. Clusters are what a booth is anyway |
+| 2 | still nothing batched | the level is ALREADY deployed when a probe attaches, so `if(!instancingActive)` batches nothing new — build 1430's own recorded trap, walked into again |
+| 3 | 94 calls, then 52, control never returning | a fresh `buildInstancing()` leaves the shadow map dirty and 1270's flag is a COUNTER, so the first measured render carried a whole shadow pass. THREE warm-ups, not two |
+| 4 | **the rung never fires at any threshold** | `_lodPxNow()` reads `worldCfg.lodPx`. There is no global of that name — the probe set one anyway, so `px` was 0 in every row |
+
+#4 produced four consecutive runs of confident, plausible, entirely meaningless numbers, and the tell was
+that the per-prop rungs reported `culled: 0` too — *nothing* was shedding, not just the new thing. **When a
+null covers the code you did not touch as well as the code you did, suspect the switch, not the feature.**
+
 ## The aim assist stuck to allies and ignored the range (build 1439)
 
 The audit's third finding. Build 1316's PvE branch was one line, and it filtered nothing:

@@ -63,7 +63,8 @@ const src = gameSource();
   assert(/im\.userData\._sharedMat = true;/.test(bi), 'model batches are flagged as sharing the template\'s live materials...');
   assert(/if\(!im\.userData\._sharedMat && im\.geometry && im\.material && im\.material\.dispose\) im\.material\.dispose\(\);/.test(src),
     '...so teardown does NOT dispose them — the template goes back to the editor with its materials alive');
-  assert(/for\(const o of list\)\{ scene\.remove\(o\); instancedProps\.push\(o\); \}/.test(bi),
+  // build 1440: marking them on the way out too, by the same rule and into the same list
+  assert(/for\(const o of list\)\{ scene\.remove\(o\); o\.userData\._instOut = true; instancedProps\.push\(o\); \}/.test(bi),
     'members leave the scene through the SAME list the primitive path uses — one teardown restores both');
   assert(/im\.castShadow = part\.cast; im\.receiveShadow = part\.recv;/.test(bi),
     'per-part shadow flags survive (nocollide grass stopped receiving shadows in 1096 — the batch must not undo that)');
