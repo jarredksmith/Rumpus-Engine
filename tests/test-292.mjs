@@ -24,7 +24,10 @@ assert(/play = \(play==='pingpong'\|\|play==='once'\) \? play : 'loop';/.test(sp
 assert(/a\.loop = lm; a\.clampWhenFinished = \(play==='once'\);/.test(sp), 'changing style updates the live actions');
 
 // signal-only props do NOT show the E prompt (only interact ones do)
-assert(/\(o\.userData\.animTrigger\|\|\(o\.userData\.animMode==='trigger'\?'interact':'auto'\)\)!=='interact'/.test(src), 'E-prompt is limited to interact props (signal-only is excluded)');
+// build 1451: `ud` is the same userData, read once per prop instead of five times, and the test is now
+// positive (does it prompt) rather than a `continue` guard. Same rule.
+assert(/\(ud\.animTrigger\|\|\(ud\.animMode==='trigger'\?'interact':'auto'\)\)==='interact'/.test(src),
+  'E-prompt is limited to interact props (signal-only is excluded)');
 
 // fired playback (E or signal) honors the prop's loop style
 const ppa = extractFunction('playPropAnimationOnce');

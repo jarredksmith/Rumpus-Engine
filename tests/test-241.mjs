@@ -33,7 +33,15 @@ assert(/const buildPickups=\(\)=>\{/.test(pb) && /menuItem\('\\u2039 Back', buil
 assert(/newPickupKind=k; jump\('rules'\); addPickupSpot\(k\);/.test(pb), 'choosing a kind places it and remembers the choice');
 assert(/if\(opening\) buildMain\(\);/.test(pb), 'reopening always starts at the top level');
 // build 344: the zone panel is repainted by its own renderer, not renderEditorFields
-assert(/audioZones\.push\(\{[^}]+\}\);[^;]*; refreshAudioZoneMarkers\(\); if\(typeof renderAudioZonesPanel==='function'\) renderAudioZonesPanel\(\);/.test(pb), 'palette zone add repaints the zones panel (options + delete row appear)');
+// build 1445 gave the audio zone a NAMED adder — it had been inlined here and in the panel button, two
+// copies of one object literal. The claim is unchanged and now sits in the one place a zone is added.
+{ const add = extractFunction('addAudioZone', src);
+  assert(/audioZones\.push\(\{[^}]+\}\);/.test(add) && /refreshAudioZoneMarkers\(\); if\(typeof renderAudioZonesPanel==='function'\) renderAudioZonesPanel\(\);/.test(add),
+    'palette zone add repaints the zones panel (options + delete row appear)');
+  // the palette reaches it through the table now, which is build 1445's whole point — the menu no longer
+  // carries its own copy of how a zone is created
+  assert(/const _d=ZONE_EDIT\[type\]; if\(_d && _d\.add\) _d\.add\(\);/.test(pb), '...and the palette asks the table');
+  assert(/addAudioZone\(_dp\.x, _dp\.z\)/.test(src), '...which asks the one adder'); }
 assert(!/audioZones\.push\(\{[^}]+\}\); refreshAudioZoneMarkers\(\); renderEditorFields\(\);/.test(pb), 'no longer calls the wrong renderer');
 
 // build 650: the + menu is the single way to add anything — all five zone tools + turret join it
@@ -46,9 +54,12 @@ assert(!/const ZONE_ADD=\[/.test(pb), 'the duplicate zone list is gone');
 { const zt = (new Function('return ('+(src.match(/const ZONE_TYPES = (\[[\s\S]*?\]);/)||[])[1]+')'))();
   assert(zt.map(z=>z[0]).join(',')==='triggers,audiozones,deathzones,jumppads,ladders,firezones,waterzones,fxzones',
     'the + menu covers every placeable volume, triggers included');
-  for(const t of zt) assert(new RegExp(t[0]+': *\\(\\)=>').test(pb), 'addZone wires '+t[0]); }
+  // build 1445: the adders live in ZONE_EDIT now, so the claim is asserted against the whole source
+  const zoneTable = src.match(/const ZONE_EDIT = \{[\s\S]*?\n\};/)[0];
+  for(const t of zt){ const row = zoneTable.split('\n').find(l=>l.trim().startsWith(t[0]+':')) || '';
+    assert(/add:\(\)=>/.test(row), 'addZone wires '+t[0]); } }
 assert(/const addZone=\(type\)=>\{/.test(pb), 'a shared addZone helper routes each zone type to its add fn');
-for(const fn of ['addDeathZone','addJumpPad','addLadder','addFireZone']) assert(pb.indexOf(fn)>0, 'addZone wires '+fn);
+for(const fn of ['addDeathZone','addJumpPad','addLadder','addFireZone']) assert(src.indexOf(fn)>0, 'addZone wires '+fn);
 assert(/jump\('build','turrets'\); if\(typeof addSceneTurret==='function'\) addSceneTurret\(\);/.test(pb), 'Turret can be added from the + menu');
 assert(/_zoneSub:\(\)=>buildZones\(\)/.test(pb) && /if\(typeof act==='string'\)\{ const sub=SUBS\[act\]; if\(sub\) menuItem\(label, sub\); continue; \}/.test(pb),
   'the main menu routes the Zone entry to its submenu');

@@ -152,11 +152,19 @@ function mkRig(opts){
 
 // ---------------------------------------------------------------- the input claim + ownership, pinned
 { // the LMB handler: Alt-duplicate FIRST (build 441 unchanged), then the empty-space orbit, then plain look
-  assert(/if\(e\.altKey\)\{ const o=_pickPropAt\(e\); if\(o\)\{ e\.preventDefault\(\); pushUndoSnapshot\(\); _dupPropForDrag\(o\); _altDupActive = true; editorDragMoved = true; return; \} \}/.test(src),
+  assert(/if\(e\.altKey\)\{ const o=_pickPropAt\(e\); if\(o\)\{ e\.preventDefault\(\); pushUndoSnapshot\(\); _dupPropForDrag\(o\); _altDupActive = true; editorDragMoved = true; return 'altdup'; \} \}/.test(src),
     'the Alt-over-a-prop duplicate branch is byte-identical — this build did not touch it');
+  /* build 1444 SPLIT this line: the marquee moved into the shared press chain (_edPressDown) and the orbit
+     claim stayed here, so that a finger runs the same priority order a mouse does. The ordering this
+     asserts is unchanged and is now structural — the duplicate branch is INSIDE the chain, which the
+     mousedown handler runs before it considers an orbit at all. */
   const iAlt = src.indexOf('if(e.altKey){ const o=_pickPropAt(e);');
-  const iClaim = src.indexOf('if(editorTopView) _marqueeStart(e); else if(!(e.altKey && editorFreeFly && _edOrbitStart(e))) editorDragLook = true;');
-  assert(iAlt >= 0 && iClaim > iAlt, 'the duplicate branch runs BEFORE the orbit claim: Alt over a prop duplicates, Alt on empty space orbits');
+  const iChain = src.indexOf('if(_edPressDown(e)) return;');
+  const iClaim = src.indexOf('if(!(e.altKey && editorFreeFly && _edOrbitStart(e))) editorDragLook = true;');
+  assert(iAlt >= 0 && iChain >= 0 && iClaim > iChain,
+    'the duplicate branch runs BEFORE the orbit claim: Alt over a prop duplicates, Alt on empty space orbits');
+  assert(/function _edPressDown\(e\)\{[\s\S]*?if\(e\.altKey\)\{ const o=_pickPropAt\(e\);/.test(src),
+    '...because the duplicate lives in the chain the mousedown handler consults first');
 }
 { // MMB: claimed in the fly branch of the pan handler, which still pans top view exactly as before
   assert(/e\.button!==1 && e\.button!==2\)\) return; if\(editorTopView\)\{ editorDragPan=true; editorDragMoved=false; e\.preventDefault\(\); \} else if\(e\.button===1 && editorFreeFly && _edOrbitStart\(e\)\)\{ editorDragMoved=false; e\.preventDefault\(\); \}/.test(src),

@@ -57,6 +57,11 @@ const clone = extractFunction('_gridCloneCar', src);
 assert(/\{ const pi=propModels\.indexOf\(obj\); if\(pi>=0\) propModels\.splice\(pi,1\); \}/.test(clone), 'clones never serialize or net-sync (out of propModels)');
 assert(/obj\.userData\.runtime=true; obj\.userData\.gridClone=true;/.test(clone), 'clones are runtime-only');
 assert(/if\(typeof _gridCarsClear==='function'\) _gridCarsClear\(\);/.test(src), 'clones are torn down with the race');
-assert(/propModels\.concat\(_gridCars\)/.test(src), 'E-to-enter finds grid clones too');
+// build 1451 removed the per-frame concat (build 1168's class) — the clones are still scanned, from the
+// second list, without allocating. What this asserts is that they are REACHABLE, which is the intent.
+assert(/const _extra = \(typeof _gridCars!=='undefined' && _gridCars\.length\) \? _gridCars : null;/.test(src)
+  && /const o = _i<_n \? propModels\[_i\] : _extra\[_i-_n\];/.test(src),
+  'E-to-enter finds grid clones too');
+assert(!/propModels\.concat\(/.test(src), '...without allocating a concatenated array every frame');
 
 done('build 893: one y convention + lift-safe sync + world-first loads + self-filling MP grid');

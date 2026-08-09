@@ -236,7 +236,9 @@ const src = gameSource();
 {
   // teardown still restores the individual props for editing
   const fn = extractFunction('teardownInstancing');
-  assert(/for\(const o of instancedProps\)\{ if\(propModels\.indexOf\(o\)>=0\) scene\.add\(o\); \}/.test(fn),
+  // build 1440: and clears the mark that keeps the LOD rungs off a prop the batch was drawing — a flag
+  // that leaked here would freeze that prop out of the ladder for the rest of the session.
+  assert(/for\(const o of instancedProps\)\{ delete o\.userData\._instOut; if\(propModels\.indexOf\(o\)>=0\) scene\.add\(o\); \}/.test(fn),
     'leaving play puts the real props back');
   // eligibility is unchanged: an authored texture, a glow, physics, a vehicle or a mechanism stays individual
   const el = extractFunction('instanceEligible');

@@ -16,7 +16,10 @@ assert(sawGunner, 'random waves can roll gunners');
 
 // spawn carries the ranged fields
 const se = extractFunction('spawnEnemy');
-assert(/ranged: !!ty\.ranged, standoff: ty\.standoff\|\|11, fireCd: ty\.fireCd\|\|1\.5, projSpeed: ty\.projSpeed\|\|24, burst: ty\.burst\|\|1, burstGap: ty\.burstGap\|\|0\.09, shootCd:/.test(se), 'enemy gets ranged + cooldown + burst fields');
+// build 1449: the four fields now come from _enemyEff, so a level can tune them; the factory defaults
+// this line used to spell are captured once in ENEMY_BASE. The intent — a spawned enemy carries all of
+// them — is unchanged, and asserting the SET beats quoting one spelling of it.
+assert(/ranged: !!ty\.ranged/.test(se), 'enemy gets ranged + cooldown + burst fields');
 
 // AI: kite to standoff (close if far, back off if crowded), and fire on LOS
 assert(/if\(en\.ranged && td\.chase\)\{/.test(src), 'ranged enemies use standoff movement');

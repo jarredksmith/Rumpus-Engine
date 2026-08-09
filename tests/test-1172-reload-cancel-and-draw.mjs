@@ -15,7 +15,10 @@ const src = gameSource();
     const env = { reloading: false, tok: 0, timeouts: [], hud: 0 };
     const w = { mag: 3, magSize: 10, reserve: 20, reloadMs: 1000 };
     const fns = new Function('W', 'SFX', 'triggerGunAnim', 'updateHUD', 'setTimeout',
-      'let reloading=false, _reloadTok=0;\n' +
+      // build 1450 arms a progress window inside reload(); this rig's subject is the cancel token, so the
+      // arm is LIFTED FROM SOURCE (never restated) with its timestamps local to the scope.
+      'let reloading=false, _reloadTok=0, _rlT0=0, _rlT1=0;\n' +
+      extractFunction('_rlArm') + '\n' +
       extractFunction('reload') + '\n' +
       'return { reload, cancel:()=>{ if(reloading){ reloading=false; _reloadTok++; } }, isReloading:()=>reloading };'
     )(() => w, { reload(){} }, () => {}, () => env.hud++, (fn, ms) => env.timeouts.push(fn));

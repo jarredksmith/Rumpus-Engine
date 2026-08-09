@@ -31,7 +31,7 @@ const mkCtx = (weather)=>{
   };
   return ctx;
 };
-const body = "let _weatherPts=null, _weatherKind='none', _weatherData=null, _weatherT=0; let _weatherSpriteTex=null;\nconst _WEATHER_BOX = { w:46, h:30 };\n"
+const body = extractFunction('_srgbTex') + "\n" + "let _weatherPts=null, _weatherKind='none', _weatherData=null, _weatherT=0; let _weatherSpriteTex=null;\nconst _WEATHER_BOX = { w:46, h:30 };\n"
   + extractFunction('_weatherSprite') + '\n' + extractFunction('refreshWeather') + '\nrefreshWeather();\nreturn added[0];';
 const run = (weather)=>{ const c=mkCtx(weather); return new Function(...Object.keys(c), body)(...Object.values(c)); };
 eq(run('snow').kind, 'points', 'snow constructs (the path that crashed at boot)');

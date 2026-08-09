@@ -17,7 +17,7 @@
 // branch already clamps writes at 0.00001, so it is not a value anyone can hold — and therefore not a
 // state to pass through on the way to one), and the ratio's base is never SUBSTITUTED, so no path can
 // invent a denominator five orders of magnitude from the truth.
-import { gameSource, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
 
 const src = gameSource();
 
@@ -29,6 +29,7 @@ assert(iEnd > iC, 'found its end');
 const commitSrc = src.slice(iC, iEnd + 7);
 assert(/_xfGroupApply\(fld\.k/.test(commitSrc), 'the slice reaches the end of the body (build 1368’s group apply)');
 
+const RANGE_SRC = extractFunction('_fieldRange', src) + extractFunction('_showOnRange', src);
 const mk = (bodySrc) => new Function('fld', 'tgt', 'ctx', `
   const scaleProportional = true, editorActive = 'props';
   const editorTargets = { props: tgt };   // so build 1368's group apply runs, exactly as it does in play
@@ -36,6 +37,11 @@ const mk = (bodySrc) => new Function('fld', 'tgt', 'ctx', `
   const _fmtField = (v)=>String(v);
   const _xfGroupApply = (k, o, n2, u)=>{ ctx.group.push([k, o, n2, u]); };
   const updateGizmo = ()=>{}, updateEditorOut = ()=>{};
+  /* build 1446: the commit writes the value onto its slider through the shared widen-then-write helper,
+     so this scope needs it. LIFTED from source, never restated — a rig that restates a helper keeps
+     passing against a stale copy. ARENA is stubbed at the engine default; nothing here is about it. */
+  const ARENA = 70;
+  ${RANGE_SRC}
   ${bodySrc}
   return commit;
 `);

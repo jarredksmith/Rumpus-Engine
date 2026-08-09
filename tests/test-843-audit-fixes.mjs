@@ -29,8 +29,11 @@ assert(/if\(!_racePath\) return \{ x:0, y:-1000, z:0, yaw:0, pitch:0, vmax:0 \};
 
 // 4. budgeted fire-gate raycasts
 {
+  // build 1448 added a THIRD: the wound-up shot re-checks line of sight before the round leaves, and that
+  // re-check is what makes ducking behind cover cancel it — so it is a fire-gate cast like the other two and
+  // must draw from the same budget. What this pin means is "every one of them is budgeted", not "two".
   const m=src.match(/_losBudget>0[\s\S]{0,240}?\(_losBudget--, !segmentBlocked\(/g);
-  assert(m && m.length===2, 'both fire-gate casts (initial + burst) draw from the LOS budget (found '+(m?m.length:0)+')');
+  assert(m && m.length===3, 'all three fire-gate casts (initial + burst + the 1448 wind-up re-check) draw from the LOS budget (found '+(m?m.length:0)+')');
 }
 
 // 5. netInterpolate scratch vector

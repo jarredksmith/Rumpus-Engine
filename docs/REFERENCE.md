@@ -304,7 +304,7 @@ Sliders are multipliers over the preset; **Reset** returns to it.
 ### Add a shape
 **+ Box, + Sphere, + Cylinder, + Cone, + Pillar, + Ramp, + Stairs, + Dome, + Tube, + Ring** — each drops in front of you, then move/scale it. (Pillar was reachable from one surface only until build 1320.)
 
-**+ Sign** (build 1411) — a readable board in the world. Type the text in the Object panel; **{name}** shows a live logic variable, so `Hits: {score}` is a scoreboard on a wall. Text size, text colour, board colour, board opacity (0 = floating text, no board) and alignment. The canvas follows the prop's own scale, so a wide banner is not stretched text. It carries **No collision** by default — a label should not stop bullets or make enemies path around it; untick it for a solid board. Readable from both sides, mirrored from behind: place two back to back if both sides matter.
+**+ Sign** (build 1411) — a readable board in the world. Type the text in the Object panel; **{name}** shows a live logic variable, so `Hits: {score}` is a scoreboard on a wall. Text size, text colour, board colour, board opacity (0 = floating text, no board) and alignment. The canvas follows the prop's own scale, so a wide banner is not stretched text. It carries **No collision** by default — a label should not stop bullets or make enemies path around it; untick it for a solid board. Readable from both sides, mirrored from behind: place two back to back if both sides matter. Colours are read as sRGB (build 1441), so a board set to a mid grey renders as that grey — before that build every canvas the engine drew itself was decoded as linear and arrived too bright.
 
 **Objective marker** (build 1412) — a Logic *Do → Objective marker* action points an on-screen diamond at a tag, a place, `me`, `start` or `#here`, with a label (`{var}` interpolates) and a colour. Off screen it becomes an arrow clamped to the edge, rotated at the target, with the distance in metres. Up to 8 at once; the same tag twice updates rather than adding. *Stop pointing at…* drops one, *Clear all markers* drops them all, and a deploy clears them. `who` sends it to everyone or to the one player who tripped the trigger.
 
@@ -352,7 +352,7 @@ and from **build 1430** it does: at deploy, 3+ eligible copies are batched into 
 cell**, and each batch carries real bounds so it is frustum-culled like any other object (including in
 the shadow pass). Before 1430 a batch was never culled at all — measured on 24 duplicated props with the
 camera turned away, 528 triangles became 96. Watch the triangle count on the perf HUD (backtick key, or **Performance overlay** in the pause menu's Game tab — build 1436, the only way in on a phone) and
-the Level Check's geometry census; if a level is heavy, the levers are **fewer triangles per model**
+**Cull below (px)** also drives a shadow rung for those batches (build 1440): once a batch is small on screen it stops casting into the sun's shadow map while still drawing, exactly as an individual prop does. Measured on 16 clustered booths — 472 props, 25 batches — a camera in the far corner at 8 px left only 5 of 25 batches casting, and a batch you are standing inside always casts. It is off with the slider at 0, like everything else on it. the Level Check's geometry census; if a level is heavy, the levers are **fewer triangles per model**
 (the optimizer's simplify budget is 40,000) and **Cull below (px)** in World → Camera & view.
 
 **Texture compression (KTX2/Basis) — nothing to configure, and one fixed bug.** Rumpus loads KTX2 models,
@@ -425,6 +425,14 @@ Per-tab numeric fields (slider + number; typed values may exceed slider range). 
 
 **Add spawn** (each placed spawn = one hostile per wave; with spawns placed, waves use them instead of random spawns) · **Pos X/Z** ±65 · **Height** 0–120 (typed up to 1000) above the ground under it · **Patrol radius** 0–40 (6) · **Detect range** 1–80 (14) · **Behavior** Hold / Patrol / Hunt · **Friendly — wanders, never attacks or aggros** (1226; ignores players and gunfire, not hostile, no rewards; marker reads green) · **Enemy type** (all archetypes with HP · speed · damage hint) · **Appears on wave** 0–99 (pre-built mode; 0 = every wave) · **Patrol route** (Place waypoints by clicking the ground, Remove last, Clear, Loop ⇄ Ping-pong).
 
+**Enemy tuning** (Rules mode → Waves) — per type, blank = factory: **hp**, **damage**, **speed×** (a multiplier, so the type's gait variance survives). A type that *shoots* gets a second **ranged** row: **fire interval** (s between shots, 0.05–60), **burst** (rounds per burst, 1–20), **bolt speed** (units/s, 2–200), **standoff** (how far back it holds, 0–200) and **aim** (the wind-up before the round leaves, in ms, 0–3000 — 0 is an instant shot). Those five are absolute, not multipliers. Applies at spawn; already-spawned enemies keep their stats.
+
+**Logic board — duplicating a node**: every node header carries **⧉** beside its **×**. It copies the node and all of its parameters (each copy is independent — editing one never changes another) and places it just below-right of the original. **Wires are not copied**: a copy arrives unconnected, because duplicating a node's inputs would fan one signal into two places and duplicating its outputs would fire everything downstream twice. One undo step per duplicate.
+
+**Reload progress** — a thin bar under the crosshair fills across the reload, so you can see how much longer it has and decide whether to switch out of it (switching cancels a reload). On a shell-by-shell weapon it sweeps once per shell — the ammo counter gives the count, the bar gives the beat, and firing mid-reload shoots with what is already in the tube. It hides with the crosshair if you turn the reticle off.
+
+**Telegraphs** — every attack an enemy can make gives you a beat first, so all of them are dodgeable rather than only avoidable. A melee enemy **winds up 320 ms** before it swings (back out of reach during it and the blow whiffs); a Charger telegraphs its lunge for ~520 ms; and a ranged enemy **aims for 260 ms** before the round leaves. All three are positional sounds, and on the stock capsule they also pulse and squash so the tell reads with the sound off. Duck behind cover during a gunner's aim and the shot is **cancelled** — the enemy still pays its full fire-rate cycle for the attempt. A heavy hit (a quarter of max HP) **breaks** any of the three, which is what makes suppressing fire worth doing. The wind-up costs the enemy no fire rate: rounds still come exactly `fireCd` apart.
+
 ## Turrets
 
 **Add turret** · **Pos X/Z/Y** · **Facing** ±180° · **Scale** 0.02–50 · **Traverse arc** 10–360° (120) · **Pitch min/max** −60–0 / 0–80 (−15/35) · **Model URL** (shared by every turret; blank = placeholder) + search · **Model alignment**: Model facing ±180°, Muzzle forward −3–8, Muzzle up/right ±4 · **Turret fire sound** + Freesound search.
@@ -440,7 +448,7 @@ Per-tab numeric fields (slider + number; typed values may exceed slider range). 
 
 ## Zones, Terrain, Prefabs
 
-See World & Scene Settings for the eight zone tools and the terrain sculpt/paint/scatter brush. **Prefabs** (Build mode): **prefab name + Save selection** (captures the selection as a reusable component — signals, animations, physics, materials; the library follows you across levels; levels carry the prefabs they use) · **Place** (arrives grouped) · **Update** (rewrites the prefab from the selected instance — every other copy follows, keeping local overrides) · **Detach** · **×** remove from library.
+See World & Scene Settings for the eight zone tools and the terrain sculpt/paint/scatter brush. **On a tablet** (build 1444) a one-finger press runs the same chain a mouse does — terrain brush, gizmo handle, then the top-view marquee — anywhere except the movement stick at the bottom-left; two fingers still pan, orbit and pinch-zoom (build 1312). **Prefabs** (Build mode): **prefab name + Save selection** (captures the selection as a reusable component — signals, animations, physics, materials; the library follows you across levels; levels carry the prefabs they use) · **Place** (arrives grouped) · **Update** (rewrites the prefab from the selected instance — every other copy follows, keeping local overrides) · **Detach** · **×** remove from library.
 
 ## Selection, outliner, clipboard, undo, autosave
 
@@ -476,6 +484,9 @@ See World & Scene Settings for the eight zone tools and the terrain sculpt/paint
 | **F** | Frame selection; nothing selected = toggle free-fly |
 | **Shift+F** | Toggle free-fly camera |
 | **T** | Toggle top-down view |
+| **Transform fields** | Position sliders span the whole arena (build 1446); any field widens to show a value typed beyond its range, so typing a number and then touching its slider no longer moves the prop |
+| **Delete / Backspace** | Delete the selection — props, lights, spawn markers, turrets, any of the eight zone types, or a pickup spot (build 1445) |
+| **Shift+D** | Duplicate the same set |
 | **B** | Toggle the terrain brush |
 | **O** | Toggle the outliner |
 | **Shift+A** | Quick-add (+) menu |
@@ -631,7 +642,7 @@ Per-type **hp / dmg / spd×** for every enemy type; blank = factory. Applies at 
 - **Starts with** — any non-melee weapon (default rifle).
 - **Start unarmed** (fists; G grabs/carries/throws) + **Allow picking up weapons found in the level**.
 - **Flashlight** (L) with Brightness 0.5–20, Cone 8–60°, Edge softness 0–100%, Range 5–150 m, Beam colour.
-- **Hit numbers** — floating damage numbers, font 10–120, Hit and Kill colors.
+- **Hit numbers** — floating damage numbers, font 10–120, Hit and Kill colors. Shown for aimed damage — shots, swings and turret fire — on enemies **and, since build 1443, on props**, so a shooting-range target reads out every hit; a hit on an unbreakable target shows its number even though its health never drops. Explosions and other players’ hits never show one.
 
 ### World-rule blocks
 - **Multiplayer spawn area** — circle (center, radius 3–200) or clicked outline polygon (3+ points, Top view).
@@ -723,5 +734,11 @@ Editor conveniences: live camera preview window (scrubbable), "Show character at
 - **Local models** — `local:` scheme is this-device-only; Level Check warns; the server upload is the "make it shareable" step.
 
 ## 10. Pause-menu player settings (per-device)
+
+The menu is **tabbed** (Game · Controls · Audio · Comfort) so nothing sits below the fold, and Exit is always on screen.
+
+**Motion & comfort** (the Comfort tab) — six per-device sliders that scale an effect *at its point of use*, so a creator's authored values are never overwritten and they follow you into other people's levels: **Camera shake**, **Camera sway**, **Motion blur**, **Damage flash** (dimmed at 0, never removed — being hit has to stay legible), **Slow-mo on kills**, and **Rumble**. Plus **Interface size** (75–175%), **Colour vision** correction (protan/deutan/tritan + strength) and a one-press **Reduce all** / **Restore defaults**. Defaults are 100%, so nothing moves for a player who never opens the panel; an OS `prefers-reduced-motion` preference seeds a calm baseline on first run rather than asking again.
+
+**Rumble** drives a connected gamepad (`dual-rumble`, falling back to `hapticActuators`) and, on touch, a short `navigator.vibrate` — from every jolt the engine already collects: firing, taking a hit, blasts, kills, car impacts, the melee thump. It is **deliberately independent of Camera shake**: a player who cannot take camera motion has not asked for a silent controller, and vice versa. 0 turns it fully off.
 
 **Resume · Exit to main menu** · **Customize controls** (touch: drag to move, tap to size 0.55–2×, Flip L/R, opacity, Look/Aim sensitivity 0.3–3×) · **Keyboard bindings** (click an action, press a key; taken keys SWAP; Reset; rebindable: movement, jump, sprint, crouch, slide, reload, melee, interact, grab, flashlight, grenade, inventory, map, chat, deploy menu, objective) · **Camera: First/Third person** · **Sprint/Crouch: Hold / Toggle** · **Weapon loadout** (attachments) · **Asset credits** (always present; merged attributions + engine credits) · **Audio** (mute; Master/Music/SFX) · **Visual effects** (bloom · motion blur) · **Adaptive resolution** ("trades sharpness for fps"; off = full res immediately) · **Controller** (pad sensitivity, ADS, deadzone, invert Y) · **Appearance** (accent, fonts, theme reset) · **Help & tutorials** · **Credits & licenses**.

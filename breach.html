@@ -448,7 +448,7 @@
   body.hud-shape-square #hud .panel, body.hud-shape-square #prompt, body.hud-shape-square #grabHint, body.hud-shape-square #goalBanner, body.hud-shape-square #dialogue { border-radius: 0; }
   body.hud-noborder #hud .panel, body.hud-noborder #prompt, body.hud-noborder #grabHint, body.hud-noborder #goalBanner, body.hud-noborder #dialogue { border-color: transparent !important; }
   body.hud-hide-minimap #minimap, body.hud-hide-score #score, body.hud-hide-wave #wavePanel,
-  body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair,
+  body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair, body.hud-hide-crosshair #reloadBar,
   body.hud-hide-killfeed #killFeed, body.hud-hide-prompt #prompt, body.hud-hide-grab #grabHint { display: none !important; }
   body.hud-hide-goal #goalBanner { opacity: 0 !important; }   /* build 701: banner uses opacity (not display) so it never reflows */
   body.hud-hide-dlg #dialogue { display: none !important; }
@@ -522,6 +522,19 @@
        against snow — invisible exactly when aiming matters. A 1px dark outline under every stroke costs
        nothing and makes it legible on white and on black, which is what every shipped shooter does. */
     filter: drop-shadow(0 0 1px rgba(0,0,0,.95)) drop-shadow(0 0 2px rgba(0,0,0,.55));
+  }
+  /* build 1450: how far through a reload you are. Under the reticle because that is where the eye already
+     is while reloading, and 18px down so it clears the widest crosshair gap without covering it. It rides
+     the same hide-crosshair toggle (below) — a player who turned the reticle off wants a clean centre. */
+  #reloadBar {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, 18px);
+    width: 56px; height: 3px; border-radius: 2px;
+    background: rgba(0,0,0,.55); box-shadow: 0 0 0 1px rgba(0,0,0,.5);
+    overflow: hidden; pointer-events: none;
+  }
+  #reloadBar > span {
+    display: block; height: 100%; width: 100%; border-radius: 2px; transform: scaleX(0);
+    background: var(--accent); transform-origin: left center;
   }
   #crosshair::before, #crosshair::after { display:none; }   /* crosshair is built in JS now (configurable) */
   #crosshair .dot {
@@ -1293,6 +1306,7 @@
 <div id="hud" class="hidden">
   <canvas id="minimap" width="180" height="180"></canvas>
   <div id="crosshair"><span class="dot"></span></div>
+  <div id="reloadBar" class="hidden"><span></span></div>
   <div id="hitmarker">✕</div>
   <div id="touchUI">
     <div id="tLook"></div>
@@ -1610,6 +1624,7 @@
       <label class="paLbl">Motion blur<input type="range" id="a11yBlur" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yBlurV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <label class="paLbl">Damage flash<input type="range" id="a11yFlash" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yFlashV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <label class="paLbl">Slow-mo on kills<input type="range" id="a11yHitstop" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yHitstopV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Rumble<input type="range" id="a11yRumble" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yRumbleV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <label class="paLbl">Interface size<input type="range" id="a11yUiScale" min="75" max="175" step="5" style="margin-left:auto;flex:1"><span id="a11yUiScaleV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <div class="row2" style="margin-top:5px"><button id="a11yReduce" class="pBtnGhost">Reduce all motion</button><button id="a11yRestore" class="pBtnGhost">Restore defaults</button></div>
       <label class="paLbl">Colour vision<select id="a11yCbMode" style="margin-left:auto;flex:1"></select></label>
@@ -6834,6 +6849,9 @@ const SFX = {
   // which is the whole point for something behind you. They RISE in pitch through the wind-up because a
   // rising tell reads as "about to happen" without needing to be loud.
   meleeWind(at){ tone({freq:150, type:'sawtooth', dur:0.26, vol:0.075, slideTo:330, at}); },
+  /* build 1448: the ranged tell. Thinner and higher than the melee one and with no body to it — a weapon
+     coming up rather than a mass winding up — so a player under fire from both can tell them apart. */
+  rangedWind(at){ tone({freq:420, type:'triangle', dur:0.22, vol:0.055, slideTo:900, at}); },
   lungeWind(at){ tone({freq:110, type:'sawtooth', dur:0.42, vol:0.10, slideTo:420, at});
     noise({dur:0.18, vol:0.05, filterFreq:400, type:'lowpass', at}); },
   meleeSwing(at){ noise({dur:0.13, vol:0.11, filterFreq:1200, type:'bandpass', at}); tone({freq:220, type:'square', dur:0.06, vol:0.05, slideTo:80, at}); },
@@ -8214,7 +8232,29 @@ let _bloomMips=[], _matBloomDown=null, _matBloomUp=null;
 // build 1126: screen-space ambient occlusion + FXAA. _aoRT holds the raw AO term at half
 // resolution, _aoRT2 the horizontally blurred one; the vertical blur lands back in _aoRT.
 let _aoGeoRT=null, _aoRT=null, _aoRT2=null, _matAOGeo=null, _matAO=null, _matAOBlur=null, _matFXAA=null;
-const _AO_GEO_MAXSTEP = 2;   /* build 1218: the G-buffer prepass survives the top 3 quality rungs (100/85/72%) so soft particles/shorelines outlast the common downshift; build 1364: the AO sample rides the same rungs (6 taps below rung 0) — only SSR stays rung-0-only */
+/* Build 1218: the G-buffer prepass survives the top 3 quality rungs (100/85/72%) so soft particles and
+   shorelines outlast the common downshift; build 1364: the AO sample rides the same rungs (6 taps below
+   rung 0) — only SSR stays rung-0-only.
+
+   Build 1441 makes it a DEVICE-CLASS decision, which it never was. The prepass is an extra SCENE RENDER
+   (plus build 1140's viewmodel pass into the same buffer), and it is not a rounding error: measured on the
+   stock level at a pinned rung, the trio costs 58 draw calls on a frame that is 71 without it — it very
+   nearly DOUBLES the frame's draw calls, identically at every rung it survives.
+
+   Every other expensive thing here already asks what device it is on: point shadows are 0 on a coarse
+   pointer (1414), the sun's shadow map is 1024 against 4096 (1346), the environment probe stays sky-only
+   (1186), and the resolution ladder even carries two EXTRA rungs there. This one never did, so a phone paid
+   the largest single item in the post chain across THREE of its five rungs before any relief arrived.
+
+   This is deliberately in tension with 1364, and worth saying so rather than hiding: that build kept AO
+   through the downshift because "the median player sits on rung 1" and losing the grounding cue there was
+   the defect. That argument is about a desktop machine which is coping. A phone that has left rung 0 has
+   already failed to hold its frame rate at full resolution, and an extra scene render is the biggest thing
+   there is to give back. So on a coarse pointer the prepass is rung-0-only: you get the grounding cue while
+   the device can afford it, and it is the FIRST thing to go when it cannot.
+   Soft particles and shorelines fall back to hard edges there, which is build 1183's own designed
+   degradation (AO off = hard edges, never stale depth) rather than a new failure mode. */
+const _AO_GEO_MAXSTEP = IS_COARSE ? 0 : 2;
 // build 1183: SOFT PARTICLES. A flipbook quad slicing through world geometry drew a hard line across the
 // intersection — the classic billboard artifact. The AO G-buffer (build 1126) already holds the scene's
 // view distance at half res, swept clean of everything that doesn't write depth (1152/1158) — including
@@ -9978,6 +10018,9 @@ function _procSurface(){
       nimg.data[i+3] = 255;
     }
     nctx.putImageData(nimg, 0, 0);
+    /* build 1441: NOT sRGB, and this is the one place that must never change. These two carry NUMBERS —
+       a packed normal and a roughness — which is exactly what build 1429 had to drag back to linear after
+       an encoder had marked them as colour. */
     const normalMap = new THREE.CanvasTexture(nc);
     // roughness: the same field. A single roughness value makes every highlight sweep the surface as
     // one shape, which is the other half of the plastic look.
@@ -10962,6 +11005,7 @@ const _paintCtx = _paintCanvas.getContext('2d');
 const _paintData = new Uint8ClampedArray(_PAINT_N*_PAINT_N*4);
 for(let i=3;i<_paintData.length;i+=4) _paintData[i]=255;   // opaque alpha; RGB weights start at 0
 const _paintImg = new ImageData(_paintData, _PAINT_N, _PAINT_N);   // shares _paintData's buffer
+/* build 1441: NOT sRGB — its RGB channels are splat WEIGHTS, not a colour, as the line above says. */
 const _paintTex = new THREE.CanvasTexture(_paintCanvas);
 _paintTex.flipY = false;   // canvas row 0 == uv v 0, so painting and the dataURL round-trip stay aligned
 _paintTex.minFilter = THREE.LinearFilter; _paintTex.magFilter = THREE.LinearFilter; _paintTex.generateMipmaps = false;
@@ -11751,6 +11795,11 @@ function _lodRestoreAll(){
     if(o.userData._lodCull){ o.userData._lodCull = false; if(!o.userData._pvHidden) o.visible = true; }
     if(o.userData._lodNoShadow){ o.userData._lodNoShadow = false; _lodSetCasting(o, true); }
   }
+  /* build 1440: and the batches, or entering the editor would leave a shed batch shadowless while the
+     creator is looking at exactly the thing they placed */
+  if(typeof instanceMeshes !== 'undefined') for(const im of instanceMeshes){
+    if(im && im.userData && im.userData._castAuth && !im.castShadow) im.castShadow = true;
+  }
   _lodAnyCulled = false;
   if(typeof _dirtyShadows==='function') _dirtyShadows();   // build 1270: the map is STATIC — see below
 }
@@ -11874,6 +11923,11 @@ function _lodTick(){
     const o = propModels[(_lodCursor + i) % n];
     if(!o || !o.userData || o.userData._shattered) continue;
     if(o.userData._pvHidden) continue;                      // the logic graph owns this one's visibility (1170)
+    /* build 1440: batched away — the BATCH draws it and this object is not in the scene at all, so setting
+       its .visible decides nothing, spends a budget slot that a drawn prop needed, and (because the write
+       flips _lodDirty) asks for a full re-render of both shadow cascades for a change with no visible
+       effect. The batches get their own rung at the end of this function. */
+    if(o.userData._instOut) continue;
     if(!_lodEligible(o)) continue;
     const u0 = o.userData;
     // build 1274: to the geometry's centre, not the prop's origin
@@ -11904,8 +11958,40 @@ function _lodTick(){
   // must say so, which is build 1263's lesson arriving from the other direction: a perf change is not
   // allowed to remove work something else was silently relying on, and it is not allowed to skip work
   // something else silently needs either.
+  if(_lodInstShadowTick(px, k, cam)) _lodDirty = true;
   if(_lodDirty && typeof _dirtyShadows==='function') _dirtyShadows();
   _lodCursor = (_lodCursor + lim) % n;
+}
+/* Build 1430 gave every batch real world bounds so a frustum could reject it. Nothing gave it a RUNG: a
+   batch cast into both shadow cascades at any distance, for ever, and on a dense level the batched props
+   are the majority — so build 1270's measured caster relief reached almost none of the level it was
+   written for. The bounds are already computed and there are a few dozen batches, so this needs no budget
+   and no cursor.
+   Same threshold and the same hysteresis as its per-prop twin, and therefore OFF by default with `lodPx`
+   (build 1273): a rung that silently removes a creator's shadows is opt-in, and one consistent rule beats
+   a second default nobody chose. */
+function _lodInstShadowTick(px, k, cam){
+  if(typeof instanceMeshes === 'undefined' || !instanceMeshes.length) return false;
+  const spx = px * LOD_SHADOW_MUL; let dirty = false;
+  for(const im of instanceMeshes){
+    if(!im || !im.geometry) continue;
+    const u = im.userData;
+    /* REMEMBERED, never assumed true. A model batch copies its source part's flag (build 1192), and plenty
+       of geometry legitimately never casts — levelgen's nocollide grass is the standing example, and build
+       1270 had to learn this the same way for props. */
+    if(u._castAuth === undefined) u._castAuth = !!im.castShadow;
+    if(!u._castAuth) continue;
+    const bs = im.geometry.boundingSphere; if(!bs) continue;
+    const dx = bs.center.x - cam.x, dy = bs.center.y - cam.y, dz = bs.center.z - cam.z;
+    const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    /* A batch's sphere spans a whole cell, so the camera is very often INSIDE it — that is the near case,
+       and the near case always casts. */
+    if(d < bs.radius + LOD_NEAR_KEEP){ if(!im.castShadow){ im.castShadow = true; dirty = true; } continue; }
+    const sp = (bs.radius / d) * k;
+    if(im.castShadow){ if(sp < spx){ im.castShadow = false; _lodAnyCulled = true; dirty = true; } }
+    else if(sp > spx * LOD_HYST){ im.castShadow = true; dirty = true; }
+  }
+  return dirty;
 }
 // The geometry rung. Same measurement as the rungs above it — screen size from the geometry's own centre,
 // the same near floor, the same hysteresis band so a prop sitting on the boundary cannot flicker between
@@ -11918,7 +12004,7 @@ function _lodGeoTick(){
   const cam = camera.position, lim = Math.min(n, LOD_BUDGET);
   for(let i = 0; i < lim; i++){
     const o = propModels[(_lodGeoCursor + i) % n];
-    if(!o || !o.userData || o.userData._shattered) continue;
+    if(!o || !o.userData || o.userData._shattered || o.userData._instOut) continue;   /* build 1440: the batch draws it, and a batch has its own wrapper geometry — swapping a level on a mesh nobody renders is a traverse and a budget slot for nothing */
     const u0 = o.userData;
     const dx = (o.position.x + (u0._lodCx||0)) - cam.x,
           dy = (o.position.y + (u0._lodCy||0)) - cam.y,
@@ -13849,6 +13935,26 @@ function _lgAddNode(type, x, y){
   logicGraph.nodes.push(n); _lgDirty();
   return n;
 }
+const LG_DUP_OFF = 26;   /* far enough that the copy is visibly its own node, near enough to read as a copy */
+/* build 1453: a graph node could be added and deleted and never COPIED. A booth wired with ten near-
+   identical `do` nodes — the shooting range's own shape, one per plate — meant picking the type and
+   re-filling every parameter ten times, and a `do` node carries up to nineteen of them (build 1407).
+
+   The params are DEEP-COPIED. Sharing one `p` object would make editing any copy edit all of them, which is
+   build 1438's defect exactly ("mirroring the list on every edit would overwrite whatever the other props
+   already carried") and would be invisible until a creator changed one and lost nine.
+
+   WIRES ARE NOT COPIED, and that is the decision rather than an omission. Copying the inbound ones fans the
+   same signal into two places and the outbound ones make every downstream verb fire twice — both silent, and
+   both the destructive direction. Every graph editor worth copying does the same for a single node: the copy
+   arrives unwired, which is the state a creator can act on. */
+function _lgDupNode(id){
+  const n = _lgNode(id); if(!n) return null;
+  const c = { id:_lgNewId(), type:n.type, x:Math.round(n.x + LG_DUP_OFF), y:Math.round(n.y + LG_DUP_OFF), p:{} };
+  for(const k in n.p) if(Object.prototype.hasOwnProperty.call(n.p, k)) c.p[k] = n.p[k];
+  logicGraph.nodes.push(c); _lgDirty(); _lgRender();
+  return c;
+}
 function _lgDelNode(id){
   logicGraph.nodes=logicGraph.nodes.filter(n=>n.id!==id);
   logicGraph.wires=logicGraph.wires.filter(w=>w.a!==id && w.b!==id);
@@ -13888,6 +13994,12 @@ function _lgRenderNode(n){
   const hd=document.createElement('div');
   hd.style.cssText='display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid '+col+'33;cursor:grab;border-radius:9px 9px 0 0;background:'+col+'14;';
   hd.innerHTML='<span style="width:8px;height:8px;border-radius:50%;background:'+col+';flex:none;"></span><span style="flex:1;font-weight:700;letter-spacing:0.5px;color:#eafff7;">'+d.t+'</span>';
+  /* build 1453: duplicate, beside the delete it mirrors. `onpointerdown` stops the event on BOTH, or the
+     header's drag handler claims the press and the click never lands — the same reason the delete has it. */
+  const dup=document.createElement('span'); dup.textContent='\u29c9'; dup.style.cssText='cursor:pointer;color:#7fa79a;padding:0 2px;'; dup.title='Duplicate node (params copied, wires not)';
+  dup.onpointerdown=(e)=>e.stopPropagation();
+  dup.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _lgDupNode(n.id); };
+  hd.appendChild(dup);
   const del=document.createElement('span'); del.textContent='\u00d7'; del.style.cssText='cursor:pointer;color:#7fa79a;padding:0 2px;'; del.title='Delete node';
   del.onpointerdown=(e)=>e.stopPropagation();
   del.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _lgDelNode(n.id); };
@@ -15064,6 +15176,22 @@ function _bvhPackPos(pa){
   for(let i = 0; i < n; i++){ out[i*3] = pa.getX(i); out[i*3+1] = pa.getY(i); out[i*3+2] = pa.getZ(i); }
   return out;
 }
+/* build 1441: A CANVAS IS AN IMAGE, and an image of a colour has to say so. Every texture this engine
+   LOADS FROM A FILE is tagged sRGB (seven sites), because that is what an 8-bit colour image is; every
+   texture it DRAWS ITSELF was not, so three treated the bytes as linear and every one of them rendered
+   too bright. The two that matter most are the two a creator sees closest:
+
+     a bullet decal's core is rgba(8,6,4,.95) -> 0.031 read as linear where 0.0024 was meant, ~13x
+     an authored sign at #808080             -> 0.5 read as linear where 0.214 was meant, ~2.3x
+
+   This is build 1429's defect in the mirror: that build found DATA maps being decoded as colour, and this
+   one is colour NOT being decoded at all. So the same care applies in reverse — the list below is only
+   the textures that carry a COLOUR, and three deliberate omissions are recorded at their own sites. */
+function _srgbTex(t){
+  if(!t) return t;
+  if('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace; else if('encoding' in t) t.encoding = 3001;   // sRGBEncoding
+  return t;
+}
 function _buildTriBVH(geo){
   const posA = _bvhPackPos(geo.attributes.position), idx = geo.index, ia = idx ? idx.array : null;
   const triCount = ((idx ? idx.count : geo.attributes.position.count) / 3) | 0;
@@ -15737,7 +15865,7 @@ function _signRender(o){
   const lh = fs * 1.18, y0 = H / 2 - (lines.length - 1) * lh / 2;
   for(let i = 0; i < lines.length; i++) x.fillText(lines[i], px, y0 + i * lh);
   if(!o.material.map){
-    const t = new THREE.CanvasTexture(cv);
+    const t = _srgbTex(new THREE.CanvasTexture(cv));   /* build 1441: a sign is UNLIT, so its board colour reaches the frame directly — untagged, #808080 arrived 2.3x too bright */
     t.minFilter = THREE.LinearFilter; t.anisotropy = (typeof MAX_ANISO === 'number') ? MAX_ANISO : 1;
     o.material.map = t; o.material.needsUpdate = true;   // first map on this material -> compile USE_MAP once
   } else o.material.map.needsUpdate = true;
@@ -16310,11 +16438,11 @@ function _trackMats(){
   const kerb=mk(0xd8402f,0.85), chk=mk(0xffffff,0.8);
   try{ const c=document.createElement('canvas'); c.width=64; c.height=8; const g=c.getContext('2d');
     g.fillStyle='#d8402f'; g.fillRect(0,0,64,8); g.fillStyle='#eef0f2'; g.fillRect(32,0,32,8);
-    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; kerb.map=t; kerb.color.setHex(0xffffff);
+    const t=_srgbTex(new THREE.CanvasTexture(c)); t.wrapS=t.wrapT=THREE.RepeatWrapping; kerb.map=t; kerb.color.setHex(0xffffff);
   }catch(e){}
   try{ const c=document.createElement('canvas'); c.width=64; c.height=64; const g=c.getContext('2d');
     for(let r=0;r<8;r++) for(let q=0;q<8;q++){ g.fillStyle=((r+q)&1)?'#101317':'#eef0f2'; g.fillRect(q*8,r*8,8,8); }
-    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; chk.map=t;
+    const t=_srgbTex(new THREE.CanvasTexture(c)); t.wrapS=t.wrapT=THREE.RepeatWrapping; chk.map=t;
   }catch(e){}
   const barrier=mk(0xb9bdc2,0.9);                                                        // concrete barrier base
   const screen=mk(0x9fd8ff,0.4); screen.transparent=true; screen.opacity=0.16; screen.depthWrite=false;   // clear catch-screen above it
@@ -16346,7 +16474,7 @@ function _applyTrackCfg(){
     const c=document.createElement('canvas'); c.width=64; c.height=8; const g=c.getContext('2d');
     const hx=(n)=>'#'+('000000'+(n>>>0).toString(16)).slice(-6);
     g.fillStyle=hx(ka); g.fillRect(0,0,64,8); g.fillStyle=hx(kb); g.fillRect(32,0,32,8);
-    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping;
+    const t=_srgbTex(new THREE.CanvasTexture(c)); t.wrapS=t.wrapT=THREE.RepeatWrapping;
     if(M.kerb.map && M.kerb.map.dispose) M.kerb.map.dispose();
     M.kerb.map=t; M.kerb.needsUpdate=true;
   }catch(e){}
@@ -19256,7 +19384,7 @@ function _arRingTex(color){
   const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
   x.strokeStyle=color; x.lineWidth=7; x.beginPath(); x.arc(32,32,22,0,Math.PI*2); x.stroke();
   x.fillStyle=color; x.beginPath(); x.arc(32,32,5,0,Math.PI*2); x.fill();
-  const t=new THREE.CanvasTexture(c); _arTexes[color]=t; return t;
+  const t=_srgbTex(new THREE.CanvasTexture(c)); _arTexes[color]=t; return t;
 }
 function _arStepFor(mkKey){ const base=mkKey.replace(/[LR]$/,''); return AR_STEPS.find(q=>q.key===base); }
 function _arDoneStep(st){ return st.sym ? !!(_arMarkers[st.key+'L'] && _arMarkers[st.key+'R']) : !!_arMarkers[st.key]; }
@@ -21306,18 +21434,61 @@ let _enStepBudget = 0;
 // pattern (1190): a factory baseline captured at boot, only-changed values serialized, one clamped
 // sanitizer every loader routes through so a hostile level file cannot ship a 0-hp boss army at 30x
 // speed. Speed is a MULTIPLIER (min and max scale together, so a type's gait variance survives tuning).
-const ENEMY_BASE = {}; for(const _ek of ENEMY_TYPE_KEYS){ const _t=ENEMY_TYPES[_ek]; if(_t) ENEMY_BASE[_ek]={ hp:_t.hp, dmg:_t.dmg, speedMin:_t.speedMin, speedMax:_t.speedMax }; }
+/* build 1448: the ranged half of build 627's telegraph. A melee enemy has wound up before it swings since
+   627, and a charger since 635 — but a GUNNER fired on the exact frame its cooldown expired, so a player who
+   stepped out of cover was hit before anything on screen or in the mix had told them a shot was coming.
+   Build 1371 floored `shootCd` on the AWARE rising edge, which covers the first acquisition and nothing
+   after it: in an ongoing firefight every subsequent round was still instant.
+
+   260 ms rather than melee's 320. A swing is a body committing its whole mass; a shot is a weapon coming up,
+   and it happens at range where the player is already at a distance to react. It is per-TYPE (`aimMs`) beside
+   fireCd/burst/projSpeed/standoff, so a creator can lengthen it for a sniper or set 0 to get exactly the
+   pre-1448 instant fire back. */
+const RANGED_AIM_MS = 260;
+/* It is declared HERE, ~6,000 lines above the melee constant it mirrors, because build 1449's ENEMY_BASE
+   reads it in a module-level initialiser that runs at boot — and `typeof` does not guard a temporal dead
+   zone (builds 1127, 1331, 1350, 1383, 1411, 1447). Anything a boot-time capture reads has to be above it. */
+/* build 1449: build 1191 made hp/damage/speed per-level and stopped there, so the five fields that decide
+   how a RANGED enemy actually behaves — how often it fires, how many rounds, how fast they travel, how far
+   back it stands and (1448) how long it aims — were engine constants a creator could not reach. Those are
+   exactly the knobs a shooting range is built out of.
+
+   They are ABSOLUTE, unlike `spd`. A speed multiplier exists so a type's gait variance survives tuning
+   (min and max move together); a fire rate has no variance to preserve and "fires every 3 seconds" is what
+   a creator thinks in. The defaults here are the `||` fallbacks spawnEnemy has always applied, restated in
+   ONE place so the baseline and the spawn cannot disagree about what factory means. */
+const ENEMY_BASE = {}; for(const _ek of ENEMY_TYPE_KEYS){ const _t=ENEMY_TYPES[_ek]; if(_t) ENEMY_BASE[_ek]={ hp:_t.hp, dmg:_t.dmg, speedMin:_t.speedMin, speedMax:_t.speedMax,
+  fireCd:_t.fireCd||1.5, burst:_t.burst||1, projSpeed:_t.projSpeed||24, standoff:_t.standoff||11,
+  aimMs:(_t.aimMs!=null)?_t.aimMs:RANGED_AIM_MS }; }
+/* the five that only mean anything on a type that shoots — the editor hides them elsewhere, because a fire
+   rate on a melee grunt is a control with no consequence (build 1348) */
+const ENEMY_MOD_RANGED = ['fireCd','burst','projSpeed','standoff','aimMs'];
 function _sanitizeEnemyMods(o){ if(!o || typeof o!=='object') return null; const out={}; let any=false;
   for(const k of ENEMY_TYPE_KEYS){ const m=o[k]; if(!m || typeof m!=='object') continue; const e={};
     if(m.hp!=null  && isFinite(+m.hp))  e.hp  = Math.max(1, Math.min(99999, +m.hp));
     if(m.dmg!=null && isFinite(+m.dmg)) e.dmg = Math.max(0, Math.min(999, +m.dmg));
     if(m.spd!=null && isFinite(+m.spd)) e.spd = Math.max(0.25, Math.min(3, +m.spd));
-    if(e.hp!=null || e.dmg!=null || e.spd!=null){ out[k]=e; any=true; } }
+    /* build 1449. Every clamp's FLOOR is a real value a creator might want, not a defensive minimum: a
+       0 aimMs is build 1448's instant shot (the documented opt-out), and a 0.05 s fireCd is a minigun.
+       A level file is untrusted input, so the ceilings are what stop a hostile one shipping a 1e9 burst. */
+    if(m.fireCd!=null    && isFinite(+m.fireCd))    e.fireCd    = Math.max(0.05, Math.min(60, +m.fireCd));
+    if(m.burst!=null     && isFinite(+m.burst))     e.burst     = Math.max(1, Math.min(20, Math.round(+m.burst)));
+    if(m.projSpeed!=null && isFinite(+m.projSpeed)) e.projSpeed = Math.max(2, Math.min(200, +m.projSpeed));
+    if(m.standoff!=null  && isFinite(+m.standoff))  e.standoff  = Math.max(0, Math.min(200, +m.standoff));
+    if(m.aimMs!=null     && isFinite(+m.aimMs))     e.aimMs     = Math.max(0, Math.min(3000, Math.round(+m.aimMs)));
+    /* the any-check counts KEYS rather than listing them: written as `e.hp!=null || e.dmg!=null || ...` it
+       would have to grow with every field, and the one that got forgotten would be silently dropped on
+       save — and a mods object carrying ONLY `aimMs: 0` is exactly the case a truthiness test loses. */
+    if(Object.keys(e).length){ out[k]=e; any=true; } }
   return any ? out : null; }
 function _enemyEff(k){ const b=ENEMY_BASE[k]||{ hp:10, dmg:5, speedMin:3, speedMax:5 };
   const m=(typeof gameCfg!=='undefined' && gameCfg.enemyMods && gameCfg.enemyMods[k]) || null;
   const s=(m && m.spd) || 1;
-  return { hp:(m&&m.hp!=null)?m.hp:b.hp, dmg:(m&&m.dmg!=null)?m.dmg:b.dmg, speedMin:b.speedMin*s, speedMax:b.speedMax*s }; }
+  const out={ hp:(m&&m.hp!=null)?m.hp:b.hp, dmg:(m&&m.dmg!=null)?m.dmg:b.dmg, speedMin:b.speedMin*s, speedMax:b.speedMax*s };
+  /* build 1449: the five ranged fields, authored value over the captured factory one. `!= null` everywhere,
+     so an authored 0 (an instant shot, a standoff of zero) is honoured rather than read as "unset". */
+  for(const f of ENEMY_MOD_RANGED) out[f] = (m && m[f]!=null) ? m[f] : b[f];
+  return out; }
 // Weighted random type — later waves bias toward tougher + ranged hostiles, and mix in the odd Sapper.
 function pickEnemyType(waveNum, rng){
   rng = rng || Math.random; const r = rng();
@@ -21717,7 +21888,7 @@ function _ensureDefaultEnv(){
     const sun = g.createRadialGradient(64, 30, 2, 64, 30, 30);
     sun.addColorStop(0, 'rgba(255,240,214,0.95)'); sun.addColorStop(0.3, 'rgba(255,226,178,0.35)'); sun.addColorStop(1, 'rgba(255,226,178,0)');
     g.fillStyle = sun; g.fillRect(0, 0, 256, 128);
-    const tex = new THREE.CanvasTexture(cv); tex.mapping = THREE.EquirectangularReflectionMapping;
+    const tex = _srgbTex(new THREE.CanvasTexture(cv)); tex.mapping = THREE.EquirectangularReflectionMapping;
     const pg = new THREE.PMREMGenerator(renderer); pg.compileEquirectangularShader();
     _envDefaultRT = pg.fromEquirectangular(tex); pg.dispose(); tex.dispose();
   }catch(e){}
@@ -21757,15 +21928,19 @@ function _orientEquirect(srcTex, deg, isHdr){
     const out = _shiftEquirectColumns(img.data, w, h, comp, dx);
     const t = new THREE.DataTexture(out, w, h, srcTex.format, srcTex.type);
     t.mapping = THREE.EquirectangularReflectionMapping; t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter;
-    t.generateMipmaps = false; t.flipY = srcTex.flipY; if('colorSpace' in t) t.colorSpace = srcTex.colorSpace; t.needsUpdate = true;
+    t.generateMipmaps = false; t.flipY = srcTex.flipY;
+    /* build 1441: copy BOTH spellings. On r149 only .encoding exists, so the colorSpace copy alone carried
+       nothing across — harmless here only because an HDR is linear and 3000 is the default it would have
+       fallen back to. Completed so that no test of 'colorSpace' in this file stands without its companion. */
+    if('colorSpace' in t) t.colorSpace = srcTex.colorSpace; if('encoding' in t) t.encoding = srcTex.encoding;
+    t.needsUpdate = true;
     return t;
   }
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, w, h);
   const id = cx.getImageData(0, 0, w, h);
   id.data.set(_shiftEquirectColumns(id.data, w, h, 4, dx)); cx.putImageData(id, 0, 0);
-  const t = new THREE.CanvasTexture(cv); t.mapping = THREE.EquirectangularReflectionMapping;
-  if('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace; else if('encoding' in t) t.encoding = 3001; t.needsUpdate = true;
+  const t = _srgbTex(new THREE.CanvasTexture(cv)); t.mapping = THREE.EquirectangularReflectionMapping; t.needsUpdate = true;
   return t;
 }
 function _applyOrientedSky(statusFn){
@@ -22233,9 +22408,7 @@ addEventListener('keydown', e=>{
     return;
   }
   if(editorOpen && (e.code==='Delete' || e.code==='Backspace')){
-    if(editorActive==='props') deleteSelectedProp();
-    else if(editorActive==='lights') deleteSelectedLight();
-    else if(editorActive==='spawns') deleteSelectedSpawn();
+    deleteSelected();   /* build 1445: the same set Shift+D duplicates — turrets, all eight zone types and pickup spots included */
     e.preventDefault();
     return;
   }
@@ -22410,11 +22583,7 @@ addEventListener('pagehide', ()=>{ try{ if(drivingCar && typeof exitCar==='funct
 document.addEventListener('mousemove', e=>{
   if(radialOpen){ radialMove(e.movementX, e.movementY); return; }
   if(editorOpen){
-    if(typeof _updateBrushRing==='function') _updateBrushRing(e);   // build 877: live brush cursor
-    if(_brushing){ _brushStroke(e); editorDragMoved = true; return; }    // painting the terrain
-    if(gizmoDrag){ gizmoDragMove(e); editorDragMoved = true; return; }   // dragging an axis handle
-    if(_altDupActive){ if(_altDup){ const gp = groundPointUnderPointer(e); if(gp){ _altDup.position.x = gp.x; _altDup.position.z = gp.z; } } editorDragMoved = true; return; }   // Alt-drag: move the fresh duplicate under the cursor
-    if(_marqueeOn){ _marqueeMove(e); editorDragMoved = true; return; }   // build 563: drawing the selection box
+    if(_edPressMove(e)) return;   /* build 1444: brush / gizmo / alt-dup / marquee, in one order both inputs share */
     if(_edOrbit && !editorTopView){ _edOrbitMove(e); return; }   // build 1377: Alt+LMB / MMB orbit about the pivot captured at drag start
     if(editorDragPan && editorTopView){
       const wpp = (2*topZoom)/innerHeight;   // world units per pixel at current zoom
@@ -22461,15 +22630,55 @@ document.addEventListener('mousemove', e=>{
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
   if(drivingCar && mx) drivingCar.userData._lookCd = 0.6;   // build 765: pause the follow-cam recenter while you orbit with the mouse
 });
+/* ---- build 1444: one press chain, so a finger and a mouse cannot disagree -----------------------------
+   The editor audit reported that "single-finger drag does nothing on touch". Half of that was already
+   false and checking cost nothing: the #tLook pad has called tryGizmoGrab on press and gizmoDragMove on
+   move for a long time, so DRAGGING A GIZMO HANDLE and TAP-TO-SELECT both work on a tablet today. What was
+   genuinely unreachable is everything else a press can start — the TERRAIN BRUSH and the MARQUEE — because
+   the pad's editor branch knew about the gizmo and nothing else.
+
+   So the fix is not a second copy of the priority order on the touch path. Two implementations of one
+   behaviour is the defect this file records more than any other (1162, 1252, 1266, 1280, 1400), and a
+   priority chain is exactly the shape that drifts: the day somebody adds a fifth thing a press can claim,
+   one input gets it. `_edPress*` is the chain; the mouse and the pad each ask it first and then do their
+   own input-specific thing with what is left over (a look-drag, a pan, an orbit).
+
+   MEASURED rather than assumed, because the first draft of this comment was wrong: `#tLook` is `left:42%`
+   IN PLAY, but `body.editing #tLook { left:0; right:330px; }` widens it to everything except the editor
+   panel, and `#tStick` is later in the DOM with no z-index, so it takes its own 132 px circle back. So on a
+   tablet a press starts an edit anywhere except that one circle at the bottom-left — which stays the
+   movement stick because it is a touch creator's only way to fly the camera (build 165, which build 1312
+   confirmed by trying to remove it). */
+function _edPressDown(e){
+  if(terrainBrush.on && terrainPointUnderPointer(e)){ pushUndoSnapshot(); _brushStroke(e); _brushing = true; editorDragMoved = true; return 'brush'; }   // sculpt instead of select/look
+  if(tryGizmoGrab(e)){ editorDragMoved = true; return 'gizmo'; }   // grabbing an axis handle (suppresses select)
+  /* altKey is false on every touch event, so this branch is simply never taken there — no gesture has to
+     be invented for it, and nothing about the mouse's behaviour changes. */
+  if(e.altKey){ const o=_pickPropAt(e); if(o){ e.preventDefault(); pushUndoSnapshot(); _dupPropForDrag(o); _altDupActive = true; editorDragMoved = true; return 'altdup'; } }   // Alt+drag = duplicate the prop under the cursor and drag the copy
+  if(editorTopView){ _marqueeStart(e); return 'marquee'; }   // build 563: top-view left-drag = marquee select (pan moved to right/middle-drag)
+  return '';
+}
+function _edPressMove(e){
+  if(typeof _updateBrushRing==='function') _updateBrushRing(e);   // build 877: live brush cursor
+  if(_brushing){ _brushStroke(e); editorDragMoved = true; return true; }    // painting the terrain
+  if(gizmoDrag){ gizmoDragMove(e); editorDragMoved = true; return true; }   // dragging an axis handle
+  if(_altDupActive){ if(_altDup){ const gp = groundPointUnderPointer(e); if(gp){ _altDup.position.x = gp.x; _altDup.position.z = gp.z; } } editorDragMoved = true; return true; }   // Alt-drag: move the fresh duplicate under the cursor
+  if(_marqueeOn){ _marqueeMove(e); editorDragMoved = true; return true; }   // build 563: drawing the selection box
+  return false;
+}
+function _edPressUp(e){
+  if(_marqueeOn){ _marqueeFinish(e); }
+  if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); }
+  if(_brushing){ _brushing = false; editorDragMoved = true; if(terrainBrush.mode==='paint' && typeof _paintCommit==='function') _paintCommit(); if(typeof _scatLast!=='undefined') _scatLast=null; }
+  const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); }
+}
 renderer.domElement.addEventListener('mousedown', e=>{
   if(!editorOpen || e.button!==0) return;
   editorDragMoved = false;
-  if(terrainBrush.on && terrainPointUnderPointer(e)){ pushUndoSnapshot(); _brushStroke(e); _brushing = true; editorDragMoved = true; return; }   // sculpt instead of select/look
-  if(tryGizmoGrab(e)){ editorDragMoved = true; return; }   // grabbing an axis handle (suppresses select)
-  if(e.altKey){ const o=_pickPropAt(e); if(o){ e.preventDefault(); pushUndoSnapshot(); _dupPropForDrag(o); _altDupActive = true; editorDragMoved = true; return; } }   // Alt+drag = duplicate the prop under the cursor and drag the copy
-  if(editorTopView) _marqueeStart(e); else if(!(e.altKey && editorFreeFly && _edOrbitStart(e))) editorDragLook = true;   // build 563: top-view left-drag = marquee select (pan moved to right/middle-drag) · build 1377: Alt+LMB starting on empty space orbits; Alt over a prop stayed the drag-duplicate, claimed above
+  if(_edPressDown(e)) return;
+  if(!(e.altKey && editorFreeFly && _edOrbitStart(e))) editorDragLook = true;   // build 1377: Alt+LMB starting on empty space orbits; Alt over a prop stayed the drag-duplicate, claimed above
 });
-addEventListener('mouseup', e=>{ if(e.button===0){ if(_marqueeOn){ _marqueeFinish(e); } if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); } if(_brushing){ _brushing = false; editorDragMoved = true; if(terrainBrush.mode==='paint' && typeof _paintCommit==='function') _paintCommit(); if(typeof _scatLast!=='undefined') _scatLast=null; } editorDragLook = false; editorDragPan = false; _edOrbit = null; const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } });
+addEventListener('mouseup', e=>{ if(e.button===0){ _edPressUp(e); editorDragLook = false; editorDragPan = false; _edOrbit = null; } });   /* build 1444: the shared chain, then the three drags only a mouse has */
 
 // ---------- build 1377 (editor audit #5, the cheap half): ORBIT in the fly camera ----------
 // Fly-mode drag was a first-person LOOK, so turning to inspect something swung it off screen — every
@@ -22857,7 +23066,7 @@ function _ensureVmEnv(){
     const c=document.createElement('canvas'); c.width=16; c.height=64; const g=c.getContext('2d');
     const grad=g.createLinearGradient(0,0,0,64); grad.addColorStop(0,'#a6c2d2'); grad.addColorStop(0.5,'#5d6e79'); grad.addColorStop(1,'#161d23');
     g.fillStyle=grad; g.fillRect(0,0,16,64);
-    const tex=new THREE.CanvasTexture(c); tex.mapping=THREE.EquirectangularReflectionMapping;
+    const tex=_srgbTex(new THREE.CanvasTexture(c)); tex.mapping=THREE.EquirectangularReflectionMapping;
     const pm=new THREE.PMREMGenerator(renderer); pm.compileEquirectangularShader();
     _vmEnvFallback = pm.fromEquirectangular(tex).texture; tex.dispose(); pm.dispose();
   }catch(e){ _vmEnvFallback=null; }
@@ -23337,14 +23546,49 @@ let _reloadTok = 0;
 // 1.3s, but you are never locked out of the fight while it runs. Each shell clicks (SFX) and dips
 // the gun (the reload anim retriggers), and the HUD counts the mag UP shell by shell — the flat
 // path's '--' placeholder would hide exactly the feedback this exists to give.
+/* build 1450: a reload had NO progress readout of any kind. The flat path showed '--' in the ammo counter
+   and nothing else, so "how much longer" — a real question at 700 ms for a pistol against 1600 for a
+   sniper, and the question build 1172's reload-cancel makes actionable — was unanswerable.
+
+   Two timestamps, written wherever a reload interval is SCHEDULED, so the bar and the timeout can never
+   disagree about how long it is. Nothing clears them: `reloading` is the gate, so every cancel path
+   (build 1172's switch, build 1249's fire, both completions) takes the bar down for free — the state-keyed
+   restore build 1367 used, rather than a timer of the bar's own that would have to be unwound at four
+   sites. */
+let _rlT0 = 0, _rlT1 = 0, _rlEl = null, _rlShown = false, _rlPct = -1;
+function _rlArm(ms){
+  const now = (typeof performance!=='undefined') ? performance.now() : Date.now();
+  _rlT0 = now; _rlT1 = now + Math.max(1, +ms || 0);
+}
+/* The FRACTION, pure and separately testable. A shell reload re-arms per shell (below), so this reads as
+   one sweep per shell — which is exactly the "the next shell lands now" beat that decides whether to
+   cancel-fire with what is already in the tube. */
+function _reloadFrac(now){
+  if(_rlT1 <= _rlT0) return 0;
+  const f = (now - _rlT0) / (_rlT1 - _rlT0);
+  return f < 0 ? 0 : (f > 1 ? 1 : f);
+}
+function _reloadBarTick(){
+  const el = _rlEl || (_rlEl = document.getElementById('reloadBar'));
+  if(!el) return;
+  const on = !!reloading;
+  if(on !== _rlShown){ _rlShown = on; el.classList.toggle('hidden', !on); }
+  if(!on) return;
+  const now = (typeof performance!=='undefined') ? performance.now() : Date.now();
+  /* scaleX rather than width: a transform is composited and does not lay the page out, which matters for
+     something written every frame (build 1322's rule about per-frame DOM work) */
+  const p = Math.round(_reloadFrac(now) * 100);
+  if(p !== _rlPct){ _rlPct = p; el.firstElementChild.style.transform = 'scaleX(' + (p/100) + ')'; }
+}
 function _shellNext(w, tok, delayMs){
+  _rlArm(delayMs);   /* build 1450: the bar spans THIS shell's interval */
   setTimeout(()=>{
     if(tok !== _reloadTok || !reloading) return;   // cancelled (switch or fire): keep every shell already loaded
     if(w.mag >= w.magSize || w.reserve <= 0){ reloading = false; updateHUD(); return; }
     w.mag++; w.reserve--;
     SFX.reload(); triggerGunAnim('reload');
     if(w.mag >= w.magSize || w.reserve <= 0) reloading = false;
-    else _shellNext(w, tok, w.shellMs || 420);
+    else _shellNext(w, tok, w.shellMs || 420);   /* re-arms the bar for the next shell */
     updateHUD();
   }, delayMs);
 }
@@ -23354,6 +23598,7 @@ function reload(){
   reloading = true; const tok = ++_reloadTok; SFX.reload(); triggerGunAnim('reload');
   if(w.shellReload){ _shellNext(w, tok, w.shellIntroMs || 260); updateHUD(); return; }   // build 1249: pump open, then a shell at a time
   const need = w.magSize - w.mag;
+  _rlArm(w.reloadMs);   /* build 1450: the flat path spans the whole reload — the same value the timeout takes */
   setTimeout(()=>{
     if(tok !== _reloadTok || !reloading) return;   // switch-cancelled: the mag stays as it was
     const take = Math.min(need, w.reserve);
@@ -23672,7 +23917,11 @@ function spawnEnemy(spawn){
   const _wr = (typeof gameCfg!=='undefined' && gameCfg.mode==='random' && !(typeof editorOpen!=='undefined' && editorOpen)) ? (1 + 0.04*Math.min((typeof wave!=='undefined'?wave:1), 25)) : 1;
   const _hp = Math.round(_eff.hp * _wr);
   const e = { id: nextEnemyId++, mesh, hp:_hp, maxHp:_hp, speed: _eff.speedMin + Math.random()*(_eff.speedMax-_eff.speedMin), dmg:_eff.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
-    ranged: !!ty.ranged, standoff: ty.standoff||11, fireCd: ty.fireCd||1.5, projSpeed: ty.projSpeed||24, burst: ty.burst||1, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
+    /* build 1449: through _eff, so a level's own tuning reaches them. burstGap deliberately stays on the
+       type — it is the internal cadence of one burst, not a dial a range needs, and exposing every field
+       is how a tuning panel becomes unreadable. */
+    ranged: !!ty.ranged, standoff: _eff.standoff, fireCd: _eff.fireCd, projSpeed: _eff.projSpeed, burst: _eff.burst, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
+    aimMs: _eff.aimMs,   // build 1448: the wind-up before the round leaves; 0 is the pre-1448 instant shot.4 + Math.random()*0.8,
     exploder: !!ty.exploder, blastR: ty.blastR||6, blastDmg: ty.blastDmg||40,   // build 628: Sapper detonation
     strafe: !!ty.strafe,   // build 633: ranged enemy strafes while holding standoff
     cover: !!ty.cover, bravery: ty.cover ? (0.30 + Math.random()*0.15) : 0, flankSide: Math.random()<0.5?1:-1,   // build 1189: the bot brain's cover-break + flank, per type
@@ -24400,7 +24649,11 @@ function fireSoftTex(){
   const g=x.createRadialGradient(32,32,0, 32,32,32);
   g.addColorStop(0,'rgba(255,255,255,0.9)'); g.addColorStop(0.22,'rgba(255,255,255,0.45)'); g.addColorStop(0.55,'rgba(255,255,255,0.12)'); g.addColorStop(1,'rgba(255,255,255,0)');
   x.fillStyle=g; x.fillRect(0,0,64,64);
-  const t=new THREE.CanvasTexture(c); t.needsUpdate=true; _fireSoftTex=t; return t;
+  /* build 1441: every stop here is pure white, and 0 and 1 are FIXED POINTS of the sRGB transfer, so the
+     tag cannot move a pixel of this sheet today. It goes through the shared writer anyway so that the rule
+     is "a canvas that carries a COLOUR says so" with no per-file exceptions to remember — the day somebody
+     gives this gradient a warm stop, it is already right. */
+  const t=_srgbTex(new THREE.CanvasTexture(c)); t.needsUpdate=true; _fireSoftTex=t; return t;
 }
 // One shared shader material for ALL fire (zones + props). Per-particle size/colour/alpha come from buffer
 // attributes, so we can have hundreds of small, size-varied particles that overlap into a continuous flame
@@ -25227,7 +25480,7 @@ function _weatherSprite(){
   const g=cv.getContext('2d'), gr=g.createRadialGradient(32,32,2,32,32,30);
   gr.addColorStop(0,'rgba(255,255,255,1)'); gr.addColorStop(0.55,'rgba(255,255,255,0.7)'); gr.addColorStop(1,'rgba(255,255,255,0)');
   g.fillStyle=gr; g.fillRect(0,0,64,64);
-  _weatherSpriteTex=new THREE.CanvasTexture(cv);
+  _weatherSpriteTex=_srgbTex(new THREE.CanvasTexture(cv));   /* build 1441: white-only, so the tag is a no-op today — see fireSoftTex for why it is applied anyway */
   return _weatherSpriteTex;
 }
 function _weatherWindVec(){
@@ -26258,6 +26511,12 @@ function refreshSpawnRegionMarker(){
 }
 function setSpawnRegionMarkerVisible(v){ if(spawnRegionMarker) spawnRegionMarker.visible=v; }
 function addDeathZone(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)}; deathZones.push({ x:_dp.x, z:_dp.z, r:6, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity?surfaceTopAt(_dp.x,_dp.z):(typeof terrainHeightAt==='function'?terrainHeightAt(_dp.x,_dp.z):0)), h:3 }); selDeathZone=deathZones.length-1; editorActive='deathzones'; refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel(); }
+/* build 1445: every other zone type had a named remover; the audio zone's lived INLINE in its panel's
+   button, which is why it was the one type the Delete key could not have reached even by asking. */
+/* build 1445: and the ADD had no name either, inlined in both the panel button and the + menu — two copies
+   of one object literal, so a retuned default radius would have moved in one place only. */
+function addAudioZone(x, z){ pushUndoSnapshot(); audioZones.push({ x:+(+x).toFixed(2), z:+(+z).toFixed(2), r:14, url:'', vol:0.8, loop:true }); selAudioZone=audioZones.length-1; editorActive='audiozones'; refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
+function removeAudioZone(i){ pushUndoSnapshot(); audioZones.splice(i,1); if(selAudioZone>=audioZones.length) selAudioZone=audioZones.length-1; stopAudioZones(); refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
 function removeDeathZone(i){ pushUndoSnapshot(); deathZones.splice(i,1); if(selDeathZone>=deathZones.length) selDeathZone=deathZones.length-1; refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel(); }
 // Per-frame: kill the player if they're inside a lethal zone.
 let _inDeathZone=false;
@@ -26283,7 +26542,10 @@ function updateDeathZones(){
 }   // rings are editor-only; hide on play without rebuilding
 function disposePickupMarkers(){ for(const m of pickupMarkers){ scene.remove(m); } pickupMarkers.length=0; }
 function addPickupSpot(kind){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(6):{x:+(player.pos.x).toFixed(2),z:+(player.pos.z).toFixed(2)}; const spot={ x:_dp.x, z:_dp.z, kind:kind||'health' }; if(spot.kind==='item'){ const ids=Object.keys(invCatalog); spot.item=ids[0]||''; } pickupSpots.push(spot); selPickup = pickupSpots.length-1; refreshPickupMarkers(); renderEditorFields(); }
-function removePickupSpot(i){ pushUndoSnapshot(); pickupSpots.splice(i,1); selPickup=-1; refreshPickupMarkers(); renderEditorFields(); }
+/* build 1445: CLAMP rather than clear, the way every zone type's remover does. This cleared the selection,
+   so pressing Delete twice removed one spot — while the same two presses on a zone, a prop or a light
+   remove two. Surfaced by the parity probe, which measured 2 deletes leaving 1. */
+function removePickupSpot(i){ pushUndoSnapshot(); pickupSpots.splice(i,1); selPickup = pickupSpots.length ? Math.min(i, pickupSpots.length-1) : -1; refreshPickupMarkers(); renderEditorFields(); }
 // ---------- Audio zones: ambient sounds that fade up as the player nears the center ----------
 function disposeAudioZoneMarkers(){ for(const m of audioZoneMarkers){ scene.remove(m); try{ m.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} } audioZoneMarkers.length=0; }
 function refreshAudioZoneMarkers(){
@@ -28100,7 +28362,7 @@ function makeNameSprite(text, team){
   x.font='bold 30px sans-serif'; x.textAlign='center'; x.textBaseline='middle';
   x.fillStyle='rgba(0,0,0,0.45)'; x.fillRect(0,0,256,64);
   x.fillStyle = team===0 ? '#ff8a93' : (team===1 ? '#9fd0ff' : '#9fd8ff'); x.fillText(String(text).slice(0,14),128,34);
-  const spr=new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(c), depthTest:true, depthWrite:false, transparent:true }));   // depthTest so walls/props hide the tag (no see-through wallhack); depthWrite off so it doesn't occlude other transparents
+  const spr=new THREE.Sprite(new THREE.SpriteMaterial({ map:_srgbTex(new THREE.CanvasTexture(c)), depthTest:true, depthWrite:false, transparent:true }));   // depthTest so walls/props hide the tag (no see-through wallhack); depthWrite off so it doesn't occlude other transparents
   spr.scale.set(2.4,0.6,1);
   return spr;
 }
@@ -31183,9 +31445,16 @@ function _procVfxSheet(kind){
     try{ draw(cx, cell, p, rnd); }catch(e){}
     cx.restore();
   }
-  const tex=new THREE.CanvasTexture(cv);
+  /* build 1441: this line used to be its own tag, written as a bare "if colorSpace is in tex". On r149 a
+     Texture carries .encoding and has NO .colorSpace at all, so that test is FALSE and the assignment never
+     ran — the muzzle flash and the explosion sheets, the two most-drawn textures in the game and both
+     ADDITIVE (so an over-bright decode goes straight into the frame), believed they were tagged for as long
+     as they have existed. A tag written against a three version you are not running is not a tag; the shared
+     writer tries both spellings, which is the whole reason it has two branches. Proven against the vendored
+     build in test-1441 rather than asserted. */
+  const tex=_srgbTex(new THREE.CanvasTexture(cv));
   tex.minFilter=THREE.LinearFilter; tex.magFilter=THREE.LinearFilter; tex.wrapS=tex.wrapT=THREE.ClampToEdgeWrapping;
-  if('colorSpace' in tex) tex.colorSpace=THREE.SRGBColorSpace; tex.generateMipmaps=false; tex.repeat.set(1/cfg.cols, 1/cfg.rows);
+  tex.generateMipmaps=false; tex.repeat.set(1/cfg.cols, 1/cfg.rows);
   try{ if(typeof renderer!=='undefined' && renderer && renderer.initTexture) renderer.initTexture(tex); }catch(e){}
   return tex;
 }
@@ -31196,7 +31465,7 @@ function loadVfxTexture(kind){
   if(!cfg.url || _vfxPng[kind]) return;                          // no hosted override to try (or already tried)
   _vfxPng[kind]=1;
   new THREE.TextureLoader().load(cfg.url,
-    (t)=>{ t.minFilter=THREE.LinearFilter; t.magFilter=THREE.LinearFilter; t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; if('colorSpace' in t) t.colorSpace=THREE.SRGBColorSpace; t.generateMipmaps=false; t.repeat.set(1/cfg.cols, 1/cfg.rows); try{ if(typeof renderer!=='undefined' && renderer && renderer.initTexture) renderer.initTexture(t); }catch(e){} const _old=_vfxTex[kind]; _vfxTex[kind]={tex:t}; console.info('[VFX] loaded '+kind+' ✓ '+cfg.url); warmFlipbookShaders(); if(_old && _old.proc && _old.tex && _old.tex.dispose) _old.tex.dispose(); },
+    (t)=>{ _srgbTex(t); t.minFilter=THREE.LinearFilter; t.magFilter=THREE.LinearFilter; t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.generateMipmaps=false;   /* build 1441: this carried the same never-firing tag as the procedural sheet beside it, so a creator's OWN flipbook url was untagged too */ t.repeat.set(1/cfg.cols, 1/cfg.rows); try{ if(typeof renderer!=='undefined' && renderer && renderer.initTexture) renderer.initTexture(t); }catch(e){} const _old=_vfxTex[kind]; _vfxTex[kind]={tex:t}; console.info('[VFX] loaded '+kind+' ✓ '+cfg.url); warmFlipbookShaders(); if(_old && _old.proc && _old.tex && _old.tex.dispose) _old.tex.dispose(); },
     undefined,
     ()=>{ console.warn('[VFX] no '+kind+' sheet at '+cfg.url+' — using the built-in procedural one'); });   // keep the procedural sheet
 }
@@ -31435,7 +31704,63 @@ let shake = 0;                 // current trauma 0..1, decays each frame
 let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0, _fireFov = 0;
 /* build 1313: EVERY shake in the engine goes through here — blasts, hits, kills, car impacts, the melee
    thump — so scaling it at this one point covers all of them, and a future one for free. */
-function addShake(amt){ shake = Math.min(1, shake + amt * ((typeof a11y!=='undefined') ? a11y.shake : 1)); }
+/* ---- build 1447: haptics ------------------------------------------------------------------------------
+   Greped `vibrat|hapticActuators|vibrationActuator` across the engine: the only two hits were PROSE about
+   enemy separation. So there was no rumble of any kind, on a game that ships a full gamepad prefs panel and
+   a touch layout editor — the same "it clearly intends those inputs to be first-class" argument build 1316
+   made for the aim assist.
+
+   It rides `addShake`, which is already the ONE chokepoint for "the world just jolted": build 1313 routed
+   blasts, hits, kills, car impacts, the melee thump and every weapon's fire through it precisely so a single
+   scale could cover them. So every jolt-worthy event gets haptics with one call site, INCLUDING the ones
+   nobody has written yet — and the amount is already a magnitude, so it maps across without a second table
+   of numbers to keep in step.
+
+   It reads the RAW amount, before build 1313's `a11y.shake` scale. Those are different senses: a player who
+   turned the camera down because motion makes them ill has not asked for their controller to go quiet, and
+   a player who dislikes rumble has not asked to lose the camera. Two sliders, one event. */
+const RUMBLE_GAP = 40;      // ms — a smaller jolt inside this window must not cut a bigger one short
+let _rumbleAt = -1e9, _rumbleLast = 0;
+function _rumble(amt){
+  /* `a11y` is a `let` declared ~3,000 lines below this, and `typeof` does NOT guard a temporal dead zone —
+     it THROWS for an uninitialised binding, which is the trap builds 1127, 1331, 1350, 1383 and 1411 each
+     lost something to. A try/catch is what actually guards one. addShake is not reachable during module
+     evaluation today, so this is belt and braces on a function that must never be able to take the frame
+     loop down for a comfort setting. */
+  let pref = 1; try{ pref = a11y.rumble; }catch(e){}
+  if(!(pref > 0) || !(amt > 0.004)) return;              // 0 is off, and a hair of trauma is not a jolt
+  const now = (typeof performance!=='undefined') ? performance.now() : Date.now();
+  if(now - _rumbleAt < RUMBLE_GAP && amt <= _rumbleLast) return;
+  _rumbleAt = now; _rumbleLast = amt;
+  const a = Math.min(1, amt) * pref;
+  const ms = Math.round(50 + a * 220);                   // duration tracks amplitude, as SHAKE_DECAY's does
+  try{
+    const pads = navigator.getGamepads ? navigator.getGamepads() : null;
+    const gp = pads ? pads[(typeof padIndex==='number' && padIndex>=0) ? padIndex : 0] : null;
+    if(gp){
+      /* strong is the low-frequency body of the rumble, weak the buzz. Doubling the weak channel is what
+         makes a gunshot (amt ~0.1) read as a crisp tick rather than as nothing, while a blast still has
+         both. A rejected promise here would reach build 1330's error overlay as a red bar on screen, so
+         the catch is not optional. */
+      if(gp.vibrationActuator && gp.vibrationActuator.playEffect){
+        const p = gp.vibrationActuator.playEffect('dual-rumble',
+          { startDelay:0, duration:ms, strongMagnitude:a, weakMagnitude:Math.min(1, a*2) });
+        if(p && p.catch) p.catch(()=>{});
+      } else if(gp.hapticActuators && gp.hapticActuators[0] && gp.hapticActuators[0].pulse){
+        const p = gp.hapticActuators[0].pulse(a, ms);
+        if(p && p.catch) p.catch(()=>{});
+      }
+    }
+    /* A phone has no strength channel, so the DURATION carries the whole magnitude — and it is kept short,
+       because a long buzz on a handheld reads as a fault rather than as feedback. Touch only: a desktop
+       browser that exposes navigator.vibrate has nothing to vibrate. */
+    if(typeof isTouch!=='undefined' && isTouch && navigator.vibrate) navigator.vibrate(Math.round(8 + a*45));
+  }catch(e){}
+}
+function addShake(amt){
+  shake = Math.min(1, shake + amt * ((typeof a11y!=='undefined') ? a11y.shake : 1));
+  _rumble(amt);   /* build 1447: the RAW amount — rumble is its own sense and its own slider */
+}
 /* build 1358: smooth trauma noise. Three sines at incommensurate rates — dominant ~24 Hz, which is what
    reads as a shake rather than as sparkle — summing to +/-1. A function of TIME, so the motion a player
    sees is the same at any refresh rate; the previous Math.random() per frame was literally a different
@@ -32127,8 +32452,8 @@ function turretFire(){
     const dmg=TURRET_GUN.dmg*(isHead?HEADSHOT_MUL:1);
     let dn=hit.object, dprop=null; while(dn&&!dprop){ if(_isDamageable(dn)) dprop=dn; dn=dn.parent; }   /* build 1392 */
     if(dprop){ const dir=raycaster.ray.direction.clone().normalize();
-      if(!clientMode){ if(!damageProp(dprop,dmg,hit.point,dir,7,NET.myId)) pushDynamic(dprop,dir,7,hit.point); }
-      else if(NET.conn){ try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:dmg, dir:[dir.x,dir.y,dir.z], s:7, pt:[hit.point.x,hit.point.y,hit.point.z]}); }catch(e){} }
+      if(!clientMode){ if(!damageProp(dprop,dmg,hit.point,dir,7,NET.myId,true)) pushDynamic(dprop,dir,7,hit.point); }   /* build 1443 */
+      else if(NET.conn){ try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:dmg, dir:[dir.x,dir.y,dir.z], s:7, pt:[hit.point.x,hit.point.y,hit.point.z]}); }catch(e){} _propDmgNumber(dprop, dmg, hit.point, false); }   /* build 1443 */
       spark(hit.point,0xffd166); showHitmarker(); }
     else if(clientMode){ let node=hit.object,id=null; while(node&&id==null){ if(node.userData&&node.userData.enemyId!=null) id=node.userData.enemyId; node=node.parent; }
       if(id!=null){ if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:dmg}); }catch(e){} spark(hit.point,isHead?0xffd166:0xff6b6b); showHitmarker(isHead?'head':'hit'); if(isHead) SFX.headshot(); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } }
@@ -32306,7 +32631,7 @@ function _getPuffTex(){
     const grd=g.createRadialGradient(32,32,0,32,32,32);
     grd.addColorStop(0,'rgba(255,255,255,0.85)'); grd.addColorStop(0.45,'rgba(255,255,255,0.32)'); grd.addColorStop(1,'rgba(255,255,255,0)');
     g.fillStyle=grd; g.beginPath(); g.arc(32,32,32,0,Math.PI*2); g.fill();
-    _puffTex=new THREE.CanvasTexture(c); _puffTex.anisotropy=1;
+    _puffTex=_srgbTex(new THREE.CanvasTexture(c)); _puffTex.anisotropy=1;   /* build 1441: white-only, no-op today */
   }catch(e){ _puffTex=false; }
   return _puffTex||undefined;
 }
@@ -32317,7 +32642,7 @@ function _getSkidTex(){
     grd.addColorStop(0,'rgba(0,0,0,0)'); grd.addColorStop(0.5,'rgba(0,0,0,0.9)'); grd.addColorStop(1,'rgba(0,0,0,0)');
     g.fillStyle=grd; g.fillRect(0,0,32,64);
     for(let i=0;i<140;i++){ g.fillStyle='rgba(0,0,0,'+(Math.random()*0.25)+')'; g.fillRect(6+Math.random()*20, Math.random()*64, 1.5, 1.5); }   // a little grain
-    _skidTex=new THREE.CanvasTexture(c);
+    _skidTex=_srgbTex(new THREE.CanvasTexture(c));   /* build 1441: black-only, no-op today */
   }catch(e){ _skidTex=false; }
   return _skidTex||undefined;
 }
@@ -33240,6 +33565,19 @@ function _pickupLabel(p){   // build 616: human-readable name for an interact-pi
   return p.kind;
 }
 
+/* build 1451: the footprint distance one prop is from the player — the clamp-to-AABB the four
+   interactable categories all used to compute separately. 3D, so a door one storey up does not prompt from
+   the floor below; falls back to the origin for a prop with no box yet. */
+function _interDist(o, ud, px, py, pz){
+  const b = ud.box;
+  if(b){
+    const cx = Math.max(b.min.x, Math.min(px, b.max.x));
+    const cy = Math.max(b.min.y, Math.min(py, b.max.y));
+    const cz = Math.max(b.min.z, Math.min(pz, b.max.z));
+    return Math.hypot(px-cx, py-cy, pz-cz);
+  }
+  return Math.hypot(px-o.position.x, py-o.position.y, pz-o.position.z);
+}
 function checkProximity(){
   if(shopOpen) return;
   nearTarget = null;
@@ -33253,73 +33591,84 @@ function checkProximity(){
     const d = Math.hypot(player.pos.x-ch.pos.x, player.pos.z-ch.pos.z);
     if(d < 3.5){ nearTarget = { type:'chest', chest:ch }; break; }
   }
-  // activatable animated props (only if not already next to a station/chest). Measure distance to the
-  // prop's footprint (AABB), not its center, so large/solid props you can't walk into still register.
+  /* build 1451: this was FIVE full walks of `propModels` per frame — anim, xanim, npc, interact and
+     vehicle — each re-reading every prop's `userData` to test one rare flag, plus a `concat` allocating an
+     array every frame (build 1168's class). On the 959-prop fixture that is ~4,800 iterations a frame to
+     answer "is there anything to press E on", and the answer is almost always no.
+
+     It is ONE walk now. The five categories are collected in a single pass and the winner is picked
+     afterwards in the SAME priority order — so the answer is identical, including the tie-breaks, while the
+     array is traversed once and each prop's `userData` dereferenced once. The box-clamp distance is
+     computed at most once per prop rather than up to four times.
+
+     The short-circuit the old shape had (an anim hit skipped the later walks entirely) is deliberately gone:
+     it only paid off for the prop that MATCHED, which is the rare case, while every prop that matched
+     nothing paid four extra traversals. The flag tests per prop are unchanged in number. */
+  let _bAnim=null, _dAnim=2.2, _bXa=null, _dXa=2.6, _bNpc=null, _dNpc=2.8, _bUse=null, _dUse=2.4;
+  let _bVeh=null, _dVeh=Infinity;
+  const _px=player.pos.x, _py=player.pos.y, _pz=player.pos.z;
+  const _vehWant = !nearTarget && !drivingCar;
   if(!nearTarget){
-    let best=null, bd=2.2;
-    for(const o of propModels){
-      if(!o || (o.userData.animTrigger||(o.userData.animMode==='trigger'?'interact':'auto'))!=='interact' || !(o.userData.animActions && o.userData.animActions.length)) continue;
-      let d;
-      const b = o.userData.box;
-      if(b){
-        const cx = Math.max(b.min.x, Math.min(player.pos.x, b.max.x));
-        const cy = Math.max(b.min.y, Math.min(player.pos.y, b.max.y));
-        const cz = Math.max(b.min.z, Math.min(player.pos.z, b.max.z));
-        d = Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz);   // distance to the mesh box in 3D (so a door one floor up doesn't prompt from below)
-      } else {
-        d = Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
+    /* both lists, without the concat: build 893's grid clones are enterable too */
+    const _extra = (typeof _gridCars!=='undefined' && _gridCars.length) ? _gridCars : null;
+    const _n = propModels.length, _m = _extra ? _extra.length : 0;
+    for(let _i=0; _i<_n+_m; _i++){
+      const o = _i<_n ? propModels[_i] : _extra[_i-_n];
+      if(!o) continue;                                  // build 1389: propModels carries null holes
+      const ud = o.userData; if(!ud) continue;
+      /* The footprint distance, computed at most ONCE per prop and shared by the four categories. Written
+         as a flag rather than a closure on purpose: an arrow function here would allocate once per prop per
+         frame, which is the very cost build 1168 removed from this loop's neighbours. */
+      let d = 0, dOK = false;
+      {
+        /* `nearTarget` cannot change inside this loop — the outer gate already established it is null —
+           so these four are unconditional here. The block is kept only to scope `a`. */
+        // activatable animated props — distance to the footprint (AABB), not the centre, so a large solid
+        // prop you cannot walk into still registers
+        if((ud.animTrigger||(ud.animMode==='trigger'?'interact':'auto'))==='interact' && ud.animActions && ud.animActions.length){
+          if(!dOK){ d=_interDist(o, ud, _px, _py, _pz); dOK=true; }
+          if(d<_dAnim){ _dAnim=d; _bAnim=o; }
+        }
+        const a = ud.xa;
+        if(a && a.on && a.trig==='interact' && !(a.mode==='once' && a.dest)){   // a fired Once mechanism is spent — xaToggle would no-op, so drop the E prompt too
+          if(!dOK){ d=_interDist(o, ud, _px, _py, _pz); dOK=true; }
+          if(d<_dXa){ _dXa=d; _bXa=o; }
+        }
+        if(ud.dialogue && ud.dialogue.length){   // build 695: a prop with dialogue lines is a talkable NPC
+          if(!dOK){ d=_interDist(o, ud, _px, _py, _pz); dOK=true; }
+          if(d<_dNpc){ _dNpc=d; _bNpc=o; }
+        }
+        if(ud.interact){   // build 1035: props flagged Interactable — one checkbox, no mechanism required
+          if(!dOK){ d=_interDist(o, ud, _px, _py, _pz); dOK=true; }
+          if(d<_dUse){ _dUse=d; _bUse=o; }
+        }
       }
-      if(d < bd){ bd=d; best=o; }
+      if(_vehWant && ud.vehicle){   // build 766: prompt within enterDist of ANY part of the model
+        if(!(ud.nid && typeof _remoteDrivenNids!=='undefined' && _remoteDrivenNids[ud.nid]!=null)){   // build 899: no enter prompt on a car someone else is driving
+          const _k=o.position.x+o.position.z*4096;   // recompute the footprint box only when the car has moved (a parked car: once)
+          if(!ud._enterBox || ud._enterBoxKey!==_k){ ud._enterBox=(ud._enterBox||new THREE.Box3()).setFromObject(o); ud._enterBoxKey=_k; }
+          const bx=ud._enterBox;
+          if(!bx.isEmpty()){
+            const dx=Math.max(bx.min.x-_px, 0, _px-bx.max.x), dz=Math.max(bx.min.z-_pz, 0, _pz-bx.max.z);
+            const vd=Math.hypot(dx,dz);   // distance to the footprint (0 when standing within it)
+            const rad=(ud.vehicle.enterDist!=null?Math.max(0.5,+ud.vehicle.enterDist):2.5);
+            if(vd<rad && vd<_dVeh){ _dVeh=vd; _bVeh=o; }
+          }
+        }
+      }
     }
-    if(best) nearTarget = { type:'anim', obj:best };
   }
-  if(!nearTarget){
-    let best=null, bd=2.6;
-    for(const o of propModels){ const a=o&&o.userData&&o.userData.xa; if(!a||!a.on||a.trig!=='interact') continue;
-      if(a.mode==='once' && a.dest) continue;   // a fired Once mechanism is spent — xaToggle would no-op, so drop the E prompt too
-      const b=o.userData.box; let d;
-      if(b){ const cx=Math.max(b.min.x,Math.min(player.pos.x,b.max.x)), cy=Math.max(b.min.y,Math.min(player.pos.y,b.max.y)), cz=Math.max(b.min.z,Math.min(player.pos.z,b.max.z)); d=Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz); }
-      else d=Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
-      if(d<bd){ bd=d; best=o; } }
-    if(best) nearTarget = { type:'xanim', obj:best };
-  }
-  if(!nearTarget){   // build 695: a prop with dialogue lines is a talkable NPC
-    let best=null, bd=2.8;
-    for(const o of propModels){ const dl=o&&o.userData&&o.userData.dialogue; if(!dl||!dl.length) continue;
-      const b=o.userData.box; let d;
-      if(b){ const cx=Math.max(b.min.x,Math.min(player.pos.x,b.max.x)), cy=Math.max(b.min.y,Math.min(player.pos.y,b.max.y)), cz=Math.max(b.min.z,Math.min(player.pos.z,b.max.z)); d=Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz); }
-      else d=Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
-      if(d<bd){ bd=d; best=o; } }
-    if(best) nearTarget = { type:'npc', obj:best };
-  }
-  if(!nearTarget){   // build 1035: props flagged Interactable — one checkbox, no mechanism required
-    let best=null, bd=2.4;
-    for(const o of propModels){ if(!o || !o.userData || !o.userData.interact) continue;
-      const b=o.userData.box; let d;
-      if(b){ const cx=Math.max(b.min.x,Math.min(player.pos.x,b.max.x)), cy=Math.max(b.min.y,Math.min(player.pos.y,b.max.y)), cz=Math.max(b.min.z,Math.min(player.pos.z,b.max.z)); d=Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz); }
-      else d=Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
-      if(d<bd){ bd=d; best=o; } }
-    if(best) nearTarget = { type:'use', obj:best };
-  }
+  /* the SAME priority order the five sequential walks had */
+  if(!nearTarget && _bAnim) nearTarget = { type:'anim', obj:_bAnim };
+  if(!nearTarget && _bXa)   nearTarget = { type:'xanim', obj:_bXa };
+  if(!nearTarget && _bNpc)  nearTarget = { type:'npc', obj:_bNpc };
+  if(!nearTarget && _bUse)  nearTarget = { type:'use', obj:_bUse };
   if(!nearTarget && !mountedTurret){
     let best=null, bd=2.8;
-    for(const g of turretModels){ const d=Math.hypot(player.pos.x-g.position.x, player.pos.z-g.position.z); if(d<bd){ bd=d; best=g; } }
+    for(const g of turretModels){ const d=Math.hypot(_px-g.position.x, _pz-g.position.z); if(d<bd){ bd=d; best=g; } }
     if(best) nearTarget = { type:'turret', turret:best };
   }
-  if(!nearTarget && !drivingCar){   // build 766: prompt when within enterDist of ANY part of the model (its footprint), not a fixed radius from the origin
-    const px=player.pos.x, pz=player.pos.z; let best=null, bd=Infinity;
-    for(const o of ((typeof _gridCars!=='undefined' && _gridCars.length) ? propModels.concat(_gridCars) : propModels)){ if(!o || !o.userData.vehicle) continue;   // build 893: grid clones are enterable too
-      if(o.userData.nid && typeof _remoteDrivenNids!=='undefined' && _remoteDrivenNids[o.userData.nid]!=null) continue;   // build 899: no enter prompt on a car someone else is driving
-      const _k=o.position.x+o.position.z*4096;   // recompute the footprint box only when the car has moved (a parked car: once)
-      if(!o.userData._enterBox || o.userData._enterBoxKey!==_k){ o.userData._enterBox=(o.userData._enterBox||new THREE.Box3()).setFromObject(o); o.userData._enterBoxKey=_k; }
-      const bx=o.userData._enterBox; if(bx.isEmpty()) continue;
-      const dx=Math.max(bx.min.x-px, 0, px-bx.max.x), dz=Math.max(bx.min.z-pz, 0, pz-bx.max.z);
-      const d=Math.hypot(dx,dz);   // distance to the footprint (0 when standing within it)
-      const rad=(o.userData.vehicle.enterDist!=null?Math.max(0.5,+o.userData.vehicle.enterDist):2.5);
-      if(d<rad && d<bd){ bd=d; best=o; }
-    }
-    if(best) nearTarget = { type:'vehicle', obj:best };
-  }
+  if(!nearTarget && _bVeh) nearTarget = { type:'vehicle', obj:_bVeh };
   if(!nearTarget){   // build 616: pickups flagged "require interact" wait here for E instead of auto-collecting
     let best=null, bd=2.2;
     for(const p of powerups){ if(!p || !p.interact || !p.ready) continue; const d=Math.hypot(player.pos.x-p.x, player.pos.z-p.z); if(d<bd){ bd=d; best=p; } }
@@ -33924,13 +34273,16 @@ function _makeDefaultDecalTex(){
   x.fillStyle = g; x.fillRect(0,0,64,64);
   x.globalCompositeOperation = 'destination-out';   // ragged edge so repeated holes don't read as clones
   for(let i=0;i<7;i++){ const a=Math.random()*Math.PI*2, r=24+Math.random()*7; x.beginPath(); x.arc(32+Math.cos(a)*r, 32+Math.sin(a)*r, 5+Math.random()*6, 0, Math.PI*2); x.fill(); }
-  return new THREE.CanvasTexture(c);
+  /* build 1441: the hole's core is rgba(8,6,4,.95). Read as linear that is 0.031 against the 0.0024 it
+     means — thirteen times too bright, which is why a bullet hole read as a pale smudge and was at its
+     worst in a dark interior, where the "hole" was brighter than the wall it was in. */
+  return _srgbTex(new THREE.CanvasTexture(c));
 }
 function _getDecalTex(){
   const url = (decalCfg && decalCfg.url) || '';
   if(_decalTex && _decalTexUrl === url) return _decalTex;
   _decalTexUrl = url;
-  if(url){ try{ _decalTex = new THREE.TextureLoader().load(url); }catch(e){ _decalTex = _makeDefaultDecalTex(); } }
+  if(url){ try{ _decalTex = _srgbTex(new THREE.TextureLoader().load(url)); }catch(e){ _decalTex = _makeDefaultDecalTex(); } }   /* build 1441: a creator's own decal image is a colour image too — this was the one loader in the file that did not say so */
   else _decalTex = _makeDefaultDecalTex();
   return _decalTex;
 }
@@ -34334,7 +34686,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1439 · 2026-08-08';
+const BUILD_VERSION = 'build 1453 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34538,7 +34890,12 @@ try{ const _ms = parseFloat(localStorage.getItem('breach_mouse_sens')); if(isFin
 //    once; asking again is the accessibility failure one level up. `prefers-reduced-motion: reduce` sets the
 //    defaults to a calm baseline on first run, and an explicit choice always wins after that.
 const A11Y_KEY = 'breach_a11y';
-const A11Y_DEFAULT = { shake:1, flash:1, blur:1, sway:1, hitstop:1 };
+/* build 1447: `rumble` belongs in this blob rather than beside the gamepad bindings, and the blob is what
+   decides where the slider goes. Every key here answers one question — HOW HARD DOES THE GAME PHYSICALLY
+   AFFECT ME — and rumble is that question for the hands rather than the eyes. It also inherits the blob's
+   0..1 clamp, its persistence and its Restore-defaults button for nothing, which build 1333 could not do
+   for interface size because that one reaches 1.75. */
+const A11Y_DEFAULT = { shake:1, flash:1, blur:1, sway:1, hitstop:1, rumble:1 };
 let a11y = Object.assign({}, A11Y_DEFAULT);
 function _a11yOsReduced(){ try{ return !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){ return false; } }
 function loadA11y(){
@@ -34854,18 +35211,26 @@ addEventListener('contextmenu', e=>{
   let lookId=null, lx=0, ly=0;
   look.addEventListener('pointerdown', e=>{ if(_ctrlPref!=='desktop') isTouch=true; lookId=e.pointerId; lx=e.clientX; ly=e.clientY; try{look.setPointerCapture(e.pointerId);}catch(_){}
     // In the editor a press first tries to grab a gizmo axis handle; otherwise it's a look-drag (or, if it ends without moving, a tap-to-select).
-    if(editorOpen){ editorDragMoved=false; if(typeof tryGizmoGrab==='function' && tryGizmoGrab(e)){ editorDragMoved=true; } else { gizmoDrag=null; } }
+    /* build 1444: the SAME chain the mouse runs, so a press means the same thing under a finger — the
+       terrain brush and the marquee were unreachable on touch until this line, because this branch knew
+       about the gizmo and nothing else. */
+    if(editorOpen){ editorDragMoved=false; if(typeof _edPressDown==='function'){ if(!_edPressDown(e)) gizmoDrag=null; } }
     e.preventDefault(); });
   look.addEventListener('pointermove', e=>{ if(e.pointerId!==lookId) return; const dx=e.clientX-lx, dy=e.clientY-ly;
     if(editorOpen){
-      if(gizmoDrag){ gizmoDragMove(e); editorDragMoved=true; }                 // drag the grabbed handle (move/rotate/scale)
-      else { touchLookDX+=dx; touchLookDY+=dy; if(Math.abs(dx)+Math.abs(dy)>3) editorDragMoved=true; }   // otherwise orbit the fly-cam
+      /* build 1444: brush stroke / gizmo handle / marquee box, in the mouse's own order; anything the
+         chain does not claim is still a look-drag, which is what this pad is for. */
+      if(!(typeof _edPressMove==='function' && _edPressMove(e))){ touchLookDX+=dx; touchLookDY+=dy; if(Math.abs(dx)+Math.abs(dy)>3) editorDragMoved=true; }
       lx=e.clientX; ly=e.clientY; e.preventDefault(); return;
     }
     touchLookDX+=dx; touchLookDY+=dy; lx=e.clientX; ly=e.clientY; e.preventDefault(); });
   const lookEnd=e=>{ if(e.pointerId!==lookId) return; lookId=null;
-    if(editorOpen){ if(!editorDragMoved){ renderer.domElement.dispatchEvent(new MouseEvent('click', { clientX:e.clientX, clientY:e.clientY, bubbles:true })); }   // a clean tap selects the prop/light/spawn under it
-      const _wg=gizmoDrag; gizmoDrag=null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } };
+    if(editorOpen){
+      /* the chain finishes first — a marquee that has just selected thirty props must not then be read as
+         a clean tap that selects the one under the finger */
+      if(typeof _edPressUp==='function') _edPressUp(e);
+      if(!editorDragMoved){ renderer.domElement.dispatchEvent(new MouseEvent('click', { clientX:e.clientX, clientY:e.clientY, bubbles:true })); }   // a clean tap selects the prop/light/spawn under it
+    } };
   look.addEventListener('pointerup', lookEnd); look.addEventListener('pointercancel', lookEnd);
   // helpers for buttons
   const hold=(id,on,off)=>{ const b=document.getElementById(id); if(!b) return;
@@ -36416,7 +36781,30 @@ function damageableProps(){          // reused array (build 1168): a swing must 
 // `userData.breakable = true` on EVERY prop it loads unless the file says `brk:false`, so reusing it would
 // have made every wall in every level ever saved shootable. `shootable` defaults to undefined, so nothing
 // that exists today changes by one byte.
-function damageProp(obj, dmg, point, dir, power, byId){
+/* build 1443: a prop takes a hit and says NOTHING about how hard. Every enemy damage site has spawned a
+   floating number since build 625 — the shot, the swing, the mounted turret — and `damageProp` never did,
+   so the shooting-range plate that builds 1390/1391/1397/1421/1422 exist to make shootable, resettable and
+   scoreable was the one target in the game with no readout of the shot that hit it.
+
+   The rule this follows is the engine's OWN, read off the existing call sites rather than invented: a
+   damage number is the SHOOTER'S feedback on DIRECT, AIMED damage. Explosions never spawn one (a blast
+   across twenty enemies would be a wall of numbers) and neither does damage another player dealt. That is
+   why the decision is a parameter the aiming call sites pass rather than something `damageProp` infers
+   from `byId` — a grenade you threw carries your own id too.
+
+   WHERE it appears is the prop-specific part: an imported prop's ORIGIN can sit metres off its mass, so a
+   blast with no contact point falls back to the collider box's centre, which is build 1439's lesson for the
+   aim assist one system along. */
+function _propDmgNumber(obj, dmg, point, broke){
+  let p = point;
+  if(!p){
+    const b = obj && obj.userData && obj.userData.box;
+    p = b ? { x:(b.min.x+b.max.x)*0.5, y:(b.min.y+b.max.y)*0.5, z:(b.min.z+b.max.z)*0.5 }
+          : (obj && obj.position);
+  }
+  if(p) spawnDamageNumber(p, dmg, broke, false);   /* spawnDamageNumber owns the on/off, size and colours */
+}
+function damageProp(obj, dmg, point, dir, power, byId, showNum){
   if(!obj.userData.phys && !obj.userData.shootable) return false;
   /* build 1421: `breakable:false` means it never BREAKS — not that nothing lands on it.
      Reported from play, one message after the range loop first worked: "if you don’t also have Breakable
@@ -36461,7 +36849,16 @@ function damageProp(obj, dmg, point, dir, power, byId){
   if(typeof NET==='undefined' || NET.mode!=='client'){
     try{ _lgPropEvent(obj, 'damaged', _propCtx(obj)); }catch(e){}
   }
-  if(_brk && obj.userData.hp <= 0){ shatterProp(obj, point, dir, power, byId); return true; }
+  const _broke = _brk && obj.userData.hp <= 0;
+  /* Before the shatter, deliberately: shatterProp takes the prop out of the scene, and the number belongs
+     at the impact rather than at wherever the debris ended up. `_broke` gives it the kill styling, which is
+     the same "!" an enemy's killing blow gets.
+     An UNBREAKABLE target still shows its number. Build 1421's rule is that damage LANDS on one — flash,
+     sound, the `damaged` signal — and only the health never drops; a number is that same feedback, and
+     leaving it off would silence the exact prop class a shooting range is built from. The fuse-ignite
+     branch above returns before this line, so the shot that only LIGHTS a barrel correctly shows nothing. */
+  if(showNum) _propDmgNumber(obj, dmg, point, _broke);
+  if(_broke){ shatterProp(obj, point, dir, power, byId); return true; }
   return false;
 }
 // Step the simulation (fixed timestep) and sync dynamic meshes from their bodies. Host/solo only.
@@ -36793,7 +37190,7 @@ function buildInstancing(){
     im.userData._cullGeo = true; im.frustumCulled = true;   /* build 1430: now that its bounds are true */
     im.castShadow = true; im.receiveShadow = true;
     const m = new THREE.Matrix4();
-    list.forEach((o, i)=>{ o.updateMatrixWorld(true); m.copy(o.matrixWorld); im.setMatrixAt(i, m); scene.remove(o); instancedProps.push(o); });
+    list.forEach((o, i)=>{ o.updateMatrixWorld(true); m.copy(o.matrixWorld); im.setMatrixAt(i, m); scene.remove(o); o.userData._instOut = true; instancedProps.push(o); });   /* build 1440: it is drawn by the batch now, so the LOD rungs must leave it alone */
     im.instanceMatrix.needsUpdate = true;
     scene.add(im); instanceMeshes.push(im);
   }
@@ -36825,7 +37222,7 @@ function buildInstancing(){
         im.instanceMatrix.needsUpdate = true;
         scene.add(im); instanceMeshes.push(im);
       }
-      for(const o of list){ scene.remove(o); instancedProps.push(o); }
+      for(const o of list){ scene.remove(o); o.userData._instOut = true; instancedProps.push(o); }   /* build 1440 */
     }
   }
   instancingActive = true;
@@ -36835,7 +37232,7 @@ function teardownInstancing(){
   for(const im of instanceMeshes){ scene.remove(im); _instDisposeCullGeo(im);   /* build 1430: the wrapper, emptied first so the SHARED attributes survive */
     if(!im.userData._sharedMat && im.geometry && im.material && im.material.dispose) im.material.dispose(); }   /* build 1192: model batches share the template's live materials */
   instanceMeshes = [];
-  for(const o of instancedProps){ if(propModels.indexOf(o)>=0) scene.add(o); }   // restore for editing
+  for(const o of instancedProps){ delete o.userData._instOut; if(propModels.indexOf(o)>=0) scene.add(o); }   // restore for editing
   instancedProps = [];
   instancingActive = false;
 }
@@ -36980,8 +37377,8 @@ function _meleeStrike(wep, RANGE, DMG){
     }
     if(target){
       { const o=target, dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize(), pt=tpt;
-        if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:o.userData.nid, d:DMG, dir:[dir.x,dir.y,dir.z], s:8, pt:[pt.x,pt.y,pt.z]}); }catch(e){} playPropHitSound(o, pt); }   /* host-authoritative, exactly like a shot — but the sound is predicted locally (build 1305) */
-        else { const broke=damageProp(o, DMG, pt, dir, 8, NET.myId); if(!broke) pushDynamic(o, dir, 8, pt); }
+        if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:o.userData.nid, d:DMG, dir:[dir.x,dir.y,dir.z], s:8, pt:[pt.x,pt.y,pt.z]}); }catch(e){} playPropHitSound(o, pt); _propDmgNumber(o, DMG, pt, false); }   /* host-authoritative, exactly like a shot — but the sound and the number are predicted locally (builds 1305/1443) */
+        else { const broke=damageProp(o, DMG, pt, dir, 8, NET.myId, true); if(!broke) pushDynamic(o, dir, 8, pt); }   /* build 1443 */
         /* build 1305: "it would also be nice to have some sort of visual that the blow landed". The BULLET
            path has sparked at its hit point since long before this; the swing never did, so a melee hit on a
            prop had no impact at all until the prop broke. The spark goes HERE rather than inside damageProp
@@ -37118,10 +37515,10 @@ function shoot(){
         const dir = raycaster.ray.direction.clone().normalize();
         const power = 6 + w.dmg*0.04;
         const hp = hit.point;
-        if(clientMode){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:w.dmg*dmgMul, dir:[dir.x,dir.y,dir.z], s:power, pt:[hp.x,hp.y,hp.z]}); }catch(e){} playPropHitSound(dprop, hp); }   /* build 1305: damageProp runs on the HOST, so a guest predicts its own impact sound or never hears the crate it just hit */
+        if(clientMode){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:w.dmg*dmgMul, dir:[dir.x,dir.y,dir.z], s:power, pt:[hp.x,hp.y,hp.z]}); }catch(e){} playPropHitSound(dprop, hp); _propDmgNumber(dprop, w.dmg*dmgMul, hp, false); }   /* build 1305: damageProp runs on the HOST, so a guest predicts its own impact sound or never hears the crate it just hit — and build 1443 predicts its own damage NUMBER for the same reason, or the one player who took the shot is the only one who cannot see what it did. `broke` is false because a client cannot know; the PvP path has made that same trade since build 625 */
         else {
           // breakable props take damage; a lethal shot shatters them instead of just shoving
-          const broke = damageProp(dprop, w.dmg*dmgMul, hp, dir, power, NET.myId);
+          const broke = damageProp(dprop, w.dmg*dmgMul, hp, dir, power, NET.myId, true);   /* build 1443: an aimed shot shows its damage, exactly as it does on an enemy */
           if(!broke) pushDynamic(dprop, dir, power, hp);
         }
         spark(hit.point, 0xffd166); if(p===0){ showHitmarker(); if(!_propSndFresh()) SFX.hit(); }   /* build 1314 */
@@ -37206,6 +37603,9 @@ function enemyHurt(en, dmg, sx, sz, byEnemy){   /* build 1355: byEnemy — anoth
   en._slowT=Math.max(en._slowT||0, 0.15);
   if(frac>=0.25){                                         // a heavy hit breaks a commitment
     if(en._windupT){ en._windupT=0; en.cooldown=Math.max(en.cooldown||0,0.5); }
+    /* build 1448: and a gunner's aim. The cooldown was charged when the wind-up STARTED, so breaking it
+       costs the shot outright — which is what makes suppressing fire mean something. */
+    if(en._aimT){ en._aimT=0; en._aimTgt=null; }
     if(en._lungeWind){ en._lungeWind=0; en._lungePending=false; en.cooldown=Math.max(en.cooldown||0,1.0); }
   }
   if(sx!=null && now>(en._evtCd||0) && en.mesh && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
@@ -37837,7 +38237,7 @@ function _dmgTex(txt, color, fs){
   cx.font = 'bold '+fs+'px system-ui, sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
   cx.lineWidth = Math.max(3, fs*0.14); cx.strokeStyle = 'rgba(0,0,0,0.85)'; cx.fillStyle = color;
   cx.strokeText(txt, cv.width/2, cv.height/2); cx.fillText(txt, cv.width/2, cv.height/2);
-  tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter;
+  tex = _srgbTex(new THREE.CanvasTexture(cv)); tex.minFilter = THREE.LinearFilter;
   _dmgTexCache.set(key, tex);
   if(_dmgTexCache.size > _DMG_TEX_MAX){ const old = _dmgTexCache.keys().next().value; const ot = _dmgTexCache.get(old); _dmgTexCache.delete(old); if(ot && ot.dispose) ot.dispose(); }   // evict the least-recently-used (long dead)
   return tex;
@@ -37903,6 +38303,10 @@ function _telegraphFrac(en, nowMs){
      strike zeroes _windupT, the dash consumes _lungePending. Every exit reads -1 on the next frame,
      so the restore follows the STATE and never a timer of its own. */
   if(en._windupT && nowMs < en._windupT) return 1 - (en._windupT - nowMs)/ENEMY_MELEE_WINDUP_MS;
+  /* build 1448: the ranged wind-up is the same kind of thing — a commitment the player can act on — so it
+     rides the same pulse rather than growing a second visual language. Its own window, because a 260 ms
+     tell measured against melee's 320 would read as already half-finished the moment it started. */
+  if(en._aimT && nowMs < en._aimT) return 1 - (en._aimT - nowMs)/(en.aimMs || RANGED_AIM_MS);
   if(en._lungePending && en._lungeWind > nowMs) return 1 - (en._lungeWind - nowMs)/(en.lungeWind||520);
   return -1;
 }
@@ -40857,6 +41261,7 @@ function loop(){
   updateFlipbooks(dt);   // sprite-sheet explosions / smoke / fire
   updateLowHp(dt);       // low-health vignette + heartbeat
   updateHurtDir(dt);     // directional hit indicator
+  _reloadBarTick();      // build 1450: how far through a reload you are
   if(typeof navWarmupTick==='function' && navWarmupTick(dt)){ /* bots held during pre-match build/countdown */ } else updateBots(dt);
   updateXAnim(dt);                       // moving platforms / doors (all peers)
   updateLights(dt);                      // build 699: fade signal-controlled scene lights on/off
@@ -41393,13 +41798,39 @@ function _enStep(en, tvx, tvz, dt){
             if(en._burstN<=0) en._burstTgt=null;
           }
         }
+        /* build 1448: resolve a wound-up shot. Everything is RE-CHECKED here, and the re-check IS the
+           counterplay: duck behind cover during the tell and the round never comes. The cooldown was spent
+           at the START of the wind-up (below), so an aborted shot still costs the enemy its full cycle —
+           the enemy committed, and the player beat it. */
+        else if(en._aimT){
+          if(nowMs >= en._aimT){
+            const tg = en._aimTgt;
+            en._aimT = 0; en._aimTgt = null;
+            if(tg && tg.pos && !editorOpen && en._see && en._chase
+               && Math.abs((tg.pos.y - EYE) - en.mesh.position.y) < 2.6
+               && _losBudget>0
+               && (_losBudget--, !segmentBlocked(en.mesh.position.x, en.mesh.position.z, tg.pos.x, tg.pos.z, (en.mesh.position.y + (tg.pos.y!=null?tg.pos.y:en.mesh.position.y)) * 0.5))){
+              fireEnemyShot(en, tg, (en.burst>1)?0.02:0);
+              en._burstN = Math.max(0,(en.burst||1)-1); en._burstT = en.burstGap; en._burstTgt = (en._burstN>0)?tg:null;
+            }
+          }
+        }
         else if(en._chase && en._see && en.shootCd<=0 && !editorOpen && en._dist < en.standoff*1.7
            && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.6   // roughly the same level — no shooting through a floor
            && _losBudget>0   // build 843: the fire-gate cast draws from the LOS budget too — it was the one unbudgeted raycast left in the wave loop
            && (_losBudget--, !segmentBlocked(en.mesh.position.x, en.mesh.position.z, near.pos.x, near.pos.z, (en.mesh.position.y + (near.pos.y!=null?near.pos.y:en.mesh.position.y)) * 0.5))){
-          fireEnemyShot(en, near, (en.burst>1)?0.02:0);   // round 1 of the burst (or the whole shot for single-fire types)
-          en._burstN = Math.max(0,(en.burst||1)-1); en._burstT = en.burstGap; en._burstTgt = (en._burstN>0)?near:null;
-          en.shootCd = en.fireCd; en._attackT = nowMs + (en.burst>1 ? 450 + en.burst*en.burstGap*1000 : 450);   // attack anim spans the whole burst
+          /* The COOLDOWN IS CHARGED HERE, at the wind-up, not at the shot — so the cycle stays exactly
+             `fireCd` and no authored fire rate is silently slowed by the length of its own tell. Only the
+             first round after acquisition arrives later than it used to. */
+          en.shootCd = en.fireCd; en._attackT = nowMs + (en.burst>1 ? 450 + en.burst*en.burstGap*1000 : 450);   // attack anim spans the whole burst — and it starts at the wind-up, so a modelled gunner visibly raises its weapon
+          const _aim = en.aimMs;
+          if(_aim > 0){
+            en._aimT = nowMs + _aim; en._aimTgt = near;
+            if(typeof SFX!=='undefined' && SFX.rangedWind) SFX.rangedWind(en.mesh.position);   // positional, so it tells you WHERE from as well as that it is coming
+          } else {
+            fireEnemyShot(en, near, (en.burst>1)?0.02:0);   // an authored 0 is the pre-1448 instant shot, exactly
+            en._burstN = Math.max(0,(en.burst||1)-1); en._burstT = en.burstGap; en._burstTgt = (en._burstN>0)?near:null;
+          }
         }
       } else if(en._chase && en._dist < (en._reach || 2.4) && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.6 && en.cooldown<=0 && !editorOpen && !en._windupT){   // build 539: a chasing melee enemy in reach AND at roughly the same height attacks on PROXIMITY (no LOS gate — at melee range the sightline is moot, and requiring it meant they only swung when literally touching on a cover-heavy map)
         en.cooldown = 0.8; en._attackT = nowMs + 550; en._windupT = nowMs + ENEMY_MELEE_WINDUP_MS;   // build 627: wind up now; the hit lands at the end of the wind-up, not on contact
@@ -41732,6 +42163,63 @@ const _fmtField = (v, k)=> String(+(+v).toFixed(_fieldDp(k)));
 // `fmt` is a DIFFERENT job and deliberately keeps five: it writes the copy-paste block that bakes a tuned
 // value back into the source, where the extra digits are the whole point.
 const fmt = n => (+n).toFixed(5);
+/* build 1446: a slider must never silently rewrite a value it cannot represent.
+   The audit reported that the transform fields "clamp typed values back to +-65 while ARENA reaches 2000".
+   Measured, the typed value is NOT clamped — the commit takes it verbatim, as its own comment says — and
+   the real fault is worse, because it is silent and destructive one gesture later:
+
+     type 300 into Pos X    state 300, prop at x=300, the number field reads 300
+                            ...and the SLIDER reads 65, because a range input clamps its own value
+     touch the slider       state 65, prop teleports 235 units
+
+   Same for height (type 60, one touch, back to 20) and scale (type 40, one touch, back to 9.99). In an
+   800-unit arena the position sliders reach 8.1% of it.
+
+   Two derivations, and neither invents a bound:
+   - POSITION tracks the level, because ARENA is exactly how far the floor goes. At the default arena of 70
+     this is a 5-unit widening of a 65-unit slider, so nothing a creator has today moves; it only opens up
+     for the creator who enlarged their arena, which is the only one who needed it.
+   - ANY field widens to include the value it is showing. That is the general rule, and it is what fixes
+     scale and height without guessing new limits for them: a slider that cannot reach 40 is not entitled to
+     decide the value is 10.
+   The cost is a coarser slider in a big arena — which is what "reaches the whole arena" means, and the
+   number field and the gizmo are the precision tools. */
+/* ONE writer for "show this value on this slider". There were three — the build, the commit's own
+   write-back and the proportional siblings' refresh — and a range input CLAMPS ITS OWN VALUE, so any of
+   them assigning an out-of-range number is what left the slider reading 65 beside a prop standing at 300.
+   Widen, then write. */
+function _showOnRange(rng, fld, v){
+  const r = _fieldRange(fld, v);
+  if(+rng.min !== r.min) rng.min = r.min;
+  if(+rng.max !== r.max) rng.max = r.max;
+  /* The RANGE is not the only thing that can rewrite a value — the STEP lattice does it too, and it is
+     anchored at min. Scale's min is the 0.00001 epsilon that keeps zero out, so 40 is not on its lattice
+     and the element quietly held 39.99001. Rather than predicting that in floating point over an 800-unit
+     span, TRY the authored step and ask the element whether it managed to hold the number, relaxing only
+     when it did not — so arrow-key nudging keeps its 1 cm / 0.1 degree feel everywhere else.
+     The order matters and cost a run: writing the value first and RESTORING the step afterwards re-clamps
+     it, because assigning `step` re-sanitises `value`. The restore was undoing the fix. */
+  if(fld.step != null) rng.step = fld.step;
+  rng.value = v;
+  /* HALF A STEP is the tolerance, not an epsilon, and the difference is a real one. A correct rounding can
+     never move a value by more than half a step, so anything beyond that means the element could not
+     represent the number and fell back to a boundary — which is the rewrite worth relaxing for (40 on
+     scale's lattice becomes 39.99001, off by 0.00999 of a 0.01 step). Below it is ordinary quantisation
+     that every field has always had: scale's min is the 0.00001 epsilon keeping zero out, so its lattice is
+     offset from every round number and a 2 already shows as 2.00001. Relaxing there would drop the authored
+     step on almost every scale value and make arrow-key nudging coarse, to hide a ten-microme difference. */
+  const _tol = (+fld.step > 0) ? +fld.step * 0.5 : 1e-9;
+  if(Math.abs(+rng.value - v) > _tol){ rng.step = 'any'; rng.value = v; }
+}
+function _fieldRange(fld, v){
+  let lo = fld.min, hi = fld.max;
+  if(fld.k === 'px' || fld.k === 'pz'){
+    const A = (typeof ARENA === 'number' && isFinite(ARENA)) ? Math.abs(ARENA) : 0;
+    if(A > hi){ hi = A; lo = -A; }
+  }
+  if(typeof v === 'number' && isFinite(v)){ if(v < lo) lo = v; if(v > hi) hi = v; }
+  return { min: lo, max: hi };
+}
 function prsTransform(min,max,perAxisScale){
   const f = [
     { k:'px', label:'Pos X', min:min, max:max, step:STEP_POS },
@@ -42213,15 +42701,35 @@ function applyZoneVisibility(){
 // the same reason: three copies of "the list of zone types" is three chances to add the ninth to two of
 // them. The nine-hundredth build of this file should not still be growing if/else chains per zone.
 const ZONE_EDIT = {
-  triggers:   { list:()=>triggerZones,  sel:()=>selTrigger,   pick:(i)=>{ selTrigger=i;   }, markers:()=>triggerMarkers,   refresh:()=>refreshTriggerMarkers(),   panel:()=>renderTriggersPanel() },
-  audiozones: { list:()=>audioZones,    sel:()=>selAudioZone, pick:(i)=>{ selAudioZone=i; }, markers:()=>audioZoneMarkers, refresh:()=>refreshAudioZoneMarkers(), panel:()=>renderAudioZonesPanel() },
-  deathzones: { list:()=>deathZones,    sel:()=>selDeathZone, pick:(i)=>{ selDeathZone=i; }, markers:()=>deathZoneMarkers, refresh:()=>refreshDeathZoneMarkers(), panel:()=>renderDeathZonesPanel() },
-  jumppads:   { list:()=>jumpPads,      sel:()=>selJumpPad,   pick:(i)=>{ selJumpPad=i;   }, markers:()=>jumpPadMarkers,   refresh:()=>refreshJumpPadMarkers(),   panel:()=>renderJumpPadsPanel() },
-  ladders:    { list:()=>ladders,       sel:()=>selLadder,    pick:(i)=>{ selLadder=i;    }, markers:()=>ladderMarkers,    refresh:()=>refreshLadderMarkers(),    panel:()=>renderLaddersPanel() },
-  firezones:  { list:()=>fireZones,     sel:()=>selFireZone,  pick:(i)=>{ selFireZone=i;  }, markers:()=>fireZoneFx,       refresh:()=>refreshFireZones(),        panel:()=>renderFireZonesPanel() },
-  waterzones: { list:()=>waterZones,    sel:()=>selWaterZone, pick:(i)=>{ selWaterZone=i; }, markers:()=>waterZoneFx,      refresh:()=>refreshWaterZones(),       panel:()=>renderWaterZonesPanel() },
-  fxzones:    { list:()=>fxZones,       sel:()=>selFxZone,    pick:(i)=>{ selFxZone=i;    }, markers:()=>fxZoneFx,         refresh:()=>refreshFxZoneMarkers(),    panel:()=>renderFxZonesPanel() },
+  triggers:   { list:()=>triggerZones,  sel:()=>selTrigger,   pick:(i)=>{ selTrigger=i;   }, markers:()=>triggerMarkers,   refresh:()=>refreshTriggerMarkers(),   panel:()=>renderTriggersPanel(),   remove:(i)=>removeTriggerZone(i), add:()=>{ if(typeof addTriggerZone==='function') addTriggerZone(); } },
+  audiozones: { list:()=>audioZones,    sel:()=>selAudioZone, pick:(i)=>{ selAudioZone=i; }, markers:()=>audioZoneMarkers, refresh:()=>refreshAudioZoneMarkers(), panel:()=>renderAudioZonesPanel(), remove:(i)=>removeAudioZone(i), add:()=>{ const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:0,z:0}; addAudioZone(_dp.x, _dp.z); } },
+  deathzones: { list:()=>deathZones,    sel:()=>selDeathZone, pick:(i)=>{ selDeathZone=i; }, markers:()=>deathZoneMarkers, refresh:()=>refreshDeathZoneMarkers(), panel:()=>renderDeathZonesPanel(), remove:(i)=>removeDeathZone(i), add:()=>{ if(typeof addDeathZone==='function') addDeathZone(); } },
+  jumppads:   { list:()=>jumpPads,      sel:()=>selJumpPad,   pick:(i)=>{ selJumpPad=i;   }, markers:()=>jumpPadMarkers,   refresh:()=>refreshJumpPadMarkers(),   panel:()=>renderJumpPadsPanel(),   remove:(i)=>removeJumpPad(i), add:()=>{ if(typeof addJumpPad==='function') addJumpPad(); } },
+  ladders:    { list:()=>ladders,       sel:()=>selLadder,    pick:(i)=>{ selLadder=i;    }, markers:()=>ladderMarkers,    refresh:()=>refreshLadderMarkers(),    panel:()=>renderLaddersPanel(),    remove:(i)=>removeLadder(i), add:()=>{ if(typeof addLadder==='function') addLadder(); } },
+  firezones:  { list:()=>fireZones,     sel:()=>selFireZone,  pick:(i)=>{ selFireZone=i;  }, markers:()=>fireZoneFx,       refresh:()=>refreshFireZones(),        panel:()=>renderFireZonesPanel(),  remove:(i)=>removeFireZone(i), add:()=>{ if(typeof addFireZone==='function') addFireZone(); } },
+  waterzones: { list:()=>waterZones,    sel:()=>selWaterZone, pick:(i)=>{ selWaterZone=i; }, markers:()=>waterZoneFx,      refresh:()=>refreshWaterZones(),       panel:()=>renderWaterZonesPanel(), remove:(i)=>removeWaterZone(i), add:()=>{ if(typeof addWaterZone==='function') addWaterZone(); } },
+  fxzones:    { list:()=>fxZones,       sel:()=>selFxZone,    pick:(i)=>{ selFxZone=i;    }, markers:()=>fxZoneFx,         refresh:()=>refreshFxZoneMarkers(),    panel:()=>renderFxZonesPanel(),    remove:(i)=>removeFxZone(i), add:()=>{ if(typeof addFxZone==='function') addFxZone(); } },
 };
+/* build 1445: duplicating a zone is the same operation for all eight — a zone is a PLAIN SERIALIZABLE
+   OBJECT (it round-trips through the level file, which is what makes the deep copy safe), so there is one
+   implementation rather than eight near-copies. The copy is offset and SELECTED, so a creator can drag it
+   straight away, exactly as a duplicated prop behaves.
+   It appends rather than inserting: `_trigState[i]` is created lazily per index, so a zone added at the end
+   simply gets fresh state, while one spliced into the middle would shift every later zone's runtime. */
+function _zoneDup(type){
+  const def = ZONE_EDIT[type]; if(!def) return false;
+  const list = def.list(), i = def.sel();
+  if(!list || i == null || i < 0 || i >= list.length) return false;
+  pushUndoSnapshot();
+  const copy = JSON.parse(JSON.stringify(list[i]));
+  if(typeof copy.x === 'number') copy.x += DUP_OFFSET;
+  list.push(copy);
+  def.pick(list.length - 1);
+  def.refresh(); if(typeof def.panel === 'function') def.panel();
+  if(typeof updateGizmo === 'function') updateGizmo();
+  if(typeof _levelDirty !== 'undefined') _levelDirty = true;
+  return true;
+}
 // Which zone (if any) a clicked object belongs to. Walks up the parents because a marker is a GROUP of
 // rings and dots and the raycast hits one of those, not the group.
 function _zoneHitAt(root){
@@ -43666,11 +44174,40 @@ function changeLightType(idx, type){
   if(typeof syncSelToIdx==='function') syncSelToIdx();
   renderEditorFields();
 }
+/* build 1445: DELETE and DUPLICATE were two hand-kept lists that did not even match each other — duplicate
+   knew about turrets and delete did not (though `deleteSelectedTurret` had existed all along and was simply
+   never called), and NEITHER knew about the eight zone types or the pickup spots. So a creator selected a
+   trigger volume they had just tuned, pressed Delete, and nothing happened; the only way to remove one was
+   to find its row in the panel and click the small cross.
+
+   Both verbs now end in the same table-driven tail, so the ninth zone type cannot reach one and not the
+   other — which is build 1326's own lesson, from the build that made ZONE_EDIT the one place a zone type is
+   declared after finding it listed in three places and missing from one. */
 function duplicateSelected(){
   if(editorActive==='props') duplicateSelectedProp();
   else if(editorActive==='lights') duplicateSelectedLight();
   else if(editorActive==='spawns') duplicateSelectedSpawn();
   else if(editorActive==='turrets') duplicateSelectedTurret();
+  else if(ZONE_EDIT[editorActive]) _zoneDup(editorActive);
+  else if(typeof selPickup!=='undefined' && selPickup>=0 && pickupSpots[selPickup]) _pickupDup();
+}
+function deleteSelected(){
+  if(editorActive==='props') deleteSelectedProp();
+  else if(editorActive==='lights') deleteSelectedLight();
+  else if(editorActive==='spawns') deleteSelectedSpawn();
+  else if(editorActive==='turrets') deleteSelectedTurret();
+  else if(ZONE_EDIT[editorActive]){ const d=ZONE_EDIT[editorActive], i=d.sel(); if(i>=0 && i<d.list().length) d.remove(i); }
+  else if(typeof selPickup!=='undefined' && selPickup>=0 && pickupSpots[selPickup]) removePickupSpot(selPickup);
+}
+function _pickupDup(){
+  const src = pickupSpots[selPickup]; if(!src) return false;
+  pushUndoSnapshot();
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.x = (+copy.x || 0) + DUP_OFFSET;
+  pickupSpots.push(copy); selPickup = pickupSpots.length - 1;
+  refreshPickupMarkers(); if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof updateGizmo === 'function') updateGizmo();
+  return true;
 }
 function duplicateSelectedTurret(){
   const g = turretModels[editorTargets.turrets.idx]; if(!g) return;
@@ -44671,7 +45208,7 @@ function renderAudioZonesPanel(){
   const info=document.createElement('div'); info.className='hint'; info.style.margin='2px 0 6px';
   info.innerHTML='Ambient <b>audio zones</b>. Drop a zone, give it a sound file URL, and set its radius. The volume rises as the player nears the center (full at the middle, silent at the edge). Loops by default. The blue ring shows the radius in the editor.';
   host.appendChild(info);
-  const addB=document.createElement('button'); addB.textContent='\u2795 Add zone at me'; addB.title='Drop a new audio zone at your current position'; addB.onclick=()=>{ pushUndoSnapshot(); audioZones.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:14, url:'', vol:0.8, loop:true }); selAudioZone=audioZones.length-1; editorActive='audiozones'; refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
+  const addB=document.createElement('button'); addB.textContent='\u2795 Add zone at me'; addB.title='Drop a new audio zone at your current position'; addB.onclick=()=>{ addAudioZone(player.pos.x, player.pos.z); };   /* build 1445 */
   host.appendChild(addB);
   const st=document.createElement('div'); st.className='hint'; st.style.margin='6px 0 2px'; st.textContent = audioZones.length ? (audioZones.length+' zone'+(audioZones.length>1?'s':'')+':') : 'No zones yet.';
   host.appendChild(st);
@@ -44682,7 +45219,7 @@ function renderAudioZonesPanel(){
     const lbl=document.createElement('div'); lbl.textContent='Zone '+(i+1); lbl.style.cssText='flex:1;font-size:12px;color:#9fe6cf;font-weight:600;';
     const selB=document.createElement('button'); selB.textContent=(i===selAudioZone?'selected':'select'); selB.title='Select this zone to drag its handle in the scene'; selB.style.cssText='padding:1px 7px;font-size:10px;'; selB.onclick=()=>{ selAudioZone=i; editorActive='audiozones'; refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
     const moveB=document.createElement('button'); moveB.textContent='Move here'; moveB.title='Recenter this zone on your current position'; moveB.style.cssText='padding:1px 7px;font-size:11px;'; moveB.onclick=()=>{ pushUndoSnapshot(); z.x=+player.pos.x.toFixed(2); z.z=+player.pos.z.toFixed(2); selAudioZone=i; refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
-    const delB=document.createElement('button'); delB.textContent='\u2715'; delB.title='Remove this zone'; delB.style.cssText='padding:1px 7px;font-size:11px;'; delB.onclick=()=>{ pushUndoSnapshot(); audioZones.splice(i,1); if(selAudioZone>=audioZones.length) selAudioZone=audioZones.length-1; stopAudioZones(); refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
+    const delB=document.createElement('button'); delB.textContent='\u2715'; delB.title='Remove this zone'; delB.style.cssText='padding:1px 7px;font-size:11px;'; delB.onclick=()=>{ removeAudioZone(i); };   /* build 1445: through the named remover, so the panel button and the Delete key cannot drift */
     top.appendChild(lbl); top.appendChild(selB); top.appendChild(moveB); top.appendChild(delB); card.appendChild(top);
     card.appendChild(_sndRow('Sound', ()=>z.url||'', v=>{ z.url=(v||'').trim(); }));   // same input/test/status widget as the other sounds
     const fsBtn=document.createElement('button'); fsBtn.textContent='Search Freesound'; fsBtn.title='Find a free CC sound and assign it to this zone'; fsBtn.style.cssText='padding:2px 9px;font-size:11px;margin:1px 0 2px;'; let fsBox=null;
@@ -44740,6 +45277,36 @@ function renderCampaignPanel(){
 // props/lights and re-applies gun/aim/station/world/loot settings.
 const editorUndo = [];
 const editorRedo = [];   // build 1129: the forward half of the history
+/* build 1452: the history was capped by COUNT (60) and by nothing else, so what it HOLDS scales with the
+   level. Measured: a full 60-deep history on a 659-prop level is 64,944 bytes a snapshot and **3.72 MB**,
+   and the undo and redo stacks are both live at once, so the real ceiling is twice that. A creator's level
+   is the one thing in this engine that has no upper bound — the report that produced build 1424 was a
+   30-million-triangle scene — so a count cap is a memory bound that grows with exactly the content least
+   able to afford it.
+
+   `UNDO_MAX_BYTES` is 8 MB across BOTH stacks. On the 659-prop fixture that is ~123 snapshots, so the
+   count cap of 60 still binds and nothing a creator has today changes; it only starts trimming somewhere
+   around 140 KB a snapshot, which is a level several times larger than any measured here.
+
+   `UNDO_MIN_DEPTH` is the fail-USEFUL direction and the reason this is not just a smaller number: however
+   enormous one snapshot is, the creator keeps 8 steps of history. A one-deep undo is worse than the memory. */
+const UNDO_MAX_BYTES = 8388608;   /* 8 MB across BOTH stacks */
+const UNDO_MIN_DEPTH = 8;         /* declared separately: extractConst cannot read two declarators on one line (build 1413) */
+function _undoBytes(){
+  let n = 0;
+  for(let i=0;i<editorUndo.length;i++) n += editorUndo[i].length;
+  for(let i=0;i<editorRedo.length;i++) n += editorRedo[i].length;
+  return n;
+}
+/* Trims the OLDEST entries — the same end the count cap already drops from, so this can never discard a
+   step the creator is about to reach for. Trims the undo stack first: a redo entry is forward history the
+   creator has already undone past, and losing the far end of it costs less than losing how they got here. */
+function _undoTrim(){
+  let n = _undoBytes();
+  while(n > UNDO_MAX_BYTES && editorUndo.length > UNDO_MIN_DEPTH) n -= editorUndo.shift().length;
+  while(n > UNDO_MAX_BYTES && editorRedo.length > 0) n -= editorRedo.shift().length;
+  return n;
+}
 let editorUndoActive = false;
 function pushUndoSnapshot(){
   if(editorUndoActive || !editorOpen) return;
@@ -44749,6 +45316,7 @@ function pushUndoSnapshot(){
     if(editorUndo.length && editorUndo[editorUndo.length-1] === snap) return;   // identical to last -> skip
     editorUndo.push(snap);
     if(editorUndo.length > 60) editorUndo.shift();
+    _undoTrim();   /* build 1452: and by BYTES, because 60 snapshots of a big level is megabytes */
     // build 1129: editing after an undo forks the history — the old forward branch is unreachable and
     // keeping it would redo work the author has already replaced.
     editorRedo.length = 0;
@@ -44992,7 +45560,7 @@ function _historyStep(snap, pushTo){
     try { restoreLevel(level); } finally { editorUndoActive = false; }
     _reselectByNids(selN);
   }
-  if(cur != null){ pushTo.push(cur); if(pushTo.length > 60) pushTo.shift(); }
+  if(cur != null){ pushTo.push(cur); if(pushTo.length > 60) pushTo.shift(); _undoTrim(); }   /* build 1452 */
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
 }
@@ -45878,19 +46446,14 @@ function buildEditorPanel(){
          be added from the menu build 650 calls "the ONE place to add anything placeable". Both the list and
          the dispatch are keyed by the same type string now, so a new zone type reaches the picker and this
          menu together or neither. */
-      const ZONE_ADDERS = {
-        triggers:   ()=>{ if(typeof addTriggerZone==='function') addTriggerZone(); },
-        audiozones: ()=>{ pushUndoSnapshot(); const _dp=editorDropPoint(0); audioZones.push({ x:_dp.x, z:_dp.z, r:14, url:'', vol:0.8, loop:true }); editorActive='audiozones'; refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); },
-        deathzones: ()=>{ if(typeof addDeathZone==='function') addDeathZone(); },
-        jumppads:   ()=>{ if(typeof addJumpPad==='function') addJumpPad(); },
-        ladders:    ()=>{ if(typeof addLadder==='function') addLadder(); },
-        firezones:  ()=>{ if(typeof addFireZone==='function') addFireZone(); },
-        waterzones: ()=>{ if(typeof addWaterZone==='function') addWaterZone(); },
-        fxzones:    ()=>{ if(typeof addFxZone==='function') addFxZone(); },
-      };
+      /* build 1445: this table lived HERE, function-local, so nothing outside this menu builder could use
+         it — including the probe that wants to add one of every zone type the way a creator does. It is
+         folded into ZONE_EDIT, which is already the one place a zone type declares its list, its selection,
+         its markers, its panel and (this build) its remover. One table, one type string, one place to add
+         the ninth kind. */
       const addZone=(type)=>{ jump('scene');
         activeZoneType=type; if(typeof applyZoneVisibility==='function') applyZoneVisibility(); if(typeof renderZonePicker==='function') renderZonePicker();
-        const _f=ZONE_ADDERS[type]; if(_f) _f();
+        const _d=ZONE_EDIT[type]; if(_d && _d.add) _d.add();
       };
       /* The shapes come from PRIM_SHAPES, so the four the engine can build that this menu never offered
          (pillar, dome, tube, ring) are reachable, and a Model entry and the six emitters join them — the
@@ -47951,7 +48514,7 @@ function renderEditorFields(){
     }
     { // build 1191: per-type enemy tuning — blank = factory; saved with the level
       const eh=document.createElement('div'); eh.className='hint'; eh.style.margin='10px 0 3px';
-      eh.innerHTML='<b>Enemy tuning</b> \u2014 hp / damage / speed\u00d7 per type (blank = factory)';
+      eh.innerHTML='<b>Enemy tuning</b> \u2014 per type, blank = factory. Ranged types get five more.';
       bWav.appendChild(eh);
       const _emGet=(k,f)=>{ const m=gameCfg.enemyMods&&gameCfg.enemyMods[k]; return (m&&m[f]!=null)?m[f]:''; };
       const _emSet=(k,f,v)=>{ pushUndoSnapshot(); const o=Object.assign({}, gameCfg.enemyMods||{}); const e=Object.assign({}, o[k]||{});
@@ -47965,15 +48528,32 @@ function renderEditorFields(){
         const row=document.createElement('div'); row.style.cssText='display:flex;gap:4px;margin:1px 0;align-items:center;';
         const nm=document.createElement('span'); nm.textContent=(ENEMY_TYPES[ek]&&ENEMY_TYPES[ek].name)||ek; nm.style.cssText='flex:0 0 74px;font-size:11px;color:#9fc0b8;';
         row.appendChild(nm);
-        for(const [f, ph] of [['hp', String(ENEMY_BASE[ek]?ENEMY_BASE[ek].hp:'')], ['dmg', String(ENEMY_BASE[ek]?ENEMY_BASE[ek].dmg:'')], ['spd', '1']]){
+        const _mk=(f, ph, st)=>{
           const ip=document.createElement('input'); ip.type='number'; ip.placeholder=ph; ip.value=_emGet(ek,f);
-          ip.step=(f==='spd')?'0.05':'1'; ip.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+          ip.step=st||'1'; ip.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
           ip.onchange=()=>{ _emSet(ek,f,ip.value); ip.value=_emGet(ek,f); };
-          row.appendChild(ip);
-        }
+          return ip;
+        };
+        const _base=(f)=>String((ENEMY_BASE[ek]&&ENEMY_BASE[ek][f]!=null)?ENEMY_BASE[ek][f]:'');
+        for(const [f, ph, st] of [['hp', _base('hp'), '1'], ['dmg', _base('dmg'), '1'], ['spd', '1', '0.05']])
+          row.appendChild(_mk(f, ph, st));
         bWav.appendChild(row);
+        /* build 1449: the five ranged fields, on their own indented row and ONLY for a type that shoots.
+           A fire rate on a melee grunt is a control whose consequence is invisible (build 1348). */
+        if(ENEMY_TYPES[ek] && ENEMY_TYPES[ek].ranged){
+          const r2=document.createElement('div'); r2.style.cssText='display:flex;gap:4px;margin:1px 0 3px 10px;align-items:center;';
+          const l2=document.createElement('span'); l2.textContent='ranged'; l2.style.cssText='flex:0 0 64px;font-size:10px;color:#6f8f88;';
+          r2.appendChild(l2);
+          for(const [f, st] of [['fireCd','0.05'], ['burst','1'], ['projSpeed','1'], ['standoff','0.5'], ['aimMs','10']]){
+            const ip=_mk(f, _base(f), st); ip.title=({ fireCd:'seconds between shots', burst:'rounds per burst',
+              projSpeed:'bolt speed (units/s)', standoff:'how far back it holds (units)',
+              aimMs:'wind-up before the round leaves (ms) \u2014 0 is an instant shot' })[f];
+            r2.appendChild(ip);
+          }
+          bWav.appendChild(r2);
+        }
       }
-      hint(bWav, 'Applies at spawn \u2014 already-spawned enemies keep their stats. Speed multiplies the type\u2019s min AND max, so its gait variety survives.', '2px 0 0');
+      hint(bWav, 'Applies at spawn \u2014 already-spawned enemies keep their stats. Speed multiplies the type\u2019s min AND max, so its gait variety survives; the ranged fields are absolute. Ranged row: fire interval s \u00b7 burst \u00b7 bolt speed \u00b7 standoff \u00b7 aim ms.', '2px 0 0');
     }
     const ugLab=document.createElement('label'); ugLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 2px;cursor:pointer;';
     const ugCb=document.createElement('input'); ugCb.type='checkbox'; ugCb.checked=(gameCfg.upgrades!==false); ugCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
@@ -50339,7 +50919,11 @@ function renderEditorFields(){
     dup.onclick = ()=>{ duplicateSelected(); };
     const del = document.createElement('button'); del.textContent='Delete selected';
     del.style.background='rgba(245,80,94,0.18)'; del.style.borderColor='rgba(245,80,94,0.45)';
-    del.onclick = ()=>{ if(tgt.isSpawns) deleteSelectedSpawn(); else if(tgt.isLights) deleteSelectedLight(); else if(tgt.isTurret) deleteSelectedTurret(); else deleteSelectedProp(); };
+    /* build 1445: a THIRD hand-kept list lived here, dispatching on tgt.isSpawns/isLights/isTurret rather
+       than on editorActive, and ending in a fallback that deleted a PROP for anything it did not recognise.
+       The Duplicate button beside it has always called the shared dispatcher, so this is the pair finally
+       agreeing — and an unrecognised target now does nothing instead of deleting the wrong kind of thing. */
+    del.onclick = ()=>{ deleteSelected(); };
     row2.appendChild(dup); row2.appendChild(del);
     urlHost.appendChild(row2);
   }
@@ -50361,7 +50945,7 @@ function renderEditorFields(){
     num.step = fld.step; num.value = _fmtField(tgt.state[fld.k], fld.k);
     lab.appendChild(name); lab.appendChild(num);
     const rng = document.createElement('input'); rng.type='range';
-    rng.min=fld.min; rng.max=fld.max; rng.step=fld.step; rng.value=tgt.state[fld.k];
+    _showOnRange(rng, fld, tgt.state[fld.k]);   /* build 1446: sets the step too, relaxing it only for a value the lattice cannot hold */
     const commit = (raw, fromSlider)=>{
       let v = parseFloat(raw); if(isNaN(v)) return;
       const isScale = (fld.k==='sx'||fld.k==='sy'||fld.k==='sz');
@@ -50386,18 +50970,18 @@ function renderEditorFields(){
           tgt.state.sz = Math.max(0.00001, tgt.state.sz*ratio);
           v = tgt.state[fld.k];
         } else { tgt.state[fld.k] = v; }
-        for(const fi of editorFieldInputs){ if((fi.k==='sx'||fi.k==='sy'||fi.k==='sz') && fi.k!==fld.k){ fi.rng.value=tgt.state[fi.k]; fi.num.value=_fmtField(tgt.state[fi.k], fi.k); } }   // refresh the sibling axes (leave the one being dragged alone)
+        for(const fi of editorFieldInputs){ if((fi.k==='sx'||fi.k==='sy'||fi.k==='sz') && fi.k!==fld.k){ _showOnRange(fi.rng, fi, tgt.state[fi.k]); fi.num.value=_fmtField(tgt.state[fi.k], fi.k); } }   // refresh the sibling axes (leave the one being dragged alone)
       } else {
         tgt.state[fld.k] = v;                              // typed numbers can exceed slider min/max
       }
-      rng.value = v; num.value = fromSlider ? _fmtField(v, fld.k) : num.value;
+      _showOnRange(rng, fld, v); num.value = fromSlider ? _fmtField(v, fld.k) : num.value;   /* build 1446: widen before writing, or a typed value out of the slider's range is silently rewritten by the next touch of that slider */
       tgt.apply(); if(tgt===editorTargets.props) _xfGroupApply(fld.k, _xfOld, tgt.state[fld.k], isScale && scaleProportional); updateGizmo(); updateEditorOut();
     };
     rng.oninput = ()=>commit(rng.value, true);
     num.oninput = ()=>commit(num.value, false);
     rng.addEventListener('mousedown', ()=>pushUndoSnapshot());   // one undo entry per field-edit gesture
     num.addEventListener('focus', ()=>pushUndoSnapshot());
-    editorFieldInputs.push({ k:fld.k, rng, num });
+    editorFieldInputs.push({ k:fld.k, min:fld.min, max:fld.max, step:fld.step, rng, num });   /* build 1446: updateFieldDisplays re-derives the slider range, so it needs the field's own bounds — without them it would read undefined and every slider would widen to whatever it was showing */
     wrap.appendChild(lab); wrap.appendChild(rng);
     host.appendChild(wrap);
   }
@@ -50429,7 +51013,7 @@ function updateFieldDisplays(){
   if(!tgt || !tgt.state) return;   // zone targets (fire / jump / death zones) own no transform fields
   for(const f of editorFieldInputs){
     const v = tgt.state[f.k];
-    f.rng.value = v; f.num.value = _fmtField(v, f.k);
+    _showOnRange(f.rng, f, v); f.num.value = _fmtField(v, f.k);   /* build 1446 */
   }
 }
 
@@ -53882,7 +54466,7 @@ function bindPauseMenu(){
       if(mc){ mc.checked=!!mouseAimMatch; mc.onchange=()=>{ mouseAimMatch=!!mc.checked; saveMouseAimMatch(); }; } }
     /* build 1313: motion & comfort. One loop over the keys rather than five copies of the same six lines —
        adding a sixth effect is then one entry here and one <input> above it. */
-    { const A11Y_ROWS = [['shake','a11yShake'],['sway','a11ySway'],['blur','a11yBlur'],['flash','a11yFlash'],['hitstop','a11yHitstop']];
+    { const A11Y_ROWS = [['shake','a11yShake'],['sway','a11ySway'],['blur','a11yBlur'],['flash','a11yFlash'],['hitstop','a11yHitstop'],['rumble','a11yRumble']];
       const _a11ySync=()=>{ for(const [key,id] of A11Y_ROWS){
         const r=document.getElementById(id), v=document.getElementById(id+'V');
         if(r) r.value=String(Math.round(a11y[key]*100));

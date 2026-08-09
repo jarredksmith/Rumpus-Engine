@@ -51,8 +51,10 @@ const ds2 = extractFunction('_dropSkid'), fs = extractFunction('_fadeSkids');
 assert(/_skidYawQ\.setFromAxisAngle\(_skidUp, yaw\); m\.quaternion\.copy\(_skidYawQ\)\.multiply\(_skidFlatQ\);/.test(ds2), 'a skid mark is laid flat and spun to the car yaw');
 assert(/m\.material\.opacity=o; m\.userData\.skidOp=o; m\.userData\.skidLife=9;/.test(ds2) && /const l=\(m\.userData\.skidLife-=dt\);/.test(fs), 'skid marks carry a life + per-mark opacity and fade out');
 // build 736: soft textures (not flat squares) + lower opacity
-assert(/_skidTex=new THREE\.CanvasTexture/.test(src) && /map:tex\|\|null/.test(extractFunction('_ensureSkidPool')), 'skid marks use a soft canvas texture');
-assert(/_puffTex=new THREE\.CanvasTexture/.test(src) && /createRadialGradient/.test(src), 'dust uses a soft radial smoke texture');
+// build 1441 moved both of these through the shared sRGB writer. Same textures, same gradients — the
+// pins quote the constructor, so they follow it; what they assert is unchanged.
+assert(/_skidTex=_srgbTex\(new THREE\.CanvasTexture/.test(src) && /map:tex\|\|null/.test(extractFunction('_ensureSkidPool')), 'skid marks use a soft canvas texture');
+assert(/_puffTex=_srgbTex\(new THREE\.CanvasTexture/.test(src) && /createRadialGradient/.test(src), 'dust uses a soft radial smoke texture');
 assert(/const _DUST_OP=0\.16;/.test(src) && /const _SKID_OP=0\.34;/.test(src), 'dust + skids toned down to faint opacities (build 736)');
 assert(/const _sliding=\(_slip>0\.3 \|\| handbrake\);/.test(du) && /if\(_skidAmt>0 && _grounded && _sliding && Math\.abs\(r\.speed\)>3\)\{/.test(du), 'skid marks drop only while grounded + sliding/braking + moving (and the effect is on)');
 assert(/_dropSkid\(_rbx \+ _rx\*_hw\*0\.7, gC, _rbz \+ _rz\*_hw\*0\.7, carYaw, _SKID_OP\*_skidAmt\);/.test(du), 'a mark is dropped under each rear tyre, scaled by the Skid-marks amount');

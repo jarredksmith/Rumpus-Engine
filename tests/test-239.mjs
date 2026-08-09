@@ -5,10 +5,14 @@ const src = gameSource();
 
 // --- once-mechanism prompt ---
 const cp = extractFunction('checkProximity');
-const scanI = cp.indexOf("a.trig!=='interact') continue;");
+// build 1451 collapsed the five walks into one, so the scan and the skip are now one condition. What this
+// always meant — a spent Once mechanism is rejected BEFORE it can win the distance ranking — is asserted
+// directly: the exclusion is part of the test that gates the distance, not a later filter.
+const scanI = cp.indexOf("a.trig==='interact'");
 assert(scanI > 0, 'xanim interact scan present');
-const skip = cp.indexOf("if(a.mode==='once' && a.dest) continue;");
-assert(skip > scanI && skip < cp.indexOf('bd', skip), 'spent Once mechanism skipped before distance ranking');
+const skip = cp.indexOf("!(a.mode==='once' && a.dest)");
+assert(skip > scanI && skip < cp.indexOf('_dXa', skip),
+  'spent Once mechanism skipped before distance ranking');
 // the toggle-side guard this mirrors is still in place
 assert(/if\(a\.mode==='once' && a\.dest\)\{ return; \}/.test(extractFunction('xaToggle')), 'xaToggle still no-ops a fired Once');
 

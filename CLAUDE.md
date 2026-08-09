@@ -1743,6 +1743,56 @@ working. The rule from the logic booth stands: **read the object before authorin
 Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
 `explodeAt + _blastProps` now, every assertion unchanged in intent.
 
+## The batched majority was invisible to the LOD ladder (build 1440)
+
+The performance audit's first finding. Build 1430 gave every batch real world bounds so a frustum could
+reject it; **nothing gave it a rung, and nothing told the per-prop rungs a batch exists.**
+
+- `im.castShadow = true`, unconditionally, so a batch cast into both cascades at any distance for ever.
+  On a dense level the batched props are the MAJORITY, so build 1270's measured caster relief reached
+  almost none of the level it was written for.
+- A batched prop is removed from the scene but **stays in `propModels`**, so both `_lodTick` and
+  `_lodGeoTick` walked it — spending budget slots deciding the visibility of an object nobody renders,
+  and, because the write flips `_lodDirty`, asking for a full re-render of both cascades for a change
+  with no visible effect.
+
+### Measured — 16 clustered booths, 472 props, 25 batches, 428 instances
+
+```
+lodPx 0 (the shipped default)   25 of 25 batches casting — unchanged
+lodPx 6                         18
+far corner, lodPx 8              5 of 25; the farthest four read 4-21 px against a 32 px threshold
+a 3-prop batch at 182 m          2.4 px  ->  shed
+standing INSIDE a cluster        9 still casting — the near exemption holds
+LOD budget                       115 of 128 slots per sweep no longer spent on batched props
+```
+
+That last line is the half that is **on by default**: the geometry rung (1431) runs whether or not culling
+does, so on this fixture nine tenths of its per-frame budget was being spent on props the batch draws.
+
+The rung itself uses the same threshold and hysteresis as its per-prop twin and is therefore **off by
+default with `lodPx`** — build 1273's rule, that a rung which silently removes a creator's shadows is
+opt-in, and one consistent rule beats a second default nobody chose. `_castAuth` remembers whether a batch
+was ever *meant* to cast (a model batch copies its source part's flag, and levelgen's nocollide grass never
+casts), because build 1270 had to learn that for props the same way.
+
+**A batch's sphere spans its whole cell, so the camera is very often inside it.** That is the near case and
+it always casts — without that term the rung would be asking whether a cluster you are standing in is small
+on screen.
+
+### The instrument was wrong four times, and the fourth is the one to remember
+
+| # | it reported | why |
+|---|---|---|
+| 1 | 420 props, **12 instances** | a thin scatter never reaches 3-per-cell, so the fixture measured itself. Clusters are what a booth is anyway |
+| 2 | still nothing batched | the level is ALREADY deployed when a probe attaches, so `if(!instancingActive)` batches nothing new — build 1430's own recorded trap, walked into again |
+| 3 | 94 calls, then 52, control never returning | a fresh `buildInstancing()` leaves the shadow map dirty and 1270's flag is a COUNTER, so the first measured render carried a whole shadow pass. THREE warm-ups, not two |
+| 4 | **the rung never fires at any threshold** | `_lodPxNow()` reads `worldCfg.lodPx`. There is no global of that name — the probe set one anyway, so `px` was 0 in every row |
+
+#4 produced four consecutive runs of confident, plausible, entirely meaningless numbers, and the tell was
+that the per-prop rungs reported `culled: 0` too — *nothing* was shedding, not just the new thing. **When a
+null covers the code you did not touch as well as the code you did, suspect the switch, not the feature.**
+
 ## The aim assist stuck to allies and ignored the range (build 1439)
 
 The audit's third finding. Build 1316's PvE branch was one line, and it filtered nothing:
@@ -1889,6 +1939,468 @@ than 1436** — they were reading during container rollback #29's window. That i
 arriving for reviewers: *a critic cannot silently review a build that is not in the tree*, and the only
 reason it did not poison the results is that they were told to state what they could not verify, and did.
 Every finding acted on was re-verified against the recovered tree first.
+
+## A graph node could be added and deleted and never copied (build 1453)
+
+`grep -c "_lgDup|duplicateNode|dupNode"` returned **0**. So a booth wired with ten near-identical `do`
+nodes — the shooting range's own shape, one per plate — meant picking the type and re-filling every
+parameter ten times, and a `do` node carries up to nineteen of them (build 1407).
+
+**The params are DEEP-COPIED**, and that is the load-bearing line. Sharing one `p` object makes editing any
+copy edit all of them — build 1438's defect exactly (*"mirroring the list on every edit would overwrite
+whatever the other props already carried"*) — and it is invisible until a creator changes one and loses
+nine. The test makes ten copies, renames each, and asserts **eleven independent targets**, which is the
+whole reason to duplicate a node.
+
+**Wires are NOT copied, and that is a decision rather than an omission.** Copying the inbound ones fans one
+signal into two places; copying the outbound ones fires every downstream verb twice. Both are silent, and
+both are the destructive direction. Every graph editor worth copying does the same for a single node — and
+here there is no multi-node selection, so there is no "copy the wires between the selected nodes" case to
+get right. The copy arrives unwired, which is a state a creator can act on, and the tooltip **says so**
+rather than leaving "duplicate" to be read as "with its wires".
+
+Two smaller things: `onpointerdown` is stopped on the button because the node header is a **drag handle** and
+would otherwise claim the press so the click never lands (which is why the delete beside it already has that
+line), and only OWN keys are copied, because `p` comes out of a level file (build 1325).
+
+### Measured live, through the real board
+
+```
+click the real button   nodes 1 -> 2, offset [26, 26], params match, p is a SEPARATE object
+                        and the copy is rendered on the board
+edit the copy           original plate1, copy plate2 — independent
+FIRE IT                 an event wired into both showed BOTH props
+round trip              3 nodes out and back, do-targets [plate1, plate2]
+```
+
+That third row is the one that matters: build 1277's rule is that pinning the two ends of a wire proves
+nothing about the wire, so the probe fires a real event through the real dispatch and reads the WORLD. A
+duplicated node that cannot execute is the failure this feature could plausibly have shipped with.
+
+**And the backtick trap for the twelfth time** — a `sed` inserted a comment naming `_lgOpen` in backticks
+*inside* the page-code template literal. Build 1415's rule is to run `tools/probe/lint.mjs` after the last
+edit rather than before the first; I ran it before the `sed` and paid for it. The engine's own name for the
+board opener is `_lgOpen`, not the `openLogicGraph` I guessed — build 1429's rule, again.
+
+Zero pins moved.
+
+## The undo history was bounded in steps, not in bytes (build 1452)
+
+`pushUndoSnapshot` capped `editorUndo` at 60 entries and at nothing else, so what the history HOLDS scaled
+with the level. Measured live:
+
+```
+                       59 props      659 props
+bytes per snapshot       14,407        64,944
+a full 60-deep history    0.86 MB       3.72 MB
+```
+
+...and the undo and redo stacks are both live at once, so the real ceiling is twice that. **A creator's
+level is the one thing in this engine with no upper bound** — build 1424's report was a 30-million-triangle
+scene — so a count cap is a memory bound that grows with exactly the content least able to afford it.
+
+`UNDO_MAX_BYTES` is 8 MB across BOTH stacks. On the 659-prop fixture that is ~123 snapshots, so **the count
+cap still binds and nothing a creator has today changes** — measured, not assumed. It starts trimming
+around 140 KB a snapshot, a level several times larger than any measured here.
+
+Three decisions:
+- **`UNDO_MIN_DEPTH` (8) is the fail-USEFUL direction**, and the reason this is not simply a smaller number:
+  however enormous one snapshot is, the creator keeps eight steps. A one-deep undo is worse than the memory
+  it saves, and the test drives a snapshot bigger than the whole budget to prove the floor wins.
+- **It trims the OLDEST**, the same end the count cap already drops from, so it can never discard the step
+  the creator is about to reach for.
+- **Undo is trimmed before redo.** A redo entry is forward history the creator has already undone past;
+  losing its far end costs less than losing how they got here.
+
+**Both growth sites, or the cap leaks at the other.** The stacks grow in exactly two places —
+`pushUndoSnapshot`, and `_historyStep` moving a step across — and `test-1452` counts them, so a third
+would fail there.
+
+```
+659 props, 70 edits    depth 60, 3.72 MB, under budget      <- unchanged
+a level 5x larger      311 KB/snapshot, depth 60 -> 26, 7.72 MB, floor respected
+undo after trimming    runs, restores the prop by 0.01, redo gains its entry
+```
+
+### What this deliberately does NOT change, with the numbers
+
+The same probe measured the OTHER half of the finding: **~1 ms a snapshot at 659 props, and 5 of 6
+focus-time snapshots discarded** because the state had not changed — the dedup check runs after the
+serialize. That is 412 call sites' worth of redundancy, and it is left alone: 1 ms per discrete user
+gesture is imperceptible (unlike a per-frame cost), and moving the snapshot from focus to first-mutation
+would break build 1163's one-snapshot-per-gesture rule at every one of those sites. Recorded in
+`test-1452` as a deliberate non-change rather than left to be rediscovered as a defect.
+
+### Two probe faults, both mine, both about a convention rather than the engine
+
+- **A held object reference across a restore.** `performUndo` can restore through a full reload, which
+  replaces `propModels` — so a reference taken before it reads "nothing moved" whatever happened. Re-resolve
+  by nid.
+- **The fixture snapshotted AFTER the mutation.** The engine snapshots BEFORE (build 1163 takes it at focus
+  or mousedown), so `editorUndo[n]` is the state to RETURN to. Pushing after the edit makes the first undo
+  restore the current state and read as a broken undo. The engine was right both times.
+
+`extractConst` cannot read two declarators on one line (build 1413's recorded trap), so the two constants
+are declared separately with a note saying why.
+
+One pin moved (1291), an executing rig whose scope genuinely lacked the trimmer; it is handed
+`_undoBytes`/`_undoTrim` **lifted from source**, never restated.
+
+## The transparent-material registry, measured and declined (probe pass, after build 1451)
+
+Build 1168 named *"replacing `_aoHideNoDepth`'s traverse with a transparent-material registry"* as the half
+it did not finish, and 1353 did the cheap half (the four buffers). Before building the registry — which is
+the hand-kept-list shape this file records as its most repeated defect — `tools/probe/ao-sweep-cost.mjs`
+asks what the traverse actually costs.
+
+```
+                    59 props        659 props
+world nodes/sweep      157             777
+viewmodel nodes         18              18
+per frame (4 sweeps)   350           1,590
+NO-DEPTH HITS           24              24     <- constant
+```
+
+**The hit set does not grow with content.** A registry would save walking ~1,554 nodes to find a set of 24,
+each visit being `o.visible`, `o.material` and three property reads. For comparison, build 1451 removed
+~4,800 iterations a frame of strictly more expensive work from `checkProximity` at the same scale.
+
+Against that: a registry has to be invalidated on every add, every remove, and every write to `transparent`,
+`depthWrite` or `alphaTest` anywhere in the engine — and **its failure mode is a solid rectangle back in the
+AO buffer**, which is the bug builds 1126, 1128, 1152, 1158 and 1285 exist to prevent. Six arrivals of one
+rule is not a rule to hand to a cache.
+
+**`traverseVisible` was measured too, and it is not the free win it looks like.** three's `traverse` descends
+into an invisible subtree and calls back on every child; `traverseVisible` skips it, and three's own renderer
+skips it as well (`projectObject` returns early), so nothing under an invisible ancestor is drawn. But the
+two produce **different lists — 24 against 5**. The 19 extra are VISIBLE children of an INVISIBLE parent,
+which the current sweep hides and then restores: a net no-op for the frame, and 19 pointless writes a pass.
+So it is equivalent for the FRAME and different for the LIST — exactly the distinction build 1152 had to
+make (*"already-invisible objects are not collected, or the restore would switch them ON"*) — for **4.4%** of
+the node visits.
+
+Neither is worth touching this code for. **Recorded with numbers rather than left open**, so the next reader
+inherits a decision instead of a TODO — and so build 1168's note stops reading as work still owed.
+
+## Five walks of the prop list, every frame, to ask one question (build 1451)
+
+`checkProximity` runs every frame in every mode, and it walked `propModels` **five separate times** — anim,
+xanim, npc, interact, vehicle — each re-reading every prop's `userData` to test one rare flag. Plus a
+`propModels.concat(_gridCars)` allocating an array per frame (build 1168's class). On the gauntlet-scale
+fixture that is **~4,800 iterations a frame** to answer *"is there anything to press E on"*, and the answer
+is almost always no.
+
+It is ONE walk. The five categories are collected in a single pass and the winner picked afterwards **in the
+same priority order**, so the array is traversed once, each prop's `userData` dereferenced once, and the
+box-clamp distance computed at most once per prop rather than up to four times.
+
+**The short-circuit is deliberately gone.** The old shape stopped early when a category matched — but that
+only paid off for the prop that MATCHED, which is the rare case, while every prop matching nothing paid four
+extra traversals. The number of flag tests per prop is unchanged.
+
+### The answer must be identical, so that is what the test proves
+
+`test-1451` **reconstructs the pre-1451 five-walk form from the shipped predicates and radii** — reading the
+four radii out of the shipped block, so a retune cannot make the test quietly measure a different engine —
+and drives both against **17 worlds × 3 player positions**. Every tie-break holds: priority over proximity
+(an anim prop at 2.0 still beats an xanim at 0.2), strict `<` so the first of two equidistant props wins,
+spent Once mechanisms and auto-anim props still silent, null holes skipped.
+
+### My first draft reintroduced the bug it was removing
+
+The shared distance was a `const _dist = () => {...}` closure — **allocated once per prop per frame**, which
+is exactly the cost build 1168 removed from this loop's neighbours. It is a `let d = 0, dOK = false` flag and
+a module-level `_interDist` now, and the test asserts the loop body contains no arrow function at all.
+
+### Measured live
+
+```
+prompts             interactable -> "E Activate" · dialogue -> "E Talk to Vendor" · mechanism -> "E Activate"
+                    a spent Once mechanism and a plain box: nothing   <- the control
+priority            an NPC at 0.5 m beats a CLOSER interactable at 0 m — unchanged
+659 plain props     0 distance computations   <- a prop matching no category never pays for one
++40 that match      exactly 40 calls, 1.000 per match
+finds it in a crowd of 659, and it is the right one
+```
+
+**The clock is deliberately not a claim.** Five warm batches of 200 calls read 83.5 / 79 / 81.5 / 44.5 / 78.5 µs
+— a **1.88× spread with nothing changed** — which is build 1414's noise floor, and the first run of this
+probe made the point twice as loudly (two runs of one scene at 0.072 and 0.032 ms). The counts are integers
+and cannot drift; those are what is reported.
+
+**Fourteen pins moved across ten files**, every one quoting the exact text of a walk that no longer exists,
+and every intent preserved: *flagged props are scanned* (the predicate), *E-activate mechanisms are detected*
+(the target), *distance is measured to the footprint* (the clamp, now shared — asserted by COUNT, so all four
+categories provably use the one 3D clamp), *a spent Once mechanism is skipped before distance ranking* (now
+part of the gating condition rather than a later `continue`), *grid clones are found* (from the second list,
+without the concat). One expectation in my own new test was wrong and the engine was right: mounted on a
+turret, the turret branch is skipped so a car in reach prompts — which is what the sequential form did too.
+
+## A reload never said how far through it was (build 1450)
+
+`grep -c "reloadBar|reloadProg|reloadRing"` returned **0**. The flat path put `--` in the ammo counter and
+that was the entire readout — so *"how much longer"* was unanswerable, on a duration that runs from 700 ms
+for a pistol to 1600 for a sniper (build 1211 made those per-weapon). Build 1172 made that question
+**actionable** rather than merely annoying: switching cancels a reload, so knowing you are a tenth of the way
+in is what decides whether to switch out of it.
+
+### Two timestamps, written where the timeouts are scheduled
+
+`_rlArm(ms)` is called immediately before each `setTimeout`, with the **same value that timeout takes** — so
+the bar and the wait cannot come to different answers about how long a reload is. The flat path arms once
+with `reloadMs`; the shell path (1249) re-arms per shell, which is the design rather than a side effect:
+that build's mag counter already shows the COUNT, and what it never showed is **when the next shell lands**
+— the beat that decides whether to cancel-fire with what is in the tube.
+
+**Nothing clears the timestamps.** `reloading` is the gate, so all four ways a reload ends — 1172's switch,
+1249's fire, and both completions — take the bar down for free. A timer of the bar's own would have needed
+unwinding at four sites, which is how one of them gets missed; this is build 1367's state-keyed restore.
+
+Three details in the tick, each a real cost without it:
+- **`scaleX`, not `width`** — a transform is composited and lays nothing out, and this runs every frame of
+  every session.
+- **It writes only on a CHANGE**, at whole-percent granularity: three frames at the same percent perform one
+  style write, and an idle session performs **zero** — proven by counting writes against a fake element.
+- **A degenerate window reads 0, never NaN.** `scaleX(NaN)` leaves the element in a state nobody can debug.
+
+It is a sibling of the crosshair (which is what centres it) and rides `hud-hide-crosshair`, because a player
+who turned the reticle off wants a clean centre.
+
+### Measured live
+
+```
+fill across a held window   0% -> scaleX(0) · 25% -> 0.25 · 50% -> 0.5 · 90% -> 0.9 · 100% -> 1
+geometry                    bar [292,198,56,3] under crosshair [308,168,24,24]
+                            no overlap · horizontally centred to <1 px · below the reticle
+hide-crosshair              takes the bar with it, and gives it back
+a real rifle reload         came up, and was down again after it completed
+switch mid-reload           down    ·   fire mid-shell-reload   down
+a shell reload              mag 0 -> 1 -> 1 -> 2 with fill 0.77 -> 0 -> 0.97 -> 0.47
+```
+
+That last row is the one worth reading: **one sweep per shell, resetting as each lands**, beside a counter
+that climbs. Two complementary readouts, not two of the same one.
+
+**The fill had to be measured on a HELD state and the reason is the renderer.** A reload is 700–1600 ms and
+this sandbox runs ~1.5 fps, so sampling a real one between probe round trips reads a reload that has already
+finished — the first run did exactly that (`reloading:false, mag:30` on the second sample). So the fill is
+read across a window held open, which is the same state a real reload produces standing still, and the real
+reload is measured for its TRANSITIONS, which is what it can honestly answer. Its `reachedFill: 0` is that
+limit stated rather than hidden: two frames is not enough to catch a percent.
+
+**And the held window was wrong first, in my rig rather than the engine.** `_rlArm(10000)` then
+`_rlT0 = now - frac*10000` moves the START without moving the end, so the window widens to `10000*(1+frac)`
+and every reading came out low — 100% read as 0.5. Set both ends.
+
+Two pins moved (1172, 1249) — both executing rigs whose scope genuinely lacked the new helper; each is handed
+`_rlArm` **lifted from source**, never restated.
+
+## The knobs a shooting range is built from (build 1449)
+
+Build 1191 made hp, damage and speed per-level and stopped there. **Fire interval, burst size, bolt speed,
+standoff and build 1448's aim wind-up were engine constants** read straight off the type table by
+`spawnEnemy` — so a creator building the gauntlet's range could not make the gunners fire slower, aim
+longer, or hold further back. Those five ARE the range.
+
+They ride build 1191's machinery unchanged: `ENEMY_BASE` captures them, `_sanitizeEnemyMods` clamps them,
+`_enemyEff` derives them, and the spawn reads `_eff` instead of `ty`. Only-changed serialization and both
+loaders come free — an untuned level's file grows no key, measured.
+
+**They are ABSOLUTE, unlike `spd`.** A speed multiplier exists so a type's gait variance survives tuning
+(min and max move together); a fire rate has no variance to preserve, and *"fires every 3 seconds"* is what
+a creator thinks in.
+
+### Every floor is a real value, and the any-check counts keys
+
+The clamps' lower bounds are things somebody might want — `aimMs` 0 is 1448's documented instant shot,
+`standoff` 0 is "walk right up", `fireCd` 0.05 is a minigun — with the CEILINGS doing the work of stopping a
+hostile level file shipping a 1e9 burst.
+
+Which exposed the real trap. The sanitizer ended `if(e.hp!=null || e.dmg!=null || e.spd!=null){ out[k]=e; }`
+— **a list that has to grow with every field, where the one you forget is silently dropped on save.** And a
+mods object carrying only `aimMs: 0` is exactly what a truthiness test loses. It counts `Object.keys(e)` now.
+
+### The TDZ, caught by reading rather than by running
+
+`ENEMY_BASE` is a module-level initialiser that executes at BOOT, and it now reads `RANGED_AIM_MS` — which
+1448 declared beside the melee constant, **6,000 lines below it**. That is a throw on the first line of the
+game, and `typeof` would not have guarded it (1127, 1331, 1350, 1383, 1411, 1447). The constant moved above
+its reader, with a note at both ends saying why it sits away from the melee one. Found by checking the
+declaration order before running the script — which is the whole reason to check.
+
+### The editor shows them only on a type that shoots
+
+A fire rate on a melee grunt is a control with no consequence (build 1348), so the five sit on their own
+indented `ranged` row that only appears for `ENEMY_TYPES[k].ranged` — measured live: 10 inputs across the
+two ranged types, none on the other six. Each carries its factory value as the placeholder (blank visibly
+means factory) and a tooltip, because "standoff" does not explain itself.
+
+### Measured live, with an untuned level as the control
+
+```
+factory                fireCd 1.6 · burst 4 · projSpeed 38 · standoff 11 · aimMs 260
+authored               fireCd 4   · burst 3 · projSpeed 55 · standoff 28 · aimMs 900
+spawned enemy          every one of them
+in a real firefight    lead 916 ms (the authored 900), burst gaps 100/100, backing off 8 -> 17.7 toward 28
+round trip             the file carries them; cleared, restored, and a fresh spawn reads them again
+untuned control        the key is absent from the FILE — JSON drops undefined, so ask the round trip
+```
+
+**Six pins moved, and five were one trap.** 1191's baseline, 1372's lifted capture, 228's and 32's spawn
+lines and 1448's default all quoted a WHOLE literal that legitimately grew (builds 519/928/1411/1447 record
+the same thing). Each asserts its property now — *captured from the live type table*, *the spawn carries the
+set*, *`!= null` so an authored 0 survives*. The sixth is 1191's executing rig, handed `ENEMY_MOD_RANGED`
+lifted from source rather than restated.
+
+**And the prose trap for the eighth time:** my pin that the enumerated any-check was gone matched this
+build's own comment explaining why it went. Pin the STATEMENT, never the bare phrase.
+
+## The gunner fired on the frame its cooldown expired (build 1448)
+
+A melee enemy has wound up before it swings since build **627** (320 ms), audible since **1283** and visible
+on a capsule since **1367**; a charger since **635**. A gunner had nothing — `fireEnemyShot` ran on the exact
+frame `shootCd` reached zero, so stepping out of cover meant being hit before anything on screen or in the
+mix had said a shot was coming.
+
+**Build 1371 covered the first acquisition and nothing after it.** That build floors `shootCd` to 0.35–0.60 s
+on the AWARE rising edge — a beat when an enemy first notices you. In an ongoing firefight every later round
+was still instant, which is most of the shots a player takes.
+
+### Where the cooldown is charged is the whole build
+
+`en.shootCd = en.fireCd` is spent at the **wind-up**, not at the shot. Spend it at the shot and the cycle
+becomes `fireCd + aimMs` — every ranged enemy in every level ever authored silently loses fire rate, a
+stealth nerf wearing a feature's name. Charged at the wind-up, the cycle is exactly `fireCd` and only the
+FIRST round after acquisition arrives later than it used to. Measured on a real gunner: the gaps between
+rounds are **identical** to the control's.
+
+### The re-check IS the counterplay
+
+Everything is re-tested when the wind-up completes — sight, range, height, a fresh `segmentBlocked` — so
+ducking behind cover during the tell means the round never comes. And the cooldown **stays spent**: the enemy
+committed and the player beat it, so peeking is not free either. Build 1209's heavy-hit branch clears
+`_aimT` beside the melee and lunge ones, which is what finally makes suppressing fire mean something.
+
+Three more decisions:
+- **260 ms, not melee's 320.** A swing is a body committing its whole mass; a shot is a weapon coming up, at
+  a range where the player already has distance to react.
+- **Per-TYPE (`aimMs`)**, beside `fireCd`/`burst`/`projSpeed`/`standoff` — and tested for `!= null`, not
+  falsiness, so an authored **0 is exactly the pre-1448 instant shot** rather than silently meaning "default".
+- **A burst is ONE commitment.** Rounds 2..n come from the `_burstN` branch above the gate, so they are not
+  each telegraphed — one tell, then the stream.
+
+The pulse rides build 1367's own `_telegraphFrac` rather than growing a second visual language, measured
+against its **own** window (260 ms read against melee's 320 would look half-finished the moment it started),
+and `SFX.rangedWind` is thinner and higher than the melee tell so a player under fire from both can tell them
+apart.
+
+### Measured live, on the frame rig, with the pre-1448 engine as the control
+
+```
+                     shots   winds   first shot   lead     gaps
+aimMs 0 (control)      2       0        483 ms      —      [100]
+aimMs 260              2       4        900 ms    267 ms   [100]
+aimMs 800              2       4       1483 ms    816 ms   [100]
+cover during the tell  0       1          —         —      cooldown still spent
+```
+
+**The real clock cannot measure this and the first run proved it.** SwiftShader renders ~1.5 fps here, so a
+260 ms window opens and closes inside one frame — the tell and the shot were logged at the same instant, and
+the control fired nothing at all in 3.6 s. Build 1406's `__drive` rig with its virtual clock is the only
+instrument that can see a sub-frame window.
+
+**Two more probe faults, both the same rule.** `spawnEnemy` PUSHES and returns nothing (read `enemies[len-1]`);
+and `en._see` is recomputed from a real raycast every frame, so writing it from outside is overwritten before
+the fire gate reads it — the abort check reported failing until cover became **real cover**, a wall dropped
+between them on the frame the wind-up appears. A fixed frame number could not work either: acquisition takes
+as long as the AI takes, and the first attempt dropped the wall before any wind-up had started (`winds: 0`,
+which measures nothing).
+
+### The regression the suite caught, and it is a recorded trap
+
+My edit anchor was `..., shootCd: 0` — which matched the **prefix** of `shootCd: 0.4 + Math.random()*0.8`,
+so the scripted edit's count assert passed and it silently truncated build 1371's spawn stagger to zero,
+making every gunner in a wave fire in unison. `test-1371` failed on it. This file already records the trap
+under build 1400 (*a short name in a source pin is a substring of everything that ends with it*) — this is
+the same thing at the other end, in an EDIT anchor rather than a test pin, where the count assert gives a
+false sense of safety. **An anchor must end on a boundary, not mid-value.**
+
+One pin moved (843), and its intent is now stronger: it counted **two** budgeted fire-gate casts; the
+wind-up's re-check is a third, and what that assertion always meant is that *every* one of them is budgeted.
+
+## The game had no sense of touch (build 1447)
+
+`grep -c "vibrat|hapticActuators|vibrationActuator"` returned **2**, and both were prose about enemy
+separation. So a game that ships a full gamepad prefs panel (909), two touch look sliders (1042), a touch
+layout editor and build 1316's stick-only aim assist — all of which say *this input is first-class* — had no
+rumble of any kind. Every other feedback channel is there: the camera shakes, the frame flashes, the hit
+marker ticks, the audio pans. The one channel a controller has and a screen does not was empty.
+
+**`addShake` is the whole feature, because build 1313 already made it the one chokepoint.** That build routed
+blasts, hits taken, kills, car impacts, the melee thump and every weapon's fire through it precisely so a
+single comfort scale could cover them — so haptics gets all of it from ONE call site, including the events
+nobody has written yet, and the amount is already a magnitude that maps across without a second table of
+numbers to keep in step.
+
+### It reads the RAW amount, before the camera-shake scale
+
+Two different senses. A player who turned the camera down because motion makes them ill has not asked for
+their controller to go quiet, and a player who dislikes rumble has not asked to lose the camera. Measured
+with `a11y.shake = 0`: the camera moves **0.0000** and the pad still rumbles at **0.6**.
+
+The pref lives in the `a11y` blob rather than beside the gamepad bindings, which decides where the slider
+goes as well: every key in that blob answers *how hard does the game physically affect me*, and rumble is
+that question for the hands. It inherits the 0..1 clamp, the persistence and the Restore-defaults button for
+free — which build 1333 could **not** do for interface size, because that one reaches 1.75.
+
+### Four decisions in `_rumble`, each a defect the other way
+
+- **`RUMBLE_GAP = 40 ms`, and a smaller jolt inside the window does not cut a bigger one short.** A shotgun
+  is one `addShake`; a grenade beside a crowd is several in a frame. Without the coalesce the last tiny one
+  would replace the blast; with a naive coalesce the blast would be dropped by whichever arrived first.
+- **Duration tracks amplitude** (`50 + a*220` ms), as the shake decay does — a blast rumbles longer *and*
+  harder than an SMG round rather than being the same tick at a different strength.
+- **`weakMagnitude = min(1, a*2)`.** Strong is the low-frequency body, weak the buzz. A gunshot is
+  `addShake(0.13)`, and 13% of the body channel alone reads as nothing; doubling the buzz is what makes it a
+  crisp tick while a blast still gets both.
+- **Every promise is caught.** `playEffect` rejects on a pad that has lost permission, and an uncaught
+  rejection reaches build 1330's overlay as a red error bar across the player's screen.
+
+A phone has no strength channel, so `navigator.vibrate` carries the whole magnitude in its DURATION, kept
+short — a long buzz on a handheld reads as a fault rather than as feedback — and it is gated on `isTouch`,
+because a desktop browser that exposes the API has nothing to vibrate.
+
+### The TDZ, for the sixth time
+
+`const pref = (typeof a11y!=='undefined') ? a11y.rumble : 1;` — **`typeof` throws for an uninitialised
+`let`**, and `a11y` is declared thousands of lines below `addShake`. Builds 1127, 1331, 1350, 1383 and 1411
+each lost something to exactly this. It is a `try/catch`, which is what actually guards a temporal dead
+zone, and `test-1447` executes the call *inside a real dead zone* rather than asserting the shape.
+
+### Measured live, through the real events
+
+```
+one rifle round     strong 0.13   weak 0.26   79 ms
+a grenade at 1 m    strong 0.86   weak 1.00   239 ms
+taking 18 damage    strong 0.33   weak 0.65   122 ms
+addShake 0.6 / 0.05        ordered in BOTH strength and duration
+CONTROL: rumble 0    0 rumbles from all three events, camera still shakes 1.00
+return: rumble 1     0.6 again
+a11y.shake = 0       pad 0.6, camera 0.0000        <- two senses
+the slider           on screen in the comfort panel, 35% -> pref 0.35, label "35%"
+```
+
+**Two probe faults, both mine, both the same rule.** A stub pad with no `buttons`/`axes` threw once per
+frame into the error overlay, because the engine polls `getGamepads` every frame and maps over them; and
+`explodeAt` takes a `Vector3`, not a plain `{x,y,z}`. *Read the consumer before faking its input* — the
+build-1433 lesson, twice in one probe.
+
+**Three pins moved, and two of them were the whole-list trap.** `test-1333` quoted `A11Y_DEFAULT`'s entire
+literal to mean *the interface scale is not in this blob*, and `test-1313` quoted `A11Y_ROWS`' entire literal
+under a comment reading *"adding a sixth effect is one row here"* — which is exactly what happened. Both
+assert membership now, and 1313's is stronger: **one row per key in the blob**, so an effect wired twice or
+left unwired fails there. The third (`test-1313`'s executing `addShake` rig) is handed an inert `_rumble`,
+because that rig's subject is the camera scale and the pad is measured at its own site.
 
 ## The frame meter had one door, and it was a key no phone has (build 1436)
 
@@ -2164,6 +2676,415 @@ better than being in a batch.
 **Frame TIME is deliberately absent.** SwiftShader's noise floor exceeds every effect here (build 1414), so
 draw calls and triangles are the only trustworthy instruments; a creator's own machine is the only place
 the wall clock means anything, which is what the perf HUD's `other` / `idle` split (1426) is for.
+
+## A slider never silently rewrites a value it cannot represent (build 1446)
+
+The audit said the transform fields *"clamp typed values back to ±65 while ARENA reaches 2000"*. **Measured
+live, that is wrong** — and the truth is worse, because it is silent and destructive one gesture later. The
+typed value is not clamped at all; the commit takes it verbatim, as its own comment has always said. What
+clamps is the `<input type="range">`, which sanitises **its own** value:
+
+```
+type 300 into Pos X    state 300, prop at x=300, the number field reads 300
+                       ...and the slider reads 65
+touch the slider       state 65, and the prop teleports 235 units
+```
+
+Same for height (type 60, one touch, back to 20) and scale (type 40, one touch, back to 9.99). In an
+800-unit arena the position sliders reached **8.1%** of it.
+
+### Two derivations, neither inventing a bound
+
+- **Position tracks `ARENA`**, which is exactly how far the floor goes. At the default arena of 70 that is a
+  five-unit widening of a 65-unit slider, so nothing a creator has today moves; it only opens up for the
+  creator who enlarged their arena, who is the only one who needed it. Rotation, scale and height
+  deliberately do NOT follow it — a rotation is not a distance and a height is not an arena width.
+- **Any field widens to include the value it is showing.** That is the general rule, and it is what fixes
+  scale and height without guessing new limits for them: a slider that cannot reach 40 is not entitled to
+  decide the value is 10.
+
+The cost is a coarser slider in a big arena, which is what "reaches the whole arena" means; the number field
+and the gizmo are the precision tools.
+
+### There were three writers of `rng.value`, and each one re-introduced the bug
+
+The build, the commit's own write-back, and the proportional siblings' refresh — plus `updateFieldDisplays`.
+`_showOnRange` is the one writer now: widen, then write. The test counts the call sites rather than
+spot-checking, because any one of them assigning an out-of-range number brings the whole thing back.
+
+### The step lattice rewrites values too, and the fix's own restore re-broke it
+
+A range's step is anchored at `min`, and scale's `min` is the `0.00001` epsilon that keeps zero out — so 40
+is not on its lattice and the element quietly held **39.99001**. Rather than predicting that in floating
+point over an 800-unit span, the helper tries the authored step and **asks the element** whether it managed
+to hold the number.
+
+**The order cost a run.** Writing the value and then *restoring* the authored step re-clamps it, because
+assigning `step` re-sanitises `value` — so the restore was undoing the fix. The step is set first now.
+
+**And the tolerance is HALF A STEP, not an epsilon.** A correct rounding can never move a value by more than
+half a step, so anything beyond that means the element fell back to a boundary — the rewrite worth relaxing
+for. Below it is ordinary quantisation every field has always had: scale's offset lattice already shows a
+typed `2` as `2.00001`, and relaxing there would drop the authored step on nearly every scale value and make
+arrow-key nudging coarse, to hide ten micrometres.
+
+### The test's fake element was wrong about the one case that matters
+
+It rounded to the nearest lattice value and then clamped to `max`, so it held 40 exactly and disagreed with
+the browser. The real element steps **down** to the last lattice value at or below max. The live probe had
+already measured 39.99001, so the model was corrected against the measurement rather than the other way
+round — and the two now agree on every row.
+
+One pin moved (1437), an executing rig that genuinely lacked the new module-level helper; it is handed
+`_fieldRange`/`_showOnRange` **lifted from source**, never restated.
+
+## Delete and Duplicate act on the same things (build 1445)
+
+From the editor audit. They were **three** hand-kept lists, and no two of them agreed:
+
+| | covered |
+|---|---|
+| `duplicateSelected` | props · lights · spawns · turrets |
+| the Delete **key** | props · lights · spawns |
+| the panel's Delete **button** | keyed on `tgt.isSpawns` / `isLights` / `isTurret`, falling back to deleting a **prop** for anything else |
+
+So a turret could be duplicated and not deleted by key — though `deleteSelectedTurret` had existed all along
+and was simply never called — and **none** of the three knew about the eight zone types or the pickup spots.
+A creator selected a trigger volume they had just tuned, pressed Delete, and nothing happened; the only way
+to remove one was to find its row in the panel and click the small cross.
+
+Both verbs now end in the same table-driven tail, and the panel button asks the same function its Duplicate
+neighbour always did. That fallback is gone too: an unrecognised target now does nothing rather than
+deleting a prop.
+
+### It is build 1326's own lesson, one verb along
+
+That build made `ZONE_EDIT` the one place a zone type is declared, after finding a type listed in three
+places and missing from a fourth. This build gives that table `remove` and `add`, so a zone type declares
+its list, its selection, its markers, its panel, its remover and its adder **once** — and the ninth kind
+cannot reach one verb and not the other.
+
+**Two things turned out to have no name at all, and both were the audio zone.** Its remover lived inline in
+its panel button — which is why it was the one type the Delete key could not have reached even by asking —
+and its ADD was inlined in *two* places, the panel button and the `+` menu, as two copies of one object
+literal, so a retuned default radius would have moved in one of them.
+
+**And build 1320's `ZONE_ADDERS` was function-local.** That build created the table because the add list had
+drifted by exactly one entry, then left it inside the `+` menu builder where nothing else could use it —
+including the probe that wants to add one of every zone type the way a creator does. Folded in.
+
+### Measured live, driven off the engine's own table
+
+```
+every zone type   add 1 -> duplicate 2 (offset +2) -> delete 1 -> delete 0
+pickup spots      the same
+turrets           add, duplicate to 2, and BOTH delete — the key reaches them now
+CONTROL           a zone target leaves all 59 props alone
+CONTROL           an unknown target changes nothing at all
+audio zone        removed, and stopAudioZones called — a deleted zone stops making noise
+```
+
+The per-type row iterates `ZONE_EDIT` and calls each type's own `add`, so a ninth kind is covered without
+editing the probe. **The first run threw** — it pushed a hand-made `{x, z, r}` and `renderFxZonesPanel`
+wanted a field that shape does not have. Build 1429's rule: *call the engine's own constructor rather than
+rebuilding its argument object.*
+
+### The probe found a real inconsistency nobody reported
+
+`removePickupSpot` **cleared** the selection, so two Delete presses removed one spot while the same two on a
+zone, a prop or a light removed two. It clamps to a neighbour now, like every zone remover already did.
+
+### A pin whose message and regex described opposite things
+
+`test-176` asserted `/pickupSpots\.splice\(i,1\); selPickup=-1;/` under the message *"removing a pickup does
+NOT clear selPickup"* — and that line clears it. Neither satisfied by prose nor defeated by it: the message
+and the regex had simply drifted apart, which is the third kind build 1419 records. Its two neighbours read
+the same way (*"tab change does not release pickup"* asserting `selPickup=-1`), so it looks like a stale
+convention rather than one slip.
+
+**A test regex built by string concatenation double-escaped its parens** — `new RegExp('...add:\\(\\)=>')`
+is a literal backslash followed by a group, so it matched nothing. It reported ONE key failing rather than
+all eight, which is what made it look like a data problem instead of an escaping one. Slice the row and test
+it directly; there is no escaping to get wrong.
+
+Seven pins moved (176, 241 ×3, 396, 505, 1193, 1320), every intent unchanged.
+
+### Recorded rather than built: zones in PREFABS
+
+The audit also asked for zones and pickups to join prefabs. They cannot, and the reason is structural rather
+than an oversight: `_pfCapture` takes a **selection with a pivot**, and the editor's selection is ONE TYPE AT
+A TIME — `activeSel()` returns `selProps` or `selLights`, which is exactly what build 1275 recorded when the
+marquee had to choose a type rather than mix them. A prefab containing a zone needs a mixed selection first,
+and that is a gizmo, group-op and inspector change, not a side effect of this build.
+
+## A finger and a mouse run the same press chain (build 1444)
+
+The editor audit reported that *"single-finger drag does nothing on touch"*. **Half of that was already
+false, and checking cost nothing:** `#tLook`'s editor branch has called `tryGizmoGrab` on press and
+`gizmoDragMove` on move for a long time, so dragging a gizmo handle and tap-to-select both work on a tablet
+today. What was genuinely unreachable is everything ELSE a press can start — the **terrain brush** and the
+**marquee** — because that branch knew about the gizmo and nothing else.
+
+**This is the second time an audit finding about touch has been partly wrong in the same way.** Build 1312's
+*"taps on the stick half do nothing"* turned out to be build 165's deliberate decision, caught by a test that
+was already asserting it. Read the handler before believing the report.
+
+### The fix is not a second copy of the priority order
+
+Two implementations of one behaviour is the defect this file records more than any other (1162, 1252, 1266,
+1280, 1400), and a **priority chain** is exactly the shape that drifts: the day somebody adds a fifth thing a
+press can claim, one input gets it. So `_edPressDown` / `_edPressMove` / `_edPressUp` **is** the chain —
+brush, then gizmo, then Alt-duplicate, then marquee — and the mouse and the pad each ask it first, then do
+their own input-specific thing with whatever is left (a look-drag, a pan, an orbit).
+
+`altKey` is false on every touch event, so that branch is simply never taken there — no gesture had to be
+invented for it, and nothing about the mouse changed.
+
+### The layout claim was wrong, and measuring is what caught it
+
+The first draft of this entry said the left 42% of a touch screen stays the movement stick, so a marquee
+cannot start there. **`#tLook` is `left:42%` IN PLAY only** — `body.editing #tLook { left:0; right:330px; }`
+widens it to everything except the editor panel, and `#tStick` is later in the DOM with no z-index, so it
+takes back its own 132 px circle. Measured: at a 900×700 viewport the pad reads `[0, 0, 570, 700]`.
+
+So on a tablet a press starts an edit **anywhere except that one circle at the bottom-left**, which stays the
+stick because it is a touch creator's only way to fly the camera. Far better than what was almost written
+down, and the difference was one `getBoundingClientRect`.
+
+### Measured with real PointerEvents at the real pad
+
+```
+top view, drag across props    0 -> 34 props selected, marquee closed cleanly
+CONTROL: editor CLOSED         0 selected, no marquee            <- the same gesture, doing nothing
+brush OFF, same drag           terrain unchanged
+brush ON, same drag            terrain 0 -> 1.773 at world (33.94, 0)
+gizmo grab                     still reached — the half the audit got wrong
+a clean tap                    still dispatches the select click
+```
+
+### Three instrument faults, and every one produced a null that looked like a defect
+
+- **`#touchUI` is `display:none`** until the frame manager shows it, and that wants `gameOn`. The pad
+  measured a zero rect, so dispatching straight at the element exercised the handlers but proved nothing
+  about whether a finger LANDS there.
+- **The top orthographic camera is positioned by the frame loop**, so switching to top view and raycasting
+  in the same synchronous eval casts every ray from `y = 0` and misses the floor. The brush row reported a
+  null world point and honestly measured nothing rather than printing a zero.
+- **And `paused = true` is what kept it at y=0** even after waiting for real frames: `loop()` early-returns
+  past the camera chain while a UI gate is up (build 1371's own note). Pausing for measurement stability was
+  the thing preventing the measurement. Nothing here is perturbed by the sim running — a selection count, a
+  DOM rect and a terrain height at a fixed point — so the probe simply does not pause.
+
+**A backtick inside page code for the eleventh time**, in a comment added after the lint had been run. Build
+1415's rule stands and I broke it again: run `tools/probe/lint.mjs` **after the last edit**, not before the
+first. Build 1389's staleness guard also fired correctly on the next run, because I had edited the source
+comment after staging.
+
+Six pins moved (118, 130, 175, 332, 429, 1377), every intent unchanged. **130's is the one worth reading:**
+it required the gizmo drag-end sync to appear **twice**, once per input — build 1280's own lesson that a test
+which counts copies of a thing is a test of the copying, and it would have gone green against two copies that
+had drifted apart. It now asserts the property directly: the sync exists once, and both inputs provably reach
+it.
+
+## A prop finally says how hard it was hit (build 1443)
+
+Every enemy damage site has spawned a floating number since build 625 — the shot, the swing, the mounted
+turret. **`damageProp` never did.** So the shooting-range plate that builds 1390, 1391, 1397, 1421 and 1422
+exist to make shootable, resettable and scoreable was the one target in the game with no readout of the
+shot that hit it — on a range, the headline activity.
+
+### The rule was read off the existing call sites, not invented
+
+A damage number in this engine is the SHOOTER'S feedback on **direct, aimed** damage. `spawnDamageNumber`
+appears at exactly four places before this build — the bullet, the swing, the turret and the PvP relay —
+and at none of them is it an explosion or damage another player dealt. A blast across twenty enemies would
+be a wall of numbers.
+
+**That is why the decision is a parameter the aiming sites pass rather than something `damageProp` infers
+from `byId`** — a grenade you threw carries your own id too, so the obvious inference is exactly wrong.
+Three sites declare it; the test counts them, because a fourth would be a blast or someone else's shot.
+
+### The fuse branch is what makes the parameter worth having
+
+Build 629's first shot on a fused explosive **lights it and deals no damage at all**, returning early. A
+number there would be a small lie about the only shot in the game that deliberately does nothing. It comes
+out right for free, because the spawn sits below that return — and it could not have, had the number been
+spawned at the call site after `damageProp` returned.
+
+An **unbreakable** target still shows its number. Build 1421's rule is that damage LANDS on one — flash,
+sound, the `damaged` signal — and only the health never drops; a number is that same feedback, and leaving
+it off would silence the exact prop class a shooting range is built from.
+
+### Measured live, through the real function
+
+```
+aimed shot, 15 dmg          one number at the contact point, hp 100 -> 85
+the same call WITHOUT it    NO number, and hp 85 -> 70      <- the parameter decides, not the damage
+UNBREAKABLE target          a number, and hp stays 100
+fused barrel, first shot    NO number — that shot only LIT it
+...second shot              a number
+lethal shot                 kill styling, the same "!" an enemy's killing blow gets
+no contact point            the collider box CENTRE, not the origin 45 m away
+dmgNumCfg.on = false        0 sprites; back on, 1
+```
+
+That second row is the control the build rests on: identical damage, identical everything, and the number
+appears or does not purely by the caller's declaration.
+
+**Where it appears is the prop-specific part.** An imported prop's origin can sit metres off its mass, so a
+hit with no contact point falls back to the collider box's centre — build 1439's lesson for the aim assist,
+one system along.
+
+### An instrument fault worth the line
+
+The probe wrapped `spawnDamageNumber` and logged BEFORE delegating, so with `dmgNumCfg.on = false` it
+recorded a call the real function then declined — **the probe measuring itself**. Read the effect instead
+(how many sprites are live) and the row is 0 and 1.
+
+Five pins moved (101 ×2, 1295, 1305, 1421), every intent unchanged — four were quotations of lines that
+gained the declaration, and each is now expressed as the property it was always about rather than an arity
+that will keep moving. The fifth is the interesting one: `test-1305` asserts that the REASON a client
+predicts its own feedback is *recorded at the site*, and my reword broke it. The pin was right and the
+comment was wrong, so the sentence went back rather than the pin moving.
+
+## The biggest thing in the post chain never asked what device it was on (build 1442)
+
+`_AO_GEO_MAXSTEP` was a plain `2`, so the half-res G-buffer prepass — an extra **scene render**, plus build
+1140's viewmodel pass into the same buffer — survived the top three quality rungs on every device. And
+`_prStepI` starts at 0 everywhere, so a phone **opens at the most expensive configuration the engine has**
+and only relaxes once the adaptive ladder has measured a bad window (1141).
+
+It is not a rounding error. Measured on the stock level with the ladder **pinned**, ssao/ssr being the two
+terms `_geoWant` is built from:
+
+```
+rung 0    prepass on 185 calls   off 126   extra 59
+rung 1               on 129      off  71   extra 58     <- it very nearly DOUBLES the draw calls
+rung 2               on 129      off  71   extra 58
+rung 3               shed already
+```
+
+Every other expensive thing here already takes a device-class decision — point shadows 0 on a coarse
+pointer (1414), the sun's shadow map 1024 against 4096 (1346), the environment probe sky-only (1186), and
+the resolution ladder even carries two EXTRA rungs there. This one never did, so a phone paid the largest
+single item in the post chain across **three of its five rungs** before any relief arrived.
+
+**This is deliberately in tension with build 1364, and that is worth stating rather than hiding.** That
+build kept AO through the downshift because *"the median player sits on rung 1"* and losing the grounding
+cue there was the defect. That argument is about a desktop machine which is coping. A phone that has left
+rung 0 has already failed to hold its frame rate at full resolution, and an extra scene render is the
+biggest thing there is to give back. So on a coarse pointer the prepass is rung-0-only: the grounding cue
+while the device can afford it, and the first thing to go when it cannot. Soft particles and shorelines
+fall back to hard edges there, which is build 1183's own designed degradation (AO off = hard edges, never
+stale depth) rather than a new failure mode. A fine pointer is byte-identical to 1218 and 1364.
+
+**Starting a phone below full resolution was considered and declined**, with the reason recorded rather
+than left to be rediscovered: `_PR_STEPS` already gives a coarse device two extra rungs, and the ladder
+exists precisely to tell a capable phone from an incapable one. Opening every phone at reduced resolution
+penalises the first to help the second, on evidence nobody has measured.
+
+### The rung walked out from under the first measurement
+
+`renderScene` runs `_adaptResTick`, and under SwiftShader **every** frame is a slow frame — so the ladder
+moved the rung between the warm-up and the read. Rungs 0 and 1 reported identical numbers, and rung 2
+reported the prepass costing **zero** while a gate readout printed beside it said the prepass was running.
+
+Two rows disagreeing is the instrument, not the engine. `_adaptOn = false` pins it, and the gate is now
+read out of the **same render** as the cost — reporting it from a separate loop is how the first run came
+to describe two different frames. That is build 1383's rule (*a probe that echoes its own input tells you
+nothing*) with the twist that here the probe was echoing a different frame's truth.
+
+One pin moved (1218), and its subject is unchanged: that test names its rungs 100/85/72/66%, which is the
+FINE ladder, so it evaluates the fine branch — and the fine branch is exactly what this build had to
+preserve.
+
+## A canvas is an image, and an image of a colour has to say so (build 1441)
+
+From the four-critic audit. Every texture this engine **loads from a file** is tagged sRGB, because that is
+what an 8-bit colour image is. Every texture it **draws itself** was not — so three decoded the bytes as
+linear and each of them rendered too bright:
+
+```
+a bullet decal core, rgba(8,6,4,.95)   0.031 read as linear where 0.0024 was meant    ~13x
+an authored sign at #808080            0.5   read as linear where 0.214 was meant     ~2.3x
+```
+
+This is **build 1429's defect in the mirror**: that build found DATA maps being decoded as colour, and this
+one is colour not being decoded at all. So the same care applies in reverse, and the three canvases that
+carry NUMBERS — `_procSurface`'s normal and roughness maps, and `_paintTex`, whose RGB channels are splat
+weights — are named as such at their own sites and must never be tagged. The test asserts both directions.
+
+### A tag written against a three version you are not running is not a tag
+
+Two sites already carried what read as a tag:
+
+```js
+if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+```
+
+with no `encoding` companion. **On r149 a Texture has `.encoding` and no `.colorSpace` at all**, so that test
+is FALSE and the assignment never ran. `WebGLTextures` reads `texture.encoding` 18 times and
+`texture.colorSpace` zero times — both pinned against the vendored build, because an upgrade would
+invalidate this whole build silently.
+
+So the muzzle flash and the explosion sheets — the two most-drawn textures in the game, and both
+**additive**, where an over-bright decode goes straight into the frame — believed they were tagged for as
+long as they have existed, as did a creator's own flipbook url. That is why `_srgbTex` tries both spellings
+rather than picking one, and why the test asserts that **no sRGB tag anywhere in the file tests `colorSpace`
+without its companion**.
+
+### The alpha-only sheets go through it too, and that is deliberate
+
+`fireSoftTex`, the weather sprite, the dust puff and the skid are pure white or pure black with an alpha
+ramp — and **0 and 1 are fixed points of the sRGB transfer**, so the tag cannot move a pixel of them today.
+They are routed anyway so the rule is *a canvas that carries a colour says so*, with no per-file exceptions
+to remember: the day somebody gives one of those gradients a warm stop, it is already right.
+
+### Measured live, with a control that returns byte-exactly
+
+An unlit sign is the cleanest surface in the engine to read a decode off — its board colour reaches the
+frame with nothing in between. World paused, grain and auto-exposure off, only `encoding` changed:
+
+```
+untagged, linear (3000)   214.6, 215.6, 216.7      <- a MID GREY board rendering as near-white
+tagged,   sRGB   (3001)   159.2, 160.3, 161.6
+control, back to 3001     159.2, 160.3, 161.6      <- EXACTLY
+```
+
+**55 code values.** The 2.34x in linear presents as 1.34x on screen because ACES and the OETF compress it —
+worth stating both ways, because quoting the screen ratio alone understates the correction and quoting the
+linear ratio alone overstates what a player sees. The arithmetic predicts 216 and 169 through the same
+chain, so the frame and the model agree to a few code values.
+
+### The window was half sky, and the state readouts were all correct
+
+The first run measured **1.16x against a predicted 2.3x** while every readout beside it — the decal at 3001,
+all three sheets at 3001, the data maps still at 3000 — was right. A sign is a `PlaneGeometry` translated so
+its base sits at y=0 (build 871), so a board scaled `[4,2,1]` spans y 0..2 and the probe's `lookAt(y=2)` was
+aimed at its **top edge**.
+
+Build 1151's rule for the fifth time — and the cheap settling instrument is build 1387's, not a raycast:
+**paint the surface and see whether the window follows.** Red took the window's green from 160.3 to 20.4, a
+0.127 collapse, with the control returning at 0 drift. A `__drawnAt` check run first reported `sky` at all
+five sample points and was simply wrong — a sign ships `noCol`, which neutralises its raycast, so the ray
+answered a different question from the renderer. *When a raycast and the pixels disagree, the pixels are the
+frame.*
+
+An earlier verdict line also called that real positive a failure, by demanding the control come back
+byte-identical and getting 2 code values of settling. **A control returns within the noise floor, and the
+noise floor has to be measured rather than assumed to be zero.**
+
+### And the prose trap, for the seventh time
+
+`!/colorSpace/` on the flipbook function failed against correct code — it matched the comment I had just
+written at that site explaining the removal. Pin the STATEMENT (`/\.colorSpace\s*=/`), never the bare
+identifier. Builds 164, 1393, 1395, 1411, 1421 and 1439 all record this in one direction or the other.
+
+Six pins moved. Four are executing rigs that genuinely lacked the new module-level helper in an isolated
+scope (1021, 478, 484, 866) — each is handed `_srgbTex` **lifted from source**, never restated, because a
+rig that restates a helper keeps passing against a stale copy. Two are content pins in 555 quoting the
+constructor line the tag now wraps, intents unchanged; and 484 gained the assertion its stub was already
+shaped for — the sheet comes out tagged.
 
 ## Geometric LOD — the fifth kind, and the one a heavy import hits (build 1431)
 

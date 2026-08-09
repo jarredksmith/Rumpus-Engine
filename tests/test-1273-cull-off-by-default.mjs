@@ -38,6 +38,10 @@ function rig(props, opts = {}) {
     'function _dirtyShadows(){}',
     extractFunction('_lodPxNow'), extractFunction('_lodEligible'), extractFunction('_lodSetCasting'),
     extractFunction('_lodRemeasure').replace('const bb =', 'remeasures++; const bb ='),
+    // build 1440: the batches got their own rung inside _lodTick. Supplied LIFTED FROM SOURCE with an
+    // empty batch list, so it runs here as a real no-op rather than a restated stub — these rigs are
+    // about the PER-PROP rungs, and test-1440 owns the batch one.
+    'let instanceMeshes = [];', extractFunction('_lodInstShadowTick'),
     extractFunction('_lodRestoreAll'), extractFunction('_lodTick'),
     'return { tick:_lodTick, remeasures:()=>remeasures, setEditor:(v)=>{ editorOpen=v; } };',
   ].join('\n');

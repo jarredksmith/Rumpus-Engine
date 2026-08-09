@@ -20,7 +20,12 @@ assert((src.match(/if\(Array\.isArray\(level\.turrets\)\) for\(const T of level\
 // ---- editor: a placeable, selectable target + Add/Delete + gizmo move ----
 assert(/turrets: \{[\s\S]*?isTurret: true,[\s\S]*?addable: true,[\s\S]*?noun: 'Turret',/.test(src), 'editor has a Turrets target');
 assert(/add\.innerHTML=_icn\('plus'\)\+'Add turret';/.test(src) && /addSceneTurret\(\)/.test(src), 'Add turret button wired (build 816: SVG icon)');
-assert(/else if\(tgt\.isTurret\) deleteSelectedTurret\(\);/.test(src), 'delete handles turrets');
+// build 1445 removed the panel button's own dispatch list — a third hand-kept one, keyed on tgt.isTurret
+// rather than on editorActive, with a fallback that deleted a PROP for anything it did not recognise. The
+// intent is unchanged and now stronger: a turret is deletable from the editor, and from the Delete KEY too,
+// which that list never reached.
+assert(/else if\(editorActive==='turrets'\) deleteSelectedTurret\(\);/.test(src), 'delete handles turrets');
+assert(/del\.onclick = \(\)=>\{ deleteSelected\(\); \};/.test(src), '...from the panel button as before');
 assert(/if\(editorActive==='turrets'\)\{ const g=editorTargets\.turrets\.obj\(\); return g\?g\.position:null; \}/.test(src), 'gizmo reads the turret position');
 assert(/\|\| editorActive==='turrets'\);/.test(src), 'turret is gizmo-movable');
 assert(/setTurretMarkersVisible\(true\);/.test(src) && /setTurretMarkersVisible\(false\);/.test(src), 'editor markers show in-editor and hide in play');

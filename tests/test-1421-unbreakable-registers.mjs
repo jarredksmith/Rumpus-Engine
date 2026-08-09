@@ -108,7 +108,10 @@ const prop = (ud, st) => ({
     'the flag is read ONCE into a local, so the three things it gates cannot drift apart');
   // the three gates, each of which is the bug the other way round if it is missing
   assert(/if\(_brk\) obj\.userData\.hp -= dmg;/.test(fn), 'it gates the health');
-  assert(/if\(_brk && obj\.userData\.hp <= 0\)\{ shatterProp\(/.test(fn), 'and the shatter');
+  // build 1443 lifted the same expression into a local so the damage number can be styled as a kill
+  // before the prop leaves the scene. The gate is byte-for-byte the same test.
+  assert(/const _broke = _brk && obj\.userData\.hp <= 0;/.test(fn) &&
+         /if\(_broke\)\{ shatterProp\(/.test(fn), 'and the shatter');
   assert(/if\(_brk && obj\.userData\.explosive/.test(fn), 'and the fuse');
   // ...and nothing else. A gate on the flash, the sound or the event would put the defect back.
   eq((fn.match(/_brk/g) || []).length, 4, 'exactly four uses: the declaration and those three gates');
