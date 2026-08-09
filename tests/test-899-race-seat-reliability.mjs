@@ -27,7 +27,8 @@ assert(/if\(_pend \|\| \(tries\|0\)<12\)\{ setTimeout\(\(\)=>_raceAutoSeat\(_pen
 assert(/if\(o\.userData\.nid && typeof _remoteDrivenNids!=='undefined' && _remoteDrivenNids\[o\.userData\.nid\]!=null\)\{   \/\/ build 899/.test(enter),
   'enterCar refuses a car with a remote claim');
 assert(/is driving that car'\)/.test(enter), '...and names the driver in the toast');
-assert(/_remoteDrivenNids\[o\.userData\.nid\]!=null\) continue;   \/\/ build 899: no enter prompt on a car someone else is driving/.test(src),
+// build 1451 turned the `continue` into a guard around the vehicle test — same exclusion, one walk
+assert(/_remoteDrivenNids\[ud\.nid\]!=null\)\)\{   \/\/ build 899: no enter prompt on a car someone else is driving/.test(src),
   'the E-prompt scan never offers a claimed car');
 
 done('build 899: joiners get seated no matter how slow the download, and seats cannot be hijacked');

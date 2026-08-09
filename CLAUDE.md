@@ -1940,6 +1940,60 @@ arriving for reviewers: *a critic cannot silently review a build that is not in 
 reason it did not poison the results is that they were told to state what they could not verify, and did.
 Every finding acted on was re-verified against the recovered tree first.
 
+## Five walks of the prop list, every frame, to ask one question (build 1451)
+
+`checkProximity` runs every frame in every mode, and it walked `propModels` **five separate times** — anim,
+xanim, npc, interact, vehicle — each re-reading every prop's `userData` to test one rare flag. Plus a
+`propModels.concat(_gridCars)` allocating an array per frame (build 1168's class). On the gauntlet-scale
+fixture that is **~4,800 iterations a frame** to answer *"is there anything to press E on"*, and the answer
+is almost always no.
+
+It is ONE walk. The five categories are collected in a single pass and the winner picked afterwards **in the
+same priority order**, so the array is traversed once, each prop's `userData` dereferenced once, and the
+box-clamp distance computed at most once per prop rather than up to four times.
+
+**The short-circuit is deliberately gone.** The old shape stopped early when a category matched — but that
+only paid off for the prop that MATCHED, which is the rare case, while every prop matching nothing paid four
+extra traversals. The number of flag tests per prop is unchanged.
+
+### The answer must be identical, so that is what the test proves
+
+`test-1451` **reconstructs the pre-1451 five-walk form from the shipped predicates and radii** — reading the
+four radii out of the shipped block, so a retune cannot make the test quietly measure a different engine —
+and drives both against **17 worlds × 3 player positions**. Every tie-break holds: priority over proximity
+(an anim prop at 2.0 still beats an xanim at 0.2), strict `<` so the first of two equidistant props wins,
+spent Once mechanisms and auto-anim props still silent, null holes skipped.
+
+### My first draft reintroduced the bug it was removing
+
+The shared distance was a `const _dist = () => {...}` closure — **allocated once per prop per frame**, which
+is exactly the cost build 1168 removed from this loop's neighbours. It is a `let d = 0, dOK = false` flag and
+a module-level `_interDist` now, and the test asserts the loop body contains no arrow function at all.
+
+### Measured live
+
+```
+prompts             interactable -> "E Activate" · dialogue -> "E Talk to Vendor" · mechanism -> "E Activate"
+                    a spent Once mechanism and a plain box: nothing   <- the control
+priority            an NPC at 0.5 m beats a CLOSER interactable at 0 m — unchanged
+659 plain props     0 distance computations   <- a prop matching no category never pays for one
++40 that match      exactly 40 calls, 1.000 per match
+finds it in a crowd of 659, and it is the right one
+```
+
+**The clock is deliberately not a claim.** Five warm batches of 200 calls read 83.5 / 79 / 81.5 / 44.5 / 78.5 µs
+— a **1.88× spread with nothing changed** — which is build 1414's noise floor, and the first run of this
+probe made the point twice as loudly (two runs of one scene at 0.072 and 0.032 ms). The counts are integers
+and cannot drift; those are what is reported.
+
+**Fourteen pins moved across ten files**, every one quoting the exact text of a walk that no longer exists,
+and every intent preserved: *flagged props are scanned* (the predicate), *E-activate mechanisms are detected*
+(the target), *distance is measured to the footprint* (the clamp, now shared — asserted by COUNT, so all four
+categories provably use the one 3D clamp), *a spent Once mechanism is skipped before distance ranking* (now
+part of the gating condition rather than a later `continue`), *grid clones are found* (from the second list,
+without the concat). One expectation in my own new test was wrong and the engine was right: mounted on a
+turret, the turret branch is skipped so a car in reach prompts — which is what the sequential form did too.
+
 ## A reload never said how far through it was (build 1450)
 
 `grep -c "reloadBar|reloadProg|reloadRing"` returned **0**. The flat path put `--` in the ammo counter and

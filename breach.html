@@ -33539,6 +33539,19 @@ function _pickupLabel(p){   // build 616: human-readable name for an interact-pi
   return p.kind;
 }
 
+/* build 1451: the footprint distance one prop is from the player — the clamp-to-AABB the four
+   interactable categories all used to compute separately. 3D, so a door one storey up does not prompt from
+   the floor below; falls back to the origin for a prop with no box yet. */
+function _interDist(o, ud, px, py, pz){
+  const b = ud.box;
+  if(b){
+    const cx = Math.max(b.min.x, Math.min(px, b.max.x));
+    const cy = Math.max(b.min.y, Math.min(py, b.max.y));
+    const cz = Math.max(b.min.z, Math.min(pz, b.max.z));
+    return Math.hypot(px-cx, py-cy, pz-cz);
+  }
+  return Math.hypot(px-o.position.x, py-o.position.y, pz-o.position.z);
+}
 function checkProximity(){
   if(shopOpen) return;
   nearTarget = null;
@@ -33552,73 +33565,84 @@ function checkProximity(){
     const d = Math.hypot(player.pos.x-ch.pos.x, player.pos.z-ch.pos.z);
     if(d < 3.5){ nearTarget = { type:'chest', chest:ch }; break; }
   }
-  // activatable animated props (only if not already next to a station/chest). Measure distance to the
-  // prop's footprint (AABB), not its center, so large/solid props you can't walk into still register.
+  /* build 1451: this was FIVE full walks of `propModels` per frame — anim, xanim, npc, interact and
+     vehicle — each re-reading every prop's `userData` to test one rare flag, plus a `concat` allocating an
+     array every frame (build 1168's class). On the 959-prop fixture that is ~4,800 iterations a frame to
+     answer "is there anything to press E on", and the answer is almost always no.
+
+     It is ONE walk now. The five categories are collected in a single pass and the winner is picked
+     afterwards in the SAME priority order — so the answer is identical, including the tie-breaks, while the
+     array is traversed once and each prop's `userData` dereferenced once. The box-clamp distance is
+     computed at most once per prop rather than up to four times.
+
+     The short-circuit the old shape had (an anim hit skipped the later walks entirely) is deliberately gone:
+     it only paid off for the prop that MATCHED, which is the rare case, while every prop that matched
+     nothing paid four extra traversals. The flag tests per prop are unchanged in number. */
+  let _bAnim=null, _dAnim=2.2, _bXa=null, _dXa=2.6, _bNpc=null, _dNpc=2.8, _bUse=null, _dUse=2.4;
+  let _bVeh=null, _dVeh=Infinity;
+  const _px=player.pos.x, _py=player.pos.y, _pz=player.pos.z;
+  const _vehWant = !nearTarget && !drivingCar;
   if(!nearTarget){
-    let best=null, bd=2.2;
-    for(const o of propModels){
-      if(!o || (o.userData.animTrigger||(o.userData.animMode==='trigger'?'interact':'auto'))!=='interact' || !(o.userData.animActions && o.userData.animActions.length)) continue;
-      let d;
-      const b = o.userData.box;
-      if(b){
-        const cx = Math.max(b.min.x, Math.min(player.pos.x, b.max.x));
-        const cy = Math.max(b.min.y, Math.min(player.pos.y, b.max.y));
-        const cz = Math.max(b.min.z, Math.min(player.pos.z, b.max.z));
-        d = Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz);   // distance to the mesh box in 3D (so a door one floor up doesn't prompt from below)
-      } else {
-        d = Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
+    /* both lists, without the concat: build 893's grid clones are enterable too */
+    const _extra = (typeof _gridCars!=='undefined' && _gridCars.length) ? _gridCars : null;
+    const _n = propModels.length, _m = _extra ? _extra.length : 0;
+    for(let _i=0; _i<_n+_m; _i++){
+      const o = _i<_n ? propModels[_i] : _extra[_i-_n];
+      if(!o) continue;                                  // build 1389: propModels carries null holes
+      const ud = o.userData; if(!ud) continue;
+      /* The footprint distance, computed at most ONCE per prop and shared by the four categories. Written
+         as a flag rather than a closure on purpose: an arrow function here would allocate once per prop per
+         frame, which is the very cost build 1168 removed from this loop's neighbours. */
+      let d = 0, dOK = false;
+      {
+        /* `nearTarget` cannot change inside this loop — the outer gate already established it is null —
+           so these four are unconditional here. The block is kept only to scope `a`. */
+        // activatable animated props — distance to the footprint (AABB), not the centre, so a large solid
+        // prop you cannot walk into still registers
+        if((ud.animTrigger||(ud.animMode==='trigger'?'interact':'auto'))==='interact' && ud.animActions && ud.animActions.length){
+          if(!dOK){ d=_interDist(o, ud, _px, _py, _pz); dOK=true; }
+          if(d<_dAnim){ _dAnim=d; _bAnim=o; }
+        }
+        const a = ud.xa;
+        if(a && a.on && a.trig==='interact' && !(a.mode==='once' && a.dest)){   // a fired Once mechanism is spent — xaToggle would no-op, so drop the E prompt too
+          if(!dOK){ d=_interDist(o, ud, _px, _py, _pz); dOK=true; }
+          if(d<_dXa){ _dXa=d; _bXa=o; }
+        }
+        if(ud.dialogue && ud.dialogue.length){   // build 695: a prop with dialogue lines is a talkable NPC
+          if(!dOK){ d=_interDist(o, ud, _px, _py, _pz); dOK=true; }
+          if(d<_dNpc){ _dNpc=d; _bNpc=o; }
+        }
+        if(ud.interact){   // build 1035: props flagged Interactable — one checkbox, no mechanism required
+          if(!dOK){ d=_interDist(o, ud, _px, _py, _pz); dOK=true; }
+          if(d<_dUse){ _dUse=d; _bUse=o; }
+        }
       }
-      if(d < bd){ bd=d; best=o; }
+      if(_vehWant && ud.vehicle){   // build 766: prompt within enterDist of ANY part of the model
+        if(!(ud.nid && typeof _remoteDrivenNids!=='undefined' && _remoteDrivenNids[ud.nid]!=null)){   // build 899: no enter prompt on a car someone else is driving
+          const _k=o.position.x+o.position.z*4096;   // recompute the footprint box only when the car has moved (a parked car: once)
+          if(!ud._enterBox || ud._enterBoxKey!==_k){ ud._enterBox=(ud._enterBox||new THREE.Box3()).setFromObject(o); ud._enterBoxKey=_k; }
+          const bx=ud._enterBox;
+          if(!bx.isEmpty()){
+            const dx=Math.max(bx.min.x-_px, 0, _px-bx.max.x), dz=Math.max(bx.min.z-_pz, 0, _pz-bx.max.z);
+            const vd=Math.hypot(dx,dz);   // distance to the footprint (0 when standing within it)
+            const rad=(ud.vehicle.enterDist!=null?Math.max(0.5,+ud.vehicle.enterDist):2.5);
+            if(vd<rad && vd<_dVeh){ _dVeh=vd; _bVeh=o; }
+          }
+        }
+      }
     }
-    if(best) nearTarget = { type:'anim', obj:best };
   }
-  if(!nearTarget){
-    let best=null, bd=2.6;
-    for(const o of propModels){ const a=o&&o.userData&&o.userData.xa; if(!a||!a.on||a.trig!=='interact') continue;
-      if(a.mode==='once' && a.dest) continue;   // a fired Once mechanism is spent — xaToggle would no-op, so drop the E prompt too
-      const b=o.userData.box; let d;
-      if(b){ const cx=Math.max(b.min.x,Math.min(player.pos.x,b.max.x)), cy=Math.max(b.min.y,Math.min(player.pos.y,b.max.y)), cz=Math.max(b.min.z,Math.min(player.pos.z,b.max.z)); d=Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz); }
-      else d=Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
-      if(d<bd){ bd=d; best=o; } }
-    if(best) nearTarget = { type:'xanim', obj:best };
-  }
-  if(!nearTarget){   // build 695: a prop with dialogue lines is a talkable NPC
-    let best=null, bd=2.8;
-    for(const o of propModels){ const dl=o&&o.userData&&o.userData.dialogue; if(!dl||!dl.length) continue;
-      const b=o.userData.box; let d;
-      if(b){ const cx=Math.max(b.min.x,Math.min(player.pos.x,b.max.x)), cy=Math.max(b.min.y,Math.min(player.pos.y,b.max.y)), cz=Math.max(b.min.z,Math.min(player.pos.z,b.max.z)); d=Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz); }
-      else d=Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
-      if(d<bd){ bd=d; best=o; } }
-    if(best) nearTarget = { type:'npc', obj:best };
-  }
-  if(!nearTarget){   // build 1035: props flagged Interactable — one checkbox, no mechanism required
-    let best=null, bd=2.4;
-    for(const o of propModels){ if(!o || !o.userData || !o.userData.interact) continue;
-      const b=o.userData.box; let d;
-      if(b){ const cx=Math.max(b.min.x,Math.min(player.pos.x,b.max.x)), cy=Math.max(b.min.y,Math.min(player.pos.y,b.max.y)), cz=Math.max(b.min.z,Math.min(player.pos.z,b.max.z)); d=Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz); }
-      else d=Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
-      if(d<bd){ bd=d; best=o; } }
-    if(best) nearTarget = { type:'use', obj:best };
-  }
+  /* the SAME priority order the five sequential walks had */
+  if(!nearTarget && _bAnim) nearTarget = { type:'anim', obj:_bAnim };
+  if(!nearTarget && _bXa)   nearTarget = { type:'xanim', obj:_bXa };
+  if(!nearTarget && _bNpc)  nearTarget = { type:'npc', obj:_bNpc };
+  if(!nearTarget && _bUse)  nearTarget = { type:'use', obj:_bUse };
   if(!nearTarget && !mountedTurret){
     let best=null, bd=2.8;
-    for(const g of turretModels){ const d=Math.hypot(player.pos.x-g.position.x, player.pos.z-g.position.z); if(d<bd){ bd=d; best=g; } }
+    for(const g of turretModels){ const d=Math.hypot(_px-g.position.x, _pz-g.position.z); if(d<bd){ bd=d; best=g; } }
     if(best) nearTarget = { type:'turret', turret:best };
   }
-  if(!nearTarget && !drivingCar){   // build 766: prompt when within enterDist of ANY part of the model (its footprint), not a fixed radius from the origin
-    const px=player.pos.x, pz=player.pos.z; let best=null, bd=Infinity;
-    for(const o of ((typeof _gridCars!=='undefined' && _gridCars.length) ? propModels.concat(_gridCars) : propModels)){ if(!o || !o.userData.vehicle) continue;   // build 893: grid clones are enterable too
-      if(o.userData.nid && typeof _remoteDrivenNids!=='undefined' && _remoteDrivenNids[o.userData.nid]!=null) continue;   // build 899: no enter prompt on a car someone else is driving
-      const _k=o.position.x+o.position.z*4096;   // recompute the footprint box only when the car has moved (a parked car: once)
-      if(!o.userData._enterBox || o.userData._enterBoxKey!==_k){ o.userData._enterBox=(o.userData._enterBox||new THREE.Box3()).setFromObject(o); o.userData._enterBoxKey=_k; }
-      const bx=o.userData._enterBox; if(bx.isEmpty()) continue;
-      const dx=Math.max(bx.min.x-px, 0, px-bx.max.x), dz=Math.max(bx.min.z-pz, 0, pz-bx.max.z);
-      const d=Math.hypot(dx,dz);   // distance to the footprint (0 when standing within it)
-      const rad=(o.userData.vehicle.enterDist!=null?Math.max(0.5,+o.userData.vehicle.enterDist):2.5);
-      if(d<rad && d<bd){ bd=d; best=o; }
-    }
-    if(best) nearTarget = { type:'vehicle', obj:best };
-  }
+  if(!nearTarget && _bVeh) nearTarget = { type:'vehicle', obj:_bVeh };
   if(!nearTarget){   // build 616: pickups flagged "require interact" wait here for E instead of auto-collecting
     let best=null, bd=2.2;
     for(const p of powerups){ if(!p || !p.interact || !p.ready) continue; const d=Math.hypot(player.pos.x-p.x, player.pos.z-p.z); if(d<bd){ bd=d; best=p; } }
@@ -34636,7 +34660,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1450 · 2026-08-09';
+const BUILD_VERSION = 'build 1451 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

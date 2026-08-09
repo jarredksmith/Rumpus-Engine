@@ -33,7 +33,11 @@ const va = new Function('o','v', extractFunction('vehicleApply') + '\nreturn (o,
 { const V = va({userData:{}}, {maxSpeed:30, turn:120}); eq(V.maxSpeed,30,'custom values kept'); eq(V.turn,120,'custom turn kept'); }
 
 // --- enter/exit + drive are wired into proximity, interact, update, deploy ---
-assert(/if\(!nearTarget && !drivingCar\)\{[\s\S]*?o\.userData\.vehicle[\s\S]*?nearTarget = \{ type:'vehicle', obj:best \};/.test(src), 'a nearby vehicle prop becomes an E-target');
+// build 1451: one walk. The gate (`!nearTarget && !drivingCar`) is unchanged and is now read once into
+// `_vehWant`; the pick moved below the loop with the rest of the priority order. Both halves asserted.
+assert(/const _vehWant = !nearTarget && !drivingCar;/.test(src)
+  && /if\(_vehWant && ud\.vehicle\)\{/.test(src)
+  && /nearTarget = \{ type:'vehicle', obj:_bVeh \};/.test(src), 'a nearby vehicle prop becomes an E-target');
 assert(/nearTarget\.type==='vehicle'[\s\S]*?prompt\.innerHTML = `<b>\$\{_uk\}<\/b> Drive`;/.test(src), 'the prompt reads "Drive" with the key named per device (build 935)');
 assert(/if\(drivingCar\)\{ exitCar\(\); return; \}/.test(extractFunction('interact')), 'E gets you out while driving');
 assert(/nearTarget\.type==='vehicle'\)\{\s*enterCar\(nearTarget\.obj\);/.test(extractFunction('interact')), 'E on a vehicle gets you in');
@@ -60,8 +64,12 @@ assert(/<b>Camera follows the car<\/b>/.test(src), 'the editor exposes the follo
 // --- build 766: "press E to drive" appears within enterDist of ANY part of the model (footprint), + force-exit on editor/unload ---
 assert(/enterDist:\(v\.enterDist==null\?2\.5:Math\.max\(0\.5,Math\.min\(12,\+v\.enterDist\|\|0\)\)\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores the enter radius (default 2.5)');
 assert(/if\(V\.enterDist!=null && V\.enterDist!==2\.5\) e\.veh\.enterDist=V\.enterDist;/.test(src), 'enter radius serialized when non-default');
-assert(/const dx=Math\.max\(bx\.min\.x-px, 0, px-bx\.max\.x\), dz=Math\.max\(bx\.min\.z-pz, 0, pz-bx\.max\.z\);/.test(src), 'distance is measured to the model footprint (box), not its origin');
-assert(/const rad=\(o\.userData\.vehicle\.enterDist!=null\?Math\.max\(0\.5,\+o\.userData\.vehicle\.enterDist\):2\.5\);/.test(src) && /if\(d<rad && d<bd\)/.test(src), 'the prompt shows within the enter radius of any part');
+// build 1451 hoisted the player position to _px/_pz once for the whole walk; the clamp is unchanged
+assert(/const dx=Math\.max\(bx\.min\.x-_px, 0, _px-bx\.max\.x\), dz=Math\.max\(bx\.min\.z-_pz, 0, _pz-bx\.max\.z\);/.test(src),
+  'distance is measured to the model footprint (box), not its origin');
+// build 1451: `ud` is the same userData, read once per prop instead of five times
+assert(/const rad=\(ud\.vehicle\.enterDist!=null\?Math\.max\(0\.5,\+ud\.vehicle\.enterDist\):2\.5\);/.test(src)
+  && /if\(vd<rad && vd<_dVeh\)/.test(src), 'the prompt shows within the enter radius of any part');
 assert(/row\('Enter radius \(m\)','enterDist', 0\.5, 12, 0\.5, 1\)/.test(src), 'the editor exposes an Enter radius slider');
 assert(/if\(!editorOpen && drivingCar && typeof exitCar==='function'\) exitCar\(\);/.test(extractFunction('toggleEditor')), 'opening the editor forces you out of the car (no stuck speedo)');
 assert(/addEventListener\('pagehide', \(\)=>\{ try\{ if\(drivingCar && typeof exitCar==='function'\) exitCar\(\);/.test(src), 'leaving the page (refresh/close) forces you out of the car');

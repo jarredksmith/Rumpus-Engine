@@ -5,7 +5,9 @@ const src = gameSource();
 assert(/\[\['auto','Auto'\],\['interact','E Activate'\],\['signal','Signals only'\]\]/.test(src), 'third trigger option in the editor');
 assert(/if\(a\.trig==='interact' \|\| a\.trig==='signal'\)\{ const tgt=a\.dest\?1:0;/.test(src), 'signal-trig is dest-driven, not auto-running');
 // proximity scan only ever offers trig==='interact' — signal-trig props get no prompt and no E
-assert(/a\.trig!=='interact'\) continue;/.test(extractFunction('checkProximity')), 'prompt scan excludes anything not E-triggered');
+// build 1451: the same exclusion, as a positive test inside the one walk
+assert(/a && a\.on && a\.trig==='interact'/.test(extractFunction('checkProximity')),
+  'prompt scan excludes anything not E-triggered');
 
 // level check rule, executed: an unwired signals-only mech is flagged; a wired one is clean
 const li = new Function('propModels','pickupSpots','POWERUP_KINDS','keyDisplayName','pickupsOn','audioZones','cineCfg',

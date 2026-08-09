@@ -65,8 +65,10 @@ assert(/_selApply\(o=>\{ if\(icb\.checked\) o\.userData\.interact=true; else del
 
 // ---- runtime: prompt + E ----
 const prox = extractFunction('checkProximity', src);
-assert(/if\(!o \|\| !o\.userData \|\| !o\.userData\.interact\) continue;/.test(prox), 'flagged props are scanned for proximity');
-assert(/nearTarget = \{ type:'use', obj:best \};/.test(prox), '...and become a use target');
+// build 1451 collapsed five sequential walks into one pass; the predicate and the target are unchanged,
+// and both are asserted directly rather than through one spelling of the loop that carried them.
+assert(/if\(ud\.interact\)\{/.test(prox), 'flagged props are scanned for proximity');
+assert(/nearTarget = \{ type:'use', obj:_bUse \};/.test(prox), '...and become a use target');
 assert(/nearTarget\.type==='anim' \|\| nearTarget\.type==='xanim' \|\| nearTarget\.type==='use'/.test(prox),
   'the prompt shows Activate (and the lock text) for them');
 const inter = extractFunction('interact', src);

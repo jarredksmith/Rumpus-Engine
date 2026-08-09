@@ -9,7 +9,9 @@ const src = gameSource();
 // the lines. The first line fires the prop's 'interacted' signals, so a chat can give a quest / drop a checkpoint.
 
 // --- a prop with dialogue is detected as an NPC interact target ---
-assert(/const dl=o&&o\.userData&&o\.userData\.dialogue; if\(!dl\|\|!dl\.length\) continue;[\s\S]*?nearTarget = \{ type:'npc', obj:best \}/.test(src), 'a prop with dialogue is an NPC target');
+// build 1451 collapsed five proximity walks into one pass; the predicate and the target are unchanged.
+assert(/if\(ud\.dialogue && ud\.dialogue\.length\)\{[\s\S]*?nearTarget = \{ type:'npc', obj:_bNpc \}/.test(src),
+  'a prop with dialogue is an NPC target');
 assert(/nearTarget\.type==='npc'\)\{\s*const nm=nearTarget\.obj\.userData\.npcName;/.test(src), 'the prompt shows E Talk');
 
 // --- the dialogue box: open / advance / close, escaped, signal on open ---

@@ -7,9 +7,14 @@ const src = gameSource();
 
 // 1) proximity includes Y
 const cp = extractFunction('checkProximity');
-assert(/const cy = Math\.max\(b\.min\.y, Math\.min\(player\.pos\.y, b\.max\.y\)\);/.test(cp), 'anim proximity clamps Y to the box');
-assert(/d = Math\.hypot\(player\.pos\.x-cx, player\.pos\.y-cy, player\.pos\.z-cz\)/.test(cp), 'anim proximity is 3D');
-assert(/cy=Math\.max\(b\.min\.y,Math\.min\(player\.pos\.y,b\.max\.y\)\)/.test(cp), 'xanim proximity clamps Y');
+// build 1451: the clamp the four categories each computed separately is now ONE shared helper, called at
+// most once per prop. All three assertions are about that clamp — a door one storey up must not prompt
+// from the floor below — so they move to it, and the count is what proves every category shares it.
+const idf = extractFunction('_interDist');
+assert(/const cy = Math\.max\(b\.min\.y, Math\.min\(py, b\.max\.y\)\);/.test(idf), 'anim proximity clamps Y to the box');
+assert(/return Math\.hypot\(px-cx, py-cy, pz-cz\);/.test(idf), 'anim proximity is 3D');
+assert((cp.match(/_interDist\(o, ud/g) || []).length === 4,
+  'xanim proximity clamps Y — all four categories share the one 3D clamp');
 
 // 2) carry/launch
 assert(/const XA_LAUNCH=9;/.test(src), 'launch speed threshold');

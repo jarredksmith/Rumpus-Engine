@@ -19,7 +19,8 @@ assert(/player\.pos\.x\+=mvx; player\.pos\.y\+=mvy; player\.pos\.z\+=mvz;/.test(
 
 // interact + proximity + prompt
 assert(/else if\(nearTarget\.type==='xanim'\)\{\s*const o = nearTarget\.obj;\s*if\(!tryUnlockProp\(o\)\) return;[\s\S]{0,40}xaToggle\(o\);/.test(src), 'E activates a mechanism (behind the build-331 lock gate)');
-assert(/if\(best\) nearTarget = \{ type:'xanim', obj:best \};/.test(src), 'proximity detects E-activate mechanisms');
+// build 1451: one walk, same target — the pick moved below the loop with the rest of the priority order
+assert(/nearTarget = \{ type:'xanim', obj:_bXa \};/.test(src), 'proximity detects E-activate mechanisms');
 
 // persistence + restore
 const pe = extractFunction('propEntry');
