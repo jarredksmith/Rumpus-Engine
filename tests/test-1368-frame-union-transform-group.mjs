@@ -166,7 +166,9 @@ const src = gameSource();
   // the banner states the rule (build 1299), in the applies-to-all colour, props only
   assert(src.includes("if(editorActive==='props' && typeof _selBanner==='function') _selBanner(host, _selTargets().length, true);"),
     'the Transform fold announces group-wide — for props, where the fields now follow the selection');
-  eq((src.match(/_selBanner\(/g) || []).length, 6,
+// build 1438: the Signals fold joined them, with TWO banners — Tag/Needs are group-wide while the signal
+// list stays per-object, so each rule is stated above the rows it governs.
+  eq((src.match(/_selBanner\(/g) || []).length, 8,
     'the banner call-site count grew by exactly one — the Transform fold joined the announced folds');
 }
 

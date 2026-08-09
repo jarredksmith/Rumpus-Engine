@@ -1743,6 +1743,212 @@ working. The rule from the logic booth stands: **read the object before authorin
 Seven pins moved. Ten harnesses extract `explodeAt` to assert what a blast does to props; they extract
 `explodeAt + _blastProps` now, every assertion unchanged in intent.
 
+## The aim assist stuck to allies and ignored the range (build 1439)
+
+The audit's third finding. Build 1316's PvE branch was one line, and it filtered nothing:
+
+```js
+for(const en of enemies){ if(!en || en.dead || !en.mesh) continue; consider(...); }
+```
+
+- **No ally filter.** The PvP branch directly above it has skipped teammates since 1316. This one skipped
+  nobody, so a stick or thumb player sweeping past a build-1226 villager or a build-1355 ally had their
+  crosshair **dragged onto them** — while `killEnemy` refuses to reward that kill. The assist was fighting
+  the player toward the one thing they must not shoot.
+- **No props.** A shooting range is built from build-1390 static targets, which are in neither `enemies`
+  nor `dynamicProps`. So the plates felt slippery while the enemies beside them felt magnetic, for a reason
+  nothing on screen explains — and the booth's headline activity was the one thing the assist declined.
+
+Both fixed by asking build 1392's `damageableProps()` — the canonical answer to *"what can be hurt"*, which
+exists precisely because that question kept being answered three different ways.
+
+**Props are considered only when no enemy qualified.** A live threat outranks scenery, or a crate would
+steal the crosshair from the brute standing behind it. And the aim point is the **collider box's centre**,
+not the origin: an imported wall's origin can sit metres off its mass, which is build 1311's lesson for the
+melee arc one system along.
+
+### The device gate pays for the prop sweep
+
+`_aaSlow` is read by the pad look and the two touch look axes and by nothing else — *a mouse is never
+assisted* is 1316's own rule — yet the scan ran every frame for everybody, walking the enemy list and
+casting sightlines for players it was forbidden to help. `if(!isTouch && !padSeen) return;` removes it
+entirely for a mouse session, which is what makes walking the damageable set affordable at all. Asking who
+is holding the thing costs one boolean.
+
+**Two of the test's own assertions were backwards, and the engine was right both times.** Forward is
+`(-sin yaw, 0, -cos yaw)`, so aiming further **-X** means yaw **increases** — a target at +x produces a
+NEGATIVE correction. Worth writing down beside the test, because it is the kind of sign convention that
+reads either way until you derive it.
+
+### Prose broke a pin twice in this one build, in both directions
+
+`!/dynamicProps/` failed against correct code because this build's own comment names `dynamicProps` while
+explaining what it does *not* use — a pin **defeated** by prose. Fixed by pinning the STATEMENT
+(`for(const o of damageableProps())`) rather than the bare word.
+
+Then build 1316's *"the slowdown is declared, cleared, computed and read by exactly the pad and the two
+touch axes"* — a COUNT of `_aaSlow`, which is a real property worth holding — went 6 to 7, because the new
+comment spelled the identifier while stating that very property. A pin **satisfied** by prose.
+
+Two directions, one cause, in the build whose own entry was already writing the rule down. The count pin
+was left exactly as its author intended and the comment was reworded to say *"the look slowdown"*, because
+the assertion is true and worth keeping strict. The general form, now stated for both sides: **an engine
+comment must not spell an identifier a nearby pin counts, and a pin must not match a bare word a comment
+can contain.**
+
+## The Signals fold edited one prop while ten were highlighted (build 1438)
+
+The second finding from the same audit, and it is **build 1299's own defect surviving in the one fold a
+logic-driven level is built in**. That build's whole subject was that the inspector had two rules for one
+selection with nothing saying which was which; it labelled Lock, Dialogue, Physics and the Tag row, and
+missed this:
+
+```js
+buildSignalsUI(sgBody, sel.userData, renderEditorFields);   // the PRIMARY prop, and no banner
+```
+
+Shift-select the ten plates of a shooting range, add `On hit -> Logic event HIT`, and it lands on **one**.
+You test, nine plates score nothing, and nothing on screen said why.
+
+**It was worse than a missing banner.** The fold carries its OWN Tag input writing `store.tag` on the
+primary, while the Object & selection Tag row has gone through `_selApply` since 1299 — two fields, the
+same label, opposite scope. The comment on one of them read *"the Object & selection Tag field shows the
+same store — keep them in step"*, which was true when build 1034 wrote it and false for every
+multi-selection since 1299 shipped.
+
+### The taxonomy decides it, not the fold
+
+1299 split the inspector into **mark-the-set** fields (tag, interactable, lock — group-wide) and
+**per-object** fields (an NPC's name and speech — primary, and say so). Signals contain both:
+
+- **Tag and Needs are scalars that mark a set.** They go group-wide, which also removes the contradiction
+  with the identically-labelled row two folds up.
+- **The signal LIST is per-object structure.** Mirroring it on every edit would overwrite whatever the
+  other props already carried — a second silent data-loss path, the day after build 1437 closed one. Not
+  the trade to make for saved keystrokes.
+
+So the list stays primary, says so, and gets **one explicit `⧉ Copy to all N`**: nothing is destroyed
+until asked, and "ten plates, one On-hit signal" is one click. **Deep-copied**, or every prop would share
+one array and editing any of them would edit all.
+
+Two banners, each above the rows it governs, because the fold genuinely has two rules — `_selBanner` gained
+an optional tail so it can name them. Absent, its wording is byte-identical, so 1299's four callers did not
+change a word.
+
+**`buildSignalsUI` is shared with inventory items**, which have no selection to be group-wide over. The
+scope therefore arrives as an optional `opts` from the PROP call site rather than being baked in, and the
+test drives the real function both ways: with `opts` the writes reach every store and `_selApply` owns the
+undo snapshot; without it, every path is exactly what it was, including taking its own snapshot.
+
+## Typing 0.8 into a scale field made the prop 160 km wide (build 1437)
+
+Found by a four-critic audit run against the tree, and it is the worst defect this session has produced:
+**silent, destructive, in the default configuration, on the commonest edit in level building.**
+
+A number input commits PER KEYSTROKE (`num.oninput = ()=>commit(num.value,false)`), so typing a value
+passes through every prefix of it — and for a scale-down written the way people write them, one of those
+prefixes is `"0"`. Proportional scaling is on by default. On a prop at scale (2,2,2), typing `0.8`:
+
+```
+"0"    v=0  -> ratio 0  -> not (isFinite && >0) -> the else branch -> sx := 0
+"0."   parseFloat("0.") = 0                     -> the same       -> sx := 0
+"0.8"  old = tgt.state[fld.k] || 0.00001        -> ratio 80000    -> sy, sz *= 80000
+```
+
+The field reads `0.8`. The prop is **0.00001 x 160000 x 160000**. Nothing reports it, and the creator's
+next Save writes it to the file.
+
+### The fix is two lines, and the second is why the first is enough
+
+- **A scale of zero is REFUSED.** The proportional branch already clamps its writes at 0.00001, so zero is
+  not a value anyone can hold — which makes it not a state to pass *through* on the way to one. That alone
+  closes the reported path, because a zero written into the state is the only way the base becomes falsy.
+- **The ratio's base is never SUBSTITUTED.** `|| 0.00001` turned "there is no proportion here" into a
+  denominator five orders of magnitude from the truth. If the live value is not positive there is no
+  proportion to preserve, so it falls through to setting the one axis.
+
+Negative scales go with the zero: they flip the winding and break the lighting, and the clamp already
+refused them on this path.
+
+### What the test does, and the property it protects
+
+`test-1437` lifts the REAL `commit` closure out of the source and types into it one character at a time,
+which is what an `<input type=number>` actually does. The pre-1437 form is **reconstructed from the shipped
+text** (builds 1434 and 1435's pattern), so the premise is proven rather than asserted: it reproduces
+`sy = 160000` exactly.
+
+The property that matters for proportional scaling is not "the number you typed appears" — it is that the
+SHAPE survives. On a (2,4,6) prop, typing `0.25` must leave sy at 2x sx and sz at 3x sx, and it does. That
+holds because the ratios compose correctly across keystrokes once no keystroke can write a zero.
+
+### A note on the audit that found it
+
+Four critics ran against the tree, each required to verify every claim in source before asserting it (the
+build-1159 rule). **Three of the four opened by reporting that `BUILD_VERSION` read 1431 or 1432 rather
+than 1436** — they were reading during container rollback #29's window. That is build 1389's lesson
+arriving for reviewers: *a critic cannot silently review a build that is not in the tree*, and the only
+reason it did not poison the results is that they were told to state what they could not verify, and did.
+Every finding acted on was re-verified against the recovered tree first.
+
+## The frame meter had one door, and it was a key no phone has (build 1436)
+
+Asked from use: *"Can there be a way to open the dev hud on a touch device? I want to see FPS but I can't
+click a backtick on a phone."* Verified: the meter's only door was `e.code==='Backquote'`. On a phone or a
+tablet the perf HUD did not exist.
+
+**A checkbox alone is half an answer, and the measurement is what says so.** `#perfHud` is pinned
+bottom-left with `white-space:nowrap` — bottom-left on a phone is where the movement stick sits, and the
+six-line profiler dump is 170px of overlay across the play view of a 390px screen.
+
+### The occupancy map, which chose the placement instead of a third guess
+
+Measured at 390 x 844 with the engine's own touch layout, 6 x 12 cells:
+
+```
+rows 0-1   ######   the HUD cluster (minimap, ammo, wave panel, score, pause)
+rows 2-7   ......   free
+rows 8-11  ##.###   the touch controls
+```
+
+The first placement — top-left — was measured **covering 14 HUD elements**, which is worse than the
+thumbstick it was moved away from. The band under the cluster is where there is actually room:
+
+```
+placed   {x:8, y:148, w:154, h:47}   on screen, no clipping, overlaps: NONE
+```
+
+**A phone gets the NUMBERS, not the profiler** — FPS, frame time, draws, triangles — keyed on the same
+`body.touch` class the placement uses, so the content and the layout cannot come to different conclusions
+about which device this is. The desktop readout is untouched.
+
+### The occupancy scan was wrong first, and the reason generalises
+
+Its first run painted the entire screen occupied. `#touchUI` is `inset:0` and `#tLook` is a 226 x 844 look
+pad — **full-screen transparent INPUT layers**, and the meter is `pointer-events:none`, so neither is an
+obstruction to it. An element only occupies space here if it actually DRAWS: a background above 5% alpha,
+a visible border, or its own text. *An input surface is not an obstruction to something that cannot be
+touched* — and a scan that cannot tell them apart returns a solid wall and no information.
+
+### One writer
+
+`setPerfHud(on)` owns `perfOn` (which gates the per-frame profiling), the element's `hidden` class and the
+checkbox together. The key and the checkbox both ask it, and the whole engine contains exactly **two**
+assignments to `perfOn`: the declaration and that function. The key's controller-diagnostic half is
+untouched.
+
+The binding **syncs from the flag rather than from storage**, which does three jobs with one line: it
+unhides the element for a restored session (the markup ships hidden), it shows the true state after the
+key, and it is idempotent across `bindPauseMenu`'s boot call and every later open.
+
+### Container rollback #28, mid-build
+
+The tree reverted to build 1431 between two commands; the edit script's `assert "build 1435" in s` caught
+it before writing a byte, which is what those asserts are for. `git log` first, then
+`git fetch origin <branch> && git reset --hard FETCH_HEAD`. **What did not survive was `probe-out/arch.glb`
+and the original upload**, so `bvh-interleaved.mjs` and `selbox-stale.mjs` cannot re-run without the file
+being supplied again. Their findings are committed; the fixtures are not. Anything a probe needs twice has
+to be in a commit — recorded before under builds 1378 and 1405, and it cost the fixture anyway.
+
 ## The selection outline was drawing a box it did not have (build 1435)
 
 The other half of build 1434's report — *"if I press 'p' and open the editor, it shows a huge bounding box

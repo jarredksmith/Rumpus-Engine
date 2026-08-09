@@ -114,7 +114,9 @@ const mkBanner = () => {
     '...and a shattered prop is still skipped by every verb except the one that brings it back');
   assert(/A signal resolves a tag to a LIST/.test(src), '...and that reasoning is recorded beside the field');
   // each of the three announces itself
-  eq((src.match(/_selBanner\(/g) || []).length, 6,
+// build 1438: the Signals fold joined them, with TWO banners — Tag/Needs are group-wide while the signal
+// list stays per-object, so each rule is stated above the rows it governs.
+  eq((src.match(/_selBanner\(/g) || []).length, 8,
     'the definition plus every fold that can face a multi-selection — tag/interact, lock, dialogue, build 1305’s impact sound, and build 1368’s Transform fold. Each states its rule.');
   assert(/_selBanner\(th, _selTargets\(\)\.length, true\);/.test(src), 'the tag/interact fold announces group-wide');
   assert(/_selBanner\(lHost, _selTargets\(\)\.length, true\);/.test(src), 'the lock fold too');

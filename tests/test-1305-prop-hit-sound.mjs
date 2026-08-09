@@ -174,7 +174,9 @@ const crate = (url) => ({ userData: url === undefined ? {} : { hitSnd: url }, po
     'and it is GROUP-WIDE — a level has thirty wooden crates and one wood sound');
   assert(/_selBanner\(pdBody, _selTargets\(\)\.length, true\);/.test(src),
     '...announced, by build 1299’s rule that every field states which one it follows');
-  eq((src.match(/_selBanner\(/g) || []).length, 6, 'five folds announce their rule, plus the definition (1314 added a second row inside the SAME announced fold; 1368 added the Transform fold)');
+// build 1438: the Signals fold joined them, with TWO banners — Tag/Needs are group-wide while the signal
+// list stays per-object, so each rule is stated above the rows it governs.
+  eq((src.match(/_selBanner\(/g) || []).length, 8, 'the folds that can face a multi-selection announce their rule, plus the definition (1314 added a second row inside the SAME announced fold; 1368 added the Transform fold; 1438 added the Signals fold, which needs two)');
   // _sndRow was device-scoped: every existing caller writes audioSettings, which a LEVEL field must not
   const sr = extractFunction('_sndRow');
   assert(/function _sndRow\(label, get, set, save\)\{/.test(sr), '_sndRow takes who to save to');

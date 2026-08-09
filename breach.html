@@ -633,6 +633,10 @@
   #perfHud { position:fixed; bottom:8px; left:8px; z-index:80; background:rgba(4,10,12,.82); border:1px solid rgba(var(--accent-rgb),.4);
     color:#9fe6cf; font:12px/1.45 'Courier New',monospace; padding:7px 10px; border-radius:6px; pointer-events:none; white-space:nowrap; }
   #perfHud.hidden { display:none; }
+  /* build 1436: bottom-left is where the movement stick lives on a phone, and `nowrap` runs a 55-character
+     line straight off a 390px screen. On touch the meter moves to the top and wraps. */
+  body.touch #perfHud { top:calc(148px + env(safe-area-inset-top,0px)); bottom:auto;
+    white-space:normal; max-width:min(300px,72vw); font-size:11px; line-height:1.4; }
   /* hitmarker */
   #hitmarker { position: absolute; top:50%; left:50%; transform: translate(-50%,-50%) scale(.6);
     font-size: 30px; color:#fff; opacity:0; font-weight:700; }
@@ -1565,6 +1569,7 @@
     <div class="pauseAudio">
       <label class="paLbl"><input type="checkbox" id="postFxCb"> Visual effects (bloom · motion blur)</label>
       <label class="paLbl"><input type="checkbox" id="adaptResCb"> Adaptive resolution (trades sharpness for fps)</label>
+      <label class="paLbl"><input type="checkbox" id="perfHudCb"> Performance overlay &#183; FPS, draw calls, triangles (or press <b>`</b>)</label>
     </div>
     </div>
     <div class="pPanel" data-ppanel="controls">
@@ -15883,11 +15888,13 @@ function _selApply(fn){
 }
 // The banner the material fold has had since build 844, so a creator can see which rule a fold follows
 // WITHOUT having to test it on their own level.
-function _selBanner(host, n, groupWide){
+function _selBanner(host, n, groupWide, what){
   if(!host || !(n > 1)) return;
   const d=document.createElement('div'); d.className='hint'; d.style.cssText='margin:0 0 6px;color:'+(groupWide?'var(--accent)':'#ffbf7a')+';';
-  d.innerHTML = groupWide ? ('<b>Editing '+n+' selected props</b> \u2014 changes apply to all.')
-                          : ('<b>'+n+' props selected</b> \u2014 this fold edits the primary one only.');
+  /* build 1438: `what` names the rows the banner governs, for a fold whose parts differ. Absent, the
+     wording is byte-identical to build 1299's, so the four callers that predate this are unchanged. */
+  d.innerHTML = (groupWide ? ('<b>Editing '+n+' selected props</b> \u2014 ') : ('<b>'+n+' props selected</b> \u2014 '))
+              + (what || (groupWide ? 'changes apply to all.' : 'this fold edits the primary one only.'));
   host.appendChild(d);
 }
 function _matTargets(){
@@ -22177,7 +22184,7 @@ addEventListener('keydown', e=>{
   // Ctrl+A (select all). Swallow those so moving while crouched doesn't trigger them. Ctrl+W (close tab)
   // is browser-reserved and can't be cancelled here — the beforeunload guard below catches that one.
   if(e.ctrlKey && (e.code==='KeyW'||e.code==='KeyA'||e.code==='KeyS'||e.code==='KeyD')) e.preventDefault();
-  if(e.code==='Backquote'){ const el=$('padDebug'); let show=false; if(el){ show = el.style.display!=='block'; el.style.display = show?'block':'none'; if(show) el.textContent = 'RUMPUS ENGINE  ' + BUILD_VERSION + '\nCONTROLLER DEBUG  (` hide · ] switch pad)'; } perfOn = el ? show : !perfOn; const ph=document.getElementById('perfHud'); if(ph) ph.classList.toggle('hidden', !perfOn); e.preventDefault(); return; }   // ` toggles the controller diagnostic + the perf meter
+  if(e.code==='Backquote'){ const el=$('padDebug'); let show=false; if(el){ show = el.style.display!=='block'; el.style.display = show?'block':'none'; if(show) el.textContent = 'RUMPUS ENGINE  ' + BUILD_VERSION + '\nCONTROLLER DEBUG  (` hide · ] switch pad)'; } setPerfHud(el ? show : !perfOn); e.preventDefault(); return; }   // ` toggles the controller diagnostic + the perf meter
   if(e.code==='BracketRight'){   // manually switch which detected gamepad is used
     const ps = navigator.getGamepads ? navigator.getGamepads() : [];
     const idxs = []; for(const p of ps){ if(p) idxs.push(p.index); }
@@ -34145,6 +34152,11 @@ function _aimAssistScan(){
   _aaSlow = 1; _aaYaw = 0; _aaPitch = 0; _aaK = 0;
   const amt = (padPrefs && padPrefs.aim != null) ? +padPrefs.aim : 1;
   if(!(amt > 0) || !gameOn || editorOpen || paused || drivingCar || mountedTurret) return;
+  /* build 1439: the look slowdown is read by the pad look and the two touch look axes and by nothing else — a
+     mouse is never assisted (build 1316), yet the scan ran every frame for everyone. Asking first who is
+     holding the thing costs one boolean, removes the whole pass for a mouse player, and is what makes the
+     prop sweep below affordable. */
+  if(!isTouch && !padSeen) return;
   if(typeof player==='undefined' || (player.hp != null && player.hp <= 0)) return;
   _aaForward(_aaF);
   const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
@@ -34165,7 +34177,28 @@ function _aimAssistScan(){
       if(typeof sameTeam==='function' && sameTeam(NET.myId, +id)) continue;
       consider(rp.posEye.x, rp.posEye.y, rp.posEye.z); }
   } else if(typeof enemies!=='undefined'){
-    for(const en of enemies){ if(!en || en.dead || !en.mesh) continue; consider(en.mesh.position.x, en.mesh.position.y+0.6, en.mesh.position.z); }
+    /* build 1439: an ally is not a target. `killEnemy` already refuses to reward killing one (1226/1355)
+       while the assist was actively DRAGGING the crosshair onto it — the PvP branch above has filtered
+       teammates since 1316 and this branch never filtered anything. */
+    for(const en of enemies){ if(!en || en.dead || !en.mesh) continue;
+      if(en.friendly || (typeof _enFac==='function' && _enFac(en) === 0)) continue;
+      consider(en.mesh.position.x, en.mesh.position.y+0.6, en.mesh.position.z); }
+    /* ...and if nothing that shoots back is in the cone, the things you CAN shoot are. A shooting range
+       is built from build-1390 static targets, which live in neither `enemies` nor `dynamicProps` — so on
+       a stick or a thumb the booth's whole activity got no assist at all, while the enemies beside it
+       felt magnetic. `damageableProps()` is build 1392's canonical answer to "what can be hurt".
+       ONLY when no enemy qualified: a live threat outranks scenery, or a crate would steal the crosshair
+       from the brute standing behind it. */
+    if(bestC < 0 && typeof damageableProps === 'function'){
+      for(const o of damageableProps()){
+        if(!o || !o.visible || (o.userData && o.userData._shattered)) continue;
+        /* the collider box's centre, not the origin: an imported wall's origin can sit metres off its
+           mass, which is build 1311's lesson for the melee arc one system along */
+        const b = o.userData && o.userData.box;
+        if(b) consider((b.min.x+b.max.x)*0.5, (b.min.y+b.max.y)*0.5, (b.min.z+b.max.z)*0.5);
+        else consider(o.position.x, o.position.y, o.position.z);
+      }
+    }
   }
   if(bestC < 0) return;
   /* how centred it is: 1 dead on, 0 at the rim. Squared, so the assist concentrates near the middle
@@ -34301,7 +34334,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1435 · 2026-08-08';
+const BUILD_VERSION = 'build 1439 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39218,7 +39251,9 @@ let paused = false, _pbShow = null;   // pause overlay state + cached pause-butt
 const clock = new THREE.Clock();
 
 // ---- Perf meter: press ` (backquote) to toggle. Shows real frame time + a render/logic phase split. ----
-let perfOn=false, _perfCalls=0, _perfTris=0, _perfFrames=0, _perfNextDraw=0, _perfPrev=0, _perfFrameAcc=0;
+/* build 1436: restored at boot, beside the declaration rather than in a start-up block, so the flag and
+   the thing that remembers it cannot drift apart. Reading storage cannot throw the boot. */
+let perfOn=(function(){ try{ return localStorage.getItem('breach_perfhud')==='on'; }catch(e){ return false; } })(), _perfCalls=0, _perfTris=0, _perfFrames=0, _perfNextDraw=0, _perfPrev=0, _perfFrameAcc=0;
 const _prof = { render:0, phys:0, net:0, mini:0, work:0 };   // ms accumulated this window
 /* build 1426: `other` WAS A RESIDUAL PRESENTED AS A COST, and it misread as one to me in the session that
    produced this build. It was `totMs - render - phys - net - mini`, and `totMs` is the wall clock from one
@@ -39233,6 +39268,16 @@ const _prof = { render:0, phys:0, net:0, mini:0, work:0 };   // ms accumulated t
    the cap it is the browser blocking on a full GPU queue at presentation — WebGL’s `render()` returns
    immediately, so back-pressure lands here rather than in the render figure. A slow frame that is mostly
    idle is GPU-bound, which is the single most useful thing this meter can say and it could not say it. */
+// build 1436: the perf meter had exactly one door — the ` key — so on a phone or a tablet it did not
+// exist. `perfOn` gates the per-frame profiling AND the element's visibility, and the key handler set both
+// by hand; a second setter would be a second chance for them to disagree, which is the defect this file
+// records more than any other. One writer, asked by the key and by the pause-menu checkbox.
+function setPerfHud(on){
+  perfOn = !!on;
+  const el = document.getElementById('perfHud'); if(el) el.classList.toggle('hidden', !perfOn);
+  const cb = document.getElementById('perfHudCb'); if(cb) cb.checked = perfOn;   // the menu may be open
+  return perfOn;
+}
 function _pnow(){ return (typeof performance!=='undefined'?performance.now():Date.now()); }
 function updatePerfHud(){
   if(!perfOn) return;
@@ -39249,6 +39294,15 @@ function updatePerfHud(){
   const idleWhy = (totMs > 20 && idle > totMs*0.5) ? 'GPU-bound?' : 'vsync';
   _perfFrameAcc=0; _perfFrames=0; _prof.render=0; _prof.phys=0; _prof.net=0; _prof.mini=0; _prof.work=0;
   const mem=renderer.info.memory, el=document.getElementById('perfHud'); if(!el) return;
+  /* build 1436: a phone gets the NUMBERS, not the profiler. The six-line dump below is a desktop
+     diagnostic — on a 390px screen it is 170px of overlay across the play view, and what was asked for
+     is the frame rate. Keyed on the same `body.touch` class the placement uses, so the content and the
+     layout cannot disagree about which device this is. */
+  if(document.body && document.body.classList.contains('touch')){
+    el.innerHTML = 'FPS '+fps.toFixed(0)+'  ('+totMs.toFixed(1)+' ms)<br>'
+      + 'draws '+_perfCalls+'   tris '+(_perfTris/1000).toFixed(0)+'k'+(dofEnabled?'   DoF':'');
+    return;
+  }
   el.innerHTML = 'FPS '+fps.toFixed(0)+'  ('+totMs.toFixed(1)+' ms)<br>'
     + 'render '+r.toFixed(1)+'  phys '+p.toFixed(1)+'  net '+n.toFixed(1)+'<br>'
     + 'minimap '+mi.toFixed(1)+'  other '+other.toFixed(1)+'  \u00b7  idle '+idle.toFixed(1)+' ms ('+idleWhy+')<br>'
@@ -46702,20 +46756,33 @@ function _sigWorldRow(s, rerender){
   }
   return wr;
 }
-function buildSignalsUI(sgBody, store, rerender){
+/* build 1438: `opts` is how the PROP call site says "there is a selection". Absent — which is how the
+   inventory-item call site asks — every path below is byte-identical to what it did before, because an
+   item has no selection to be group-wide over.
+     opts.applyStore(fn)  runs fn against every selected prop's userData, and owns the undo snapshot
+     opts.count           how many are selected, for the banners and the copy action                  */
+function buildSignalsUI(sgBody, store, rerender, opts){
+  const _n = (opts && opts.count) || 1;
+  /* One store, one writer: with a selection this is `_selApply`, so the Tag row here and the Tag row in
+     Object & selection can no longer mean different things while wearing the same label. */
+  const applyAll = (opts && opts.applyStore) ? opts.applyStore : (fn)=>{ pushUndoSnapshot(); fn(store); };
+  if(_n > 1) _selBanner(sgBody, _n, true, '<b>Tag</b> and <b>Needs</b> apply to all of them.');
   { const tr=document.createElement('div'); tr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 4px;font-size:11px;color:#9fe6cf;';
     const tsp=document.createElement('span'); tsp.textContent='Tag'; tsp.style.minWidth='56px';
     const tin=document.createElement('input'); tin.type='text'; tin.placeholder='e.g. vaultDoor'; tin.value=store.tag||'';
     tin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
-    tin.onchange=()=>{ pushUndoSnapshot(); const v=tin.value.trim(); if(v) store.tag=v; else delete store.tag; if(typeof renderEditorFields==='function') renderEditorFields(); };   // build 1034: the Object & selection Tag field shows the same store — keep them in step
+    /* build 1034 kept this in step with the Object & selection Tag field; build 1438 keeps it in step when
+       there is more than one prop, which is when they had silently diverged — same label, opposite scope. */
+    tin.onchange=()=>{ const v=tin.value.trim(); applyAll(st=>{ if(v) st.tag=v; else delete st.tag; }); if(typeof renderEditorFields==='function') renderEditorFields(); };
     tr.appendChild(tsp); tr.appendChild(tin); sgBody.appendChild(tr); }
   { const nr=document.createElement('div'); nr.style.cssText='display:flex;gap:6px;align-items:center;margin:0 0 4px;font-size:11px;color:#9fe6cf;';
     const nsp=document.createElement('span'); nsp.innerHTML='<b>Needs</b>'; nsp.style.minWidth='56px'; nsp.title='How many DIFFERENT senders must signal this before it reacts (e.g. both plates / all 3 generators). The same sender firing twice still counts once.';
     const nin=document.createElement('input'); nin.type='number'; nin.min='1'; nin.max='20'; nin.value=store.sigNeed||1;
     nin.style.cssText='width:54px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
-    nin.onchange=()=>{ pushUndoSnapshot(); const v=Math.max(1, Math.min(20, parseInt(nin.value)||1)); if(v>1) store.sigNeed=v; else delete store.sigNeed; nin.value=v; };
+    nin.onchange=()=>{ const v=Math.max(1, Math.min(20, parseInt(nin.value)||1)); applyAll(st=>{ if(v>1) st.sigNeed=v; else delete st.sigNeed; }); nin.value=v; };
     const nl=document.createElement('span'); nl.textContent='different sender(s) before it reacts'; nl.style.fontSize='10px';
     nr.appendChild(nsp); nr.appendChild(nin); nr.appendChild(nl); sgBody.appendChild(nr); }
+  if(_n > 1) _selBanner(sgBody, _n, false, 'the <b>signals</b> below edit the primary one \u2014 use <b>Copy to all</b>.');
   const sigs = store.signals || (store.signals=[]);
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
@@ -46821,7 +46888,22 @@ function buildSignalsUI(sgBody, store, rerender){
     } });
   { const add=document.createElement('button'); add.textContent='+ Add signal'; add.style.cssText='padding:2px 9px;font-size:11px;margin:1px 0 2px;';
     add.onclick=()=>{ pushUndoSnapshot(); sigs.push({ when:'interacted', do:'toggle', target:'' }); rerender(); };
-    sgBody.appendChild(add); }
+    sgBody.appendChild(add);
+    /* A signal list is per-object STRUCTURE, not a scalar, so mirroring it on every edit would overwrite
+       whatever the other props already carried — a second data-loss path, which is not the trade to make
+       for saved keystrokes. An explicit action is the honest form: nothing is destroyed until asked, and
+       "ten plates, one On-hit signal" is one click. Deep-copied, or every prop would share ONE array and
+       editing any of them would edit all. */
+    if(_n > 1 && opts && opts.applyStore){
+      const cp=document.createElement('button'); cp.textContent='\u29c9 Copy to all '+_n;
+      cp.title='Replace the signals on every selected prop with these';
+      cp.style.cssText='padding:2px 9px;font-size:11px;margin:1px 0 2px 6px;';
+      cp.onclick=()=>{ const src=JSON.stringify(store.signals||[]);
+        opts.applyStore(st=>{ st.signals = JSON.parse(src); });
+        if(typeof flashToast==='function') flashToast('Signals copied to '+_n+' props');
+        rerender(); };
+      sgBody.appendChild(cp);
+    } }
   { const n=document.createElement('div'); n.className='hint'; n.style.margin='2px 0 0';
     n.innerHTML='Fire the action on every prop carrying the target tag when this is destroyed, E-activated, or has an object placed on/in it. <b>On object placed</b>: a box on a plate (Touching it) or an item in a bin (Inside it).';
     sgBody.appendChild(n); }
@@ -48612,7 +48694,11 @@ function renderEditorFields(){
       // ---- Signals: tag this prop / make it trigger other tagged props ----
       if(sel){
         const sgBody = edFold(behaveHost, 'signals', 'Signals', false, 'Tag this prop, or have it trigger others');
-        buildSignalsUI(sgBody, sel.userData, renderEditorFields);   // build 688: shared with inventory-item signals
+        /* build 1438: the fold used to write to the primary alone with nothing saying so — so shift-selecting
+           ten targets and adding "On hit -> Logic event" landed on one of them, silently. `_selApply` owns
+           the undo snapshot, which is why the rows below no longer take their own. */
+        buildSignalsUI(sgBody, sel.userData, renderEditorFields,
+          { count: _selTargets().length, applyStore: (fn)=>_selApply(o=>{ if(o && o.userData) fn(o.userData); }) });   // build 688: shared with inventory-item signals
       }
       // ---- Dialogue (build 695): make this prop a talkable NPC ----
       if(sel){
@@ -50279,10 +50365,21 @@ function renderEditorFields(){
     const commit = (raw, fromSlider)=>{
       let v = parseFloat(raw); if(isNaN(v)) return;
       const isScale = (fld.k==='sx'||fld.k==='sy'||fld.k==='sz');
+      /* build 1437: a number input commits PER KEYSTROKE, so typing a fractional scale passes through the
+         digits that precede it — and "0" is one of them. A zero written into the state then became the base
+         the NEXT keystroke divided by, through a `|| 0.00001` fallback, so "0.8" on a prop at scale 2 read
+         ratio 80000 and multiplied the other two axes by it: the field said 0.8 and the prop was
+         0.00001 x 160000 x 160000. Every scale-down beginning with "0." did it, in the default
+         configuration. A scale of zero is not a value anyone can have — the proportional branch already
+         clamps writes at 0.00001 — so it is not a state to pass through on the way to one. */
+      if(isScale && !(v > 0)) return;
       const _xfOld = tgt.state[fld.k];   /* build 1368: the group apply needs the primary’s value BEFORE this commit */
       if(isScale && scaleProportional && editorActive==='props'){
         // Proportional ON: dragging one scale axis scales all three together, preserving their ratios (matches the gizmo's uniform handle).
-        const old = tgt.state[fld.k] || 0.00001, ratio = v/old;
+        /* ...and the base is never SUBSTITUTED. If the live value is not a positive number there is no
+           proportion to preserve, so this falls through to setting the one axis rather than inventing a
+           denominator five orders of magnitude away from it. */
+        const old = tgt.state[fld.k], ratio = (old > 0) ? (v/old) : 0;
         if(isFinite(ratio) && ratio>0){
           tgt.state.sx = Math.max(0.00001, tgt.state.sx*ratio);
           tgt.state.sy = Math.max(0.00001, tgt.state.sy*ratio);
@@ -53762,6 +53859,12 @@ function bindPauseMenu(){
   const pfx=document.getElementById('postFxCb'); if(pfx){ pfx.checked=_postOn; pfx.onchange=()=>{ _postOn=pfx.checked; _postFail=false; try{ localStorage.setItem('breach_postfx', _postOn?'on':'off'); }catch(e){} if(!_postOn && typeof disposePost==='function') disposePost(); if(typeof toast==='function') toast(_postOn?'Visual effects on':'Visual effects off'); }; }
   // build 872: adaptive resolution gets a visible switch (it was on-by-default with only a localStorage
   // escape hatch since build 810). Turning it OFF also snaps back to full resolution immediately.
+  /* build 1436: the meter's only door was a key no touchscreen has. Persisted like its two neighbours, so
+     a creator watching frame rate on a phone does not re-enable it every session. This SYNCS from `perfOn`
+     rather than from storage, which does three jobs at once: it unhides the element for a restored
+     session (the markup ships hidden), it shows the true state after the ` key, and it is idempotent —
+     bindPauseMenu runs at boot and again on every open. */
+  const phc=document.getElementById('perfHudCb'); if(phc){ setPerfHud(perfOn); phc.onchange=()=>{ setPerfHud(phc.checked); try{ localStorage.setItem('breach_perfhud', perfOn?'on':'off'); }catch(e){} if(typeof toast==='function') toast(perfOn?'Performance overlay on':'Performance overlay off'); }; }
   const arc=document.getElementById('adaptResCb'); if(arc){ arc.checked=_adaptOn; arc.onchange=()=>{ _adaptOn=arc.checked; try{ localStorage.setItem('breach_adaptres', _adaptOn?'on':'off'); }catch(e){} if(!_adaptOn){ _prStepI=0; _prScale=1; _applyPixelRatio(); /* build 883/1126: full quality — the FX rung's strike-out is cleared too */ _hiFxOn=true; _hiFxFails=0; _mbShed=false; _mbFails=0; /* build 1342 */ } if(typeof toast==='function') toast(_adaptOn?'Adaptive resolution on':'Adaptive resolution off \u2014 full sharpness'); }; }
   const vM=document.getElementById('volMaster'); if(vM){ vM.value=Math.round(audioSettings.master*100); vM.oninput=()=>{ audioSettings.master=(+vM.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vMu=document.getElementById('volMusic'); if(vMu){ vMu.value=Math.round(audioSettings.music*100); vMu.oninput=()=>{ audioSettings.music=(+vMu.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
