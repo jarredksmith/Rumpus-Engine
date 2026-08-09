@@ -1646,6 +1646,55 @@ value exactly.
 engine HOLDS, not what you asked it to hold. And #1/#3 are build 1124's rule for the third time in this
 session — know what is in the frame before attributing anything to it.
 
+## A free mouse cursor (build 1467)
+
+Asked for from play: *"maybe a gameplay that allows point-click type navigation (which isn't possible today
+as the mouse is always the camera control) so that on-screen elements could be clicked."*
+
+**The obvious reading is wrong, and checking that is what shaped the build.** It is not merely that the
+mouse is the camera in FIRST PERSON. The twin-stick, top-down and ARPG views already draw a cursor — but
+`_vcX += e.movementX` accumulates it from **pointer-locked deltas**, so there was no OS pointer in *any*
+view and no DOM element was clickable anywhere in play. Build 1255 had to release the lock by hand just to
+make one HUD button work, and then whitelist itself out of the pause-on-unlock handler to stop that pausing
+the game.
+
+Free cursor: never take the lock, drive the same `_vcX/_vcY` the aim already reads from the **real** pointer
+position, show a real cursor. The aim ray, the crosshair, the body facing and the shot origin are all
+untouched, because every one of them reads `_vcX/_vcY` and always did.
+
+Measured live, the same level with the setting off as the control at every step:
+
+```
+tryPointerLock reaches requestPointerLock   captured 1 · FREE 0 · free-but-first-person 1
+the pointer maps onto the aim cursor        (320,180)->(0,0)  (480,90)->(160,-90)  (10,10)->(-310,-170)
+   ...while the captured control            (-310,-170) -> (-310,-170), unmoved
+body class / canvas cursor                  top+free: freeCursor, crosshair · fps+free: none · returns
+```
+
+Four decisions:
+- **ONE refusal, inside `tryPointerLock`.** Chat close, shop close, inventory close, the upgrade pick,
+  deploy and the canvas click all re-lock; the one that got forgotten would swallow the cursor mid-game.
+- **It requires a cursor view, and that is the definition rather than a limitation.** In first person the
+  mouse IS the head, so "free the mouse" and "first person" are contradictory requests. The control is
+  absent there rather than present and inert (build 1348).
+- **The class follows the VIEW, not the setting**, because build 1404's view verb can turn a first-person
+  level top-down mid-match — and it drops a lock it happens to be holding, so the mouse is free *then*.
+- **Always assigned, never "if present"** (build 1400), or it leaks from the previous level.
+
+### One honest non-measurement, recorded as such
+
+The probe's `elementFromPoint` + synthetic-click check passes in **both** conditions, because neither
+models pointer lock — the DOM hit-test does not care that the user has no cursor. So it is **not evidence**,
+and the thing that actually decides whether a player can click is whether the pointer is captured, which the
+lock test measures. Reported rather than quietly presented as a green row.
+
+Three fixture faults on the way, all invented names (the widget field is `event` not `ev`; `setvar` takes
+`{name, value}`; `_hwEls` holds **records**, not elements) — and the probe lint caught the fifteenth
+backtick-in-page-code at the exact line, which is the first time it has paid for itself before a wasted run.
+
+**Seven pins moved.** Six quoted the pointerlock-pause condition or the game block's closing brace whole and
+broke when a term joined; each asserts MEMBERSHIP of the guard now.
+
 ## A clicked zone gets a gizmo and a panel, not just a selection (build 1466)
 
 Reported from play **after build 1464 claimed this closed**: *"Still no way to select, drag, or delete a

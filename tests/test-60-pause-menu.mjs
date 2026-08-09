@@ -18,6 +18,15 @@ const ex = extractFunction('exitToMenu');
 assert(/NET\.mode!=='off'\)\{ location\.reload\(\)/.test(ex), 'exit reloads in a live net session');
 assert(/showMainMenu\(\);/.test(ex), 'solo exit returns to the main menu');
 // loop integration
-assert(/if\(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !\(typeof _hwCursorFree!=='undefined' && _hwCursorFree\)\) openPause\(\)/.test(src), 'losing the lock mid-play opens pause (unless chatting, or a HUD button deliberately freed the cursor — build 1255)');
+/* build 1467: the free cursor joined this condition, so quoting the whole line broke it with every part
+   of what it meant still true. Asserted as membership of the guard instead. */
+{
+  const h = src.slice(src.indexOf("document.addEventListener('pointerlockchange'"),
+                      src.indexOf("document.addEventListener('pointerlockchange'") + 1400);
+  assert(/if\(!locked && was && !isTouch && gameOn/.test(h) && /openPause\(\)/.test(h),
+    'losing the lock mid-play opens pause...');
+  for(const g of ['chatOpen', 'mapOpen', 'invOpen', '_hwCursorFree', '_cursorFreeNow'])
+    assert(h.includes(g), '...unless ' + g + ' released it on purpose (build 1255, build 1467)');
+}
 assert(/\(paused && NET\.mode==='off'\) \|\| \(mapOpen && NET\.mode==='off'\) \|\| \(invOpen && NET\.mode==='off'\)\) && !\(duelDead && pvpMode\(\)\)\) \{ pollGamepad/.test(src), 'solo play freezes while paused');
 done('pause menu + exit to main menu');

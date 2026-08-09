@@ -53,7 +53,7 @@ assert(/else if\(typeof chaseCursorOn==='function' && chaseCursorOn\(\)\)\{ forw
   'WASD moves relative to the frozen camera, not the cursor-spun body');
 
 // persistence + UI
-assert(/chaseCursorAim: !!gameCfg\.chaseCursorAim \}/.test(src), 'saved with the level');
+assert(/chaseCursorAim: !!gameCfg\.chaseCursorAim/.test(src), 'saved with the level');   /* build 1467: no longer the LAST field in the block, so the closing brace is not part of the claim */
 const loads = src.match(/gameCfg\.chaseCursorAim = !!g\.chaseCursorAim;/g) || [];
 assert(loads.length >= 1, 'both loaders restore it (' + loads.length + ')');
 assert(/ARPG cursor aim<\/b>/.test(src), 'the checkbox lives in the camera-view section');

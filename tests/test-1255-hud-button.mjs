@@ -126,8 +126,16 @@ assert(/mkAdd\('\+ Button', \{ kind:'button'/.test(src), 'and a + Button that la
 // _hwFire's own `paused` gate and drew the menu over the button — making the button clickable was
 // itself what made the game reject the click. The unlock handler's "a UI is legitimately open"
 // whitelist (chat/map/inventory/shop) now includes the button cursor, exactly as invOpen does.
-assert(/!invOpen && !\(typeof _hwCursorFree!=='undefined' && _hwCursorFree\)\) openPause\(\)/.test(src),
-  'a deliberately freed cursor does NOT trip the pause-on-unlock (live-probed: without this the button was inert)');
+/* build 1467: the free cursor joined this condition, so a pin quoting the WHOLE line broke with every
+   part of what it meant still true — the whole-line trap this file records under builds 519/928/1073/1412.
+   What each of these means is asserted as MEMBERSHIP of the guard. */
+{
+  const h = src.slice(src.indexOf("document.addEventListener('pointerlockchange'"),
+                      src.indexOf("document.addEventListener('pointerlockchange'") + 1400);
+  assert(/openPause\(\)/.test(h), 'a deliberately freed cursor does NOT trip the pause-on-unlock (live-probed: without this the button was inert)');
+  for(const g of ['chatOpen', 'mapOpen', 'invOpen', 'shopOpen', 'paused', 'choosingUpgrade', '_hwCursorFree', '_cursorFreeNow'])
+    assert(h.includes(g), '...unless ' + g + ' says the cursor was released on purpose');
+}
 {
   const sync = extractFunction('_hwSyncCursor');
   assert(sync.indexOf('_hwCursorFree = anyBtn;') < sync.indexOf('safeExitPointerLock'),

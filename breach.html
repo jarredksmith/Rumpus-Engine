@@ -448,6 +448,12 @@
   body.hud-shape-square #hud .panel, body.hud-shape-square #prompt, body.hud-shape-square #grabHint, body.hud-shape-square #goalBanner, body.hud-shape-square #dialogue { border-radius: 0; }
   body.hud-noborder #hud .panel, body.hud-noborder #prompt, body.hud-noborder #grabHint, body.hud-noborder #goalBanner, body.hud-noborder #dialogue { border-color: transparent !important; }
   body.hud-hide-minimap #minimap, body.hud-hide-score #score, body.hud-hide-wave #wavePanel,
+  /* build 1467: free-cursor play. A real pointer over the canvas, and a default arrow over the HUD.
+     Nothing here makes widgets clickable — build 1255's buttons already opt into `pointerEvents:auto`
+     themselves; what they never had was a pointer to be clicked WITH. The world still receives clicks
+     too, because the fire handler is on `document` rather than on the canvas. */
+  body.freeCursor #hud { cursor: default; }
+  body.freeCursor canvas { cursor: crosshair; }
   body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair,
   /* build 1465: the reload bar was welded to the CROSSHAIR's toggle, so "keep the crosshair, lose the bar"
      — the thing that was actually asked for — could not be said at all. It is its own toggle now, and the
@@ -22534,7 +22540,11 @@ const TOUCH_LOOK_SENS = 0.0042, TOUCH_ADS_SENS = 0.0022;
 // Pointer Lock isn't supported on iOS Safari (the methods are undefined). Route every call through these
 // guards so a missing API can't throw — touch devices steer via the on-screen look pad instead.
 let chatOpen=false;   // multiplayer text chat input is focused
-function tryPointerLock(){ if(isTouch) return; const el = renderer && renderer.domElement; if(el && el.requestPointerLock){ try{ const p = el.requestPointerLock(); if(p && typeof p.catch==='function') p.catch(()=>{}); }catch(e){} } }   // Chrome returns a promise that rejects (e.g. re-locking too soon after exit) — swallow it so it doesn't surface as an error
+function tryPointerLock(){ if(isTouch) return;
+  /* build 1467: ONE refusal, here, rather than a guard at each of the eight callers — chat close, shop
+     close, inventory close, upgrade pick, deploy and the canvas click all re-lock, and the one that got
+     forgotten would silently swallow the cursor mid-game. */
+  if(typeof _cursorFreeNow==='function' && _cursorFreeNow()) return; const el = renderer && renderer.domElement; if(el && el.requestPointerLock){ try{ const p = el.requestPointerLock(); if(p && typeof p.catch==='function') p.catch(()=>{}); }catch(e){} } }   // Chrome returns a promise that rejects (e.g. re-locking too soon after exit) — swallow it so it doesn't surface as an error
 function safeExitPointerLock(){ if(document.exitPointerLock){ try{ document.exitPointerLock.call(document); }catch(e){} } }
 function typingInField(e){
   const t = e.target, tag = (t && t.tagName) || '';
@@ -22797,7 +22807,8 @@ renderer.domElement.addEventListener('drop', (e)=>{
 });
 document.addEventListener('keydown', (e)=>{ if(e.code==='Escape' && _settingsOpen){ e.preventDefault(); e.stopPropagation(); closeSettings(); } }, true);   // build 1456: on the title screen nothing else owns Escape (there is no pointer lock to release)
 document.addEventListener('pointerlockchange', ()=>{ const was=locked; locked = document.pointerLockElement === renderer.domElement; if(locked && !was){ lookFresh = true; _lastLookDX=0; _lastLookDY=0; if(paused) resumeGame(); }
-  if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !(typeof _hwCursorFree!=='undefined' && _hwCursorFree)) openPause(); });   // Esc releases the lock -> show the pause menu (but not when opening chat, or when build 1255's HUD buttons freed the cursor on purpose — LIVE-PROBED: without this, making a button clickable was itself what paused the game and covered it with the pause menu)
+  if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !(typeof _hwCursorFree!=='undefined' && _hwCursorFree)
+     && !(typeof _cursorFreeNow==='function' && _cursorFreeNow())) openPause(); });   /* build 1467: a level whose cursor is free by design never had a lock to lose, so losing one must not pause it — build 1255 learned this the hard way when making a button clickable was itself what paused the game */   // Esc releases the lock -> show the pause menu (but not when opening chat, or when build 1255's HUD buttons freed the cursor on purpose — LIVE-PROBED: without this, making a button clickable was itself what paused the game and covered it with the pause menu)
 // Ctrl+W (crouch + forward) is the browser's close-tab shortcut and can't be cancelled from a keydown.
 // While actively playing (pointer locked), ask the browser to confirm before unloading so an accidental
 // Ctrl+W shows a "Leave site?" prompt the player can cancel instead of silently losing the session.
@@ -22824,6 +22835,15 @@ document.addEventListener('mousemove', e=>{
       player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
       if(Math.abs(e.movementX) + Math.abs(e.movementY) > 2) editorDragMoved = true;
     }
+    return;
+  }
+  /* build 1467: the free cursor, BEFORE the lock gate — with the lock never taken, `locked` is false and
+     everything below is unreachable. `_vcX/_vcY` are offsets from screen CENTRE (the crosshair is drawn
+     at `calc(50% + _vcX)`), so the real pointer maps onto them exactly, with no accumulation to drift and
+     no clamp to fight: where the pointer is IS where the cursor is. */
+  if(typeof _cursorFreeNow==='function' && _cursorFreeNow() && !drivingCar){
+    _vcX = e.clientX - innerWidth * 0.5;
+    _vcY = e.clientY - innerHeight * 0.5;
     return;
   }
   if(!locked) return;
@@ -27471,7 +27491,7 @@ const CROSSHAIR_STYLES = ['classic','cross','dot','circle','tee','none'];
 // land on one path only. One function now; `test-1400` proves the copies are gone by count.
 function _applyGameCfg(g){
   if(!g) return;
- gameCfg.mode = g.mode||'random'; gameCfg.winWaves = g.winWaves||0; gameCfg.upgrades = g.upgrades !== false; gameCfg.objective = g.objective||'eliminate'; gameCfg.surviveSecs = g.surviveSecs!=null ? g.surviveSecs : 120; gameCfg.raceLaps = g.raceLaps!=null ? g.raceLaps : 3; gameCfg.raceBots = g.raceBots!=null ? g.raceBots : 3; gameCfg.raceBotSkill = g.raceBotSkill!=null ? g.raceBotSkill : 0.85; gameCfg.extractHold = g.extractHold!=null ? g.extractHold : 5; gameCfg.extractRadius = g.extractRadius!=null ? g.extractRadius : 3.5; gameCfg.bossWave = g.bossWave!=null ? g.bossWave : 5; gameCfg.wavesText = (typeof g.wavesText==='string') ? g.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!g.noRespawn; gameCfg.unarmed = !!g.unarmed; gameCfg.startWeapon = (typeof g.startWeapon==='string' && _canStartWith(g.startWeapon)) ? g.startWeapon : 'rifle'; gameCfg.allowPickup = g.allowPickup!==false; gameCfg.flashlight = !!g.flashlight; gameCfg.flashCfg = _sanitizeFlash(g.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof g.goalText==="string") ? g.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!g.respawnOnDeath; gameCfg.winText = (typeof g.winText==="string") ? g.winText.slice(0,240) : ""; gameCfg.loseText = (typeof g.loseText==="string") ? g.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!g.ragdoll; gameCfg.view = (g.view==='top'||g.view==='side'||g.view==='chase') ? g.view : 'fps'; gameCfg.viewDist = g.viewDist!=null ? +g.viewDist : 0; gameCfg.viewAxis = (g.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +g.viewYaw||0; gameCfg.viewTilt = (g.viewTilt!=null) ? +g.viewTilt : null; gameCfg.viewHeight = +g.viewHeight||0; gameCfg.viewRoll = +g.viewRoll||0; gameCfg.viewOrbit = !!g.viewOrbit; gameCfg.chaseCursorAim = !!g.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(g.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+ gameCfg.mode = g.mode||'random'; gameCfg.winWaves = g.winWaves||0; gameCfg.upgrades = g.upgrades !== false; gameCfg.objective = g.objective||'eliminate'; gameCfg.surviveSecs = g.surviveSecs!=null ? g.surviveSecs : 120; gameCfg.raceLaps = g.raceLaps!=null ? g.raceLaps : 3; gameCfg.raceBots = g.raceBots!=null ? g.raceBots : 3; gameCfg.raceBotSkill = g.raceBotSkill!=null ? g.raceBotSkill : 0.85; gameCfg.extractHold = g.extractHold!=null ? g.extractHold : 5; gameCfg.extractRadius = g.extractRadius!=null ? g.extractRadius : 3.5; gameCfg.bossWave = g.bossWave!=null ? g.bossWave : 5; gameCfg.wavesText = (typeof g.wavesText==='string') ? g.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!g.noRespawn; gameCfg.unarmed = !!g.unarmed; gameCfg.startWeapon = (typeof g.startWeapon==='string' && _canStartWith(g.startWeapon)) ? g.startWeapon : 'rifle'; gameCfg.allowPickup = g.allowPickup!==false; gameCfg.flashlight = !!g.flashlight; gameCfg.flashCfg = _sanitizeFlash(g.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof g.goalText==="string") ? g.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!g.respawnOnDeath; gameCfg.winText = (typeof g.winText==="string") ? g.winText.slice(0,240) : ""; gameCfg.loseText = (typeof g.loseText==="string") ? g.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!g.ragdoll; gameCfg.view = (g.view==='top'||g.view==='side'||g.view==='chase') ? g.view : 'fps'; gameCfg.viewDist = g.viewDist!=null ? +g.viewDist : 0; gameCfg.viewAxis = (g.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +g.viewYaw||0; gameCfg.viewTilt = (g.viewTilt!=null) ? +g.viewTilt : null; gameCfg.viewHeight = +g.viewHeight||0; gameCfg.viewRoll = +g.viewRoll||0; gameCfg.viewOrbit = !!g.viewOrbit; gameCfg.chaseCursorAim = !!g.chaseCursorAim; gameCfg.freeCursor = !!g.freeCursor;   /* build 1467 */ gameCfg.enemyMods = _sanitizeEnemyMods(g.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(g.spawnRegion){ const _sr=g.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; }
   // ---- build 1400: the five that were written and never read -----------------------------------------
   // ALWAYS ASSIGNED, defaulting when absent — that is what stops the leak. A field that is only assigned
@@ -27480,6 +27500,8 @@ function _applyGameCfg(g){
   gameCfg.pvpTarget = Math.max(0, Math.min(999, Math.round(+g.pvpTarget||0)));
   gameCfg.fallDamage  = _dmgRuleFrom(g.fallDamage,  24, 1.4);
   gameCfg.crushDamage = _dmgRuleFrom(g.crushDamage,  7, 2.2);
+  gameCfg.freeCursor  = !!g.freeCursor;   /* build 1467: always assigned, never "if present" — build 1400's rule, or it LEAKS from the previous level */
+  if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass();
   gameCfg.crosshair   = _crosshairFrom(g.crosshair);
   if(typeof applyCrosshair==='function') try{ applyCrosshair(gameCfg.crosshair); }catch(e){}
 }
@@ -29111,7 +29133,7 @@ function _viewDwell(v){ const d = +v; if(!(d > 0)) return 0; return Math.max(VIE
 // nothing — a camera pointed nowhere is the worst possible failure for this verb.
 function _setViewOverride(mode, tag, track, dwell){
   const m = String(mode==null?'':mode).trim();
-  if(!m || m==='normal'){ _viewOv = null; return true; }
+  if(!m || m==='normal'){ _viewOv = null; if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass(); return true; }
   if(VIEW_MODES.indexOf(m) < 0){
     if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "camera" action asks for the view "'+m+'", which is not a view this engine has.');
     return false;
@@ -29129,6 +29151,9 @@ function _setViewOverride(mode, tag, track, dwell){
     const _n = (typeof performance!=='undefined' && performance.now) ? performance.now() : 0;
     _viewOv = { m:'fixed', tag:t, mounts:mounts, idx:0, dwell:_viewDwell(dwell), t0:_n, last:_n, track: track!==false };
   } else _viewOv = { m:m, tag:'', mounts:null, idx:0, dwell:0, t0:0, last:0, track:true };
+  /* build 1467: the view verb can turn a first-person level into a top-down one mid-match, and the free
+     cursor is only meaningful in a cursor view — so the class follows the view rather than the setting. */
+  if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass();
   return true;
 }
 function activeViewMode(){
@@ -29152,6 +29177,36 @@ function chaseCursorOn(){
 }
 // Everywhere that asks "does the cursor aim, not the head?" — top/side always, chase when opted in.
 function cursorAimActive(){ return activeViewMode()!=='fps' || chaseCursorOn(); }
+/* build 1467: A FREE CURSOR — point-and-click, asked for from play.
+   "Maybe a gameplay that allows point-click type navigation (which isn't possible today as the mouse is
+   always the camera control) so that on-screen elements could be clicked."
+
+   Verified before building: it is not merely that the mouse is the camera in FPS. The twin-stick and
+   top-down views already have a CURSOR — but `_vcX += e.movementX` is a VIRTUAL cursor accumulated from
+   POINTER-LOCKED deltas, so there is no OS cursor anywhere in play and no DOM element is clickable in any
+   view. Build 1255 had to release the lock by hand just to make one HUD button work.
+
+   Free cursor means: never take the lock, drive the same `_vcX/_vcY` the aim already reads from the REAL
+   pointer position, and show a real cursor. Everything downstream — the aim ray, the crosshair, the body
+   facing, the shot origin — is unchanged, because it all reads `_vcX/_vcY` and always did.
+
+   IT REQUIRES A CURSOR VIEW, and that is not a limitation but the definition: in first person the mouse
+   IS the head, so "free the mouse" and "first person" are contradictory requests. The checkbox says so.
+   Touch is excluded because there is no pointer to free. */
+/* One writer of the body class, called from applyGameCfg, the view verb and the editor checkbox — a
+   cursor that is free in fact and captured in CSS is a game that looks broken while working. */
+function _applyFreeCursorClass(){
+  try{
+    const on = _cursorFreeNow();
+    if(document.body) document.body.classList.toggle('freeCursor', !!on);
+    if(on && typeof safeExitPointerLock==='function' && document.pointerLockElement) safeExitPointerLock();
+  }catch(e){}
+}
+function _cursorFreeNow(){
+  if(typeof isTouch!=='undefined' && isTouch) return false;
+  if(!(typeof gameCfg!=='undefined' && gameCfg && gameCfg.freeCursor)) return false;
+  return (typeof cursorAimActive==='function') ? cursorAimActive() : false;
+}
 // ---- build 1109: fire from the BODY, not the camera, whenever the camera isn't at the eye ----
 // Third-person shots have always raycast from the CAMERA through the crosshair. That is fine when
 // the camera sits at head height behind the shoulder. Build 1101's Tilt raises the boom metres into
@@ -29731,7 +29786,7 @@ function _viewFixedPose(cam){
     list = ov.mounts = _viewMountsFor(ov.tag);
     m = list.length ? list[((ov.idx % list.length) + list.length) % list.length] : null;
   }
-  if(!m){ _viewOv = null; return; }
+  if(!m){ _viewOv = null; if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass(); return; }
   /* WORLD position, so a camera mounted on a lift or a parented prop (build 1309) rides it */
   m.getWorldPosition(_vfP);
   cam.position.copy(_vfP);
@@ -34957,7 +35012,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1466 · 2026-08-09';
+const BUILD_VERSION = 'build 1467 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -44741,7 +44796,7 @@ function serializeLevel(){
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
     animCuts: (Object.keys(animCuts).length ? _sanAnimCuts(animCuts) : undefined),   /* build 1336: undefined when unused, so a level with no slices does not grow a dead key. Sanitized on the way OUT as well as in, so nothing out-of-range can enter a share code (1191's rule). */
-    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim, freeCursor: !!gameCfg.freeCursor },   /* build 1467 */   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -49023,6 +49078,18 @@ function renderEditorFields(){
         const ccSp=document.createElement('span'); ccSp.innerHTML='<b>ARPG cursor aim</b> \u2014 the mouse is a cursor; the character shoots at it';
         ccRow.appendChild(ccCb); ccRow.appendChild(ccSp); bPly.appendChild(ccRow);
         hint(bPly,'','0 0 4px').textContent='The camera direction freezes and WASD moves relative to it while the character turns to face the cursor \u2014 Diablo-style. Players hold the middle mouse button and drag to swing the camera around. Pair with the Tilt slider (Player tab \u2192 Third-person camera) for an almost-top-down action view.';
+      }
+      /* build 1467: the free cursor, offered wherever it can WORK. In first person the mouse IS the head,
+         so the control is absent there rather than present and inert — a control whose consequence is
+         invisible is one nobody can use on purpose (build 1348). Chase only counts when ARPG cursor aim
+         is on, because that is what makes chase a cursor view at all. */
+      if(_curView==='top' || _curView==='side' || (_curView==='chase' && gameCfg.chaseCursorAim)){
+        const fcRow=document.createElement('label'); fcRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0 2px;cursor:pointer;';
+        const fcCb=document.createElement('input'); fcCb.type='checkbox'; fcCb.checked=!!gameCfg.freeCursor; fcCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+        fcCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.freeCursor=fcCb.checked; _levelDirty=true; if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass(); };
+        const fcSp=document.createElement('span'); fcSp.innerHTML='<b>Free mouse cursor</b> \u2014 point and click';
+        fcRow.appendChild(fcCb); fcRow.appendChild(fcSp); bPly.appendChild(fcRow);
+        hint(bPly,'','0 0 4px').textContent='The mouse is never captured, so the player keeps a real cursor: HUD buttons, signs and menus are clickable, and the character still aims and shoots at it. Point-and-click adventures, tycoons, card games and RTS-style levels need this. Not offered in first person, where the mouse IS the camera.';
       }
       if(_curView==='top'||_curView==='side'){
         // build 1084: the camera is derived, not placed — so give the creator a way to SEE it

@@ -19,7 +19,16 @@ assert(/if\(mapOpen\)\{[\s\S]*?if\(e\.code===BINDS\.map \|\| e\.code==='Escape'\
 
 // ---- live-play gating: no fire while the map is up; releasing the lock for the map doesn't open pause ----
 assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\) return;/.test(src), 'firing is blocked while the map is open');
-assert(/&& !paused && !chatOpen && !mapOpen && !invOpen && !\(typeof _hwCursorFree!=='undefined' && _hwCursorFree\)\) openPause\(\)/.test(src), 'exiting pointer-lock for the map does not pop the pause menu');
+/* build 1467: the free cursor joined this condition, so a pin quoting the WHOLE line broke with every
+   part of what it meant still true — the whole-line trap this file records under builds 519/928/1073/1412.
+   What each of these means is asserted as MEMBERSHIP of the guard. */
+{
+  const h = src.slice(src.indexOf("document.addEventListener('pointerlockchange'"),
+                      src.indexOf("document.addEventListener('pointerlockchange'") + 1400);
+  assert(/openPause\(\)/.test(h), 'exiting pointer-lock for the map does not pop the pause menu');
+  for(const g of ['chatOpen', 'mapOpen', 'invOpen', 'shopOpen', 'paused', 'choosingUpgrade', '_hwCursorFree', '_cursorFreeNow'])
+    assert(h.includes(g), '...unless ' + g + ' says the cursor was released on purpose');
+}
 
 // ---- loop: solo freezes (and still paints the map); multiplayer keeps the world live ----
 assert(/\|\| \(mapOpen && NET\.mode==='off'\) \|\| \(invOpen && NET\.mode==='off'\)\) && !\(duelDead/.test(src), 'solo freeze includes the map');
