@@ -12840,6 +12840,64 @@ handed `_shotVoice` / `_shotFirst` / the remote clock **lifted from source**, ne
 `_shotVoice`'s own `at` PARAMETER matched. A pin on a bare identifier counts the declaration too — the
 same trap this file records for prose, one step along. It counts the call sites (`, at}`) now.
 
+## Options on the title screen (build 1456)
+
+The UI audit's CRITICAL, verified at the line: eleven menu buttons — Deploy, Build, Multiplayer,
+Community, two campaign entries, Instructions, Field manual, Help, Credits, and a controls-mode
+**cycler** (not a panel). Volumes, mute, all six comfort sliders, colour-vision correction with
+strength, interface size, mouse sensitivity, keybinds and the touch-layout editor lived **only** in the
+pause card. So a photosensitive, motion-sick, colour-blind or low-vision player had to **Deploy into
+live combat and then pause** before they could protect themselves.
+
+### It opens the SAME element, and that is the whole design
+
+`bindPauseMenu` reads every control by id, so lifting the markup into a second panel means duplicate
+ids or a second set of bindings — the defect this file records more than any other. One card, one
+binding, nothing to drift. `test-1456` asserts each of nineteen control ids exists **exactly once**.
+
+**It closes through `resumeGame`**, which is the one chokepoint the Resume button, the pad's B and the
+pad's Start already use — so the title-screen card closes by every one of those with no second list of
+call sites, the mistake builds 1152 and 1158 had to fix twice. The route sits **before** the
+`if(!paused) return;` guard, which would otherwise swallow it; the test asserts that ordering directly.
+
+Four decisions, each a defect the other way:
+- **`paused` is never written.** There is no match to pause, and setting it would make the frame loop's
+  gates disagree with the world. Asserted by executing and by grepping the function.
+- **The pointer is never grabbed** on close — there is no game to look around in.
+- **It refuses outright while a match is running or already paused**, so it can never fight `openPause`.
+- **Three controls hide** — Exit to main menu, Edit HUD layout, Loadout — not because they are
+  dangerous but because their consequence is absent. The test asserts that **nothing else** is hidden,
+  which is the entire point of the build.
+
+### Measured live (`tools/probe/settings-on-title.mjs`) — 32 controls, no match started
+
+```
+clicked Settings   shown, setOnly, title SETTINGS, on screen, gameOn false, paused false
+GAME     7 controls   missing 0  offscreen 0  unbound 0
+CONTROLS 3           AUDIO 4           COMFORT 13     — all clean
+gamepad block        hidden with no pad -> SHOWN when one appears (build 909, intact)
+match-only           pauseExit / pauseEditHud / pauseLoadout all zero-size
+comfort slider       a11y.shake 1 -> 0.30 -> 1, label follows
+Escape               closed, setOnly dropped, title back to PAUSED, paused still false
+```
+
+**The first probe run reported six failures and the engine was right every time.** `#pauseCtl` and its
+five pad sliders are `display:none` until a pad has been *seen* — build 909's own behaviour, and
+correct, since pad sliders shown to someone with no pad are noise. `pauseCtl` is also a container, not
+a control, so my "has a handler" check was wrong about it. The instrument now tests the real property:
+the block is hidden with no pad and **revealed** when one appears, from the title screen.
+
+### Two pins moved, and both were mine to break
+
+- **`test-1023`** deliberately puts Play campaign first in the sub row, and my first placement put
+  Settings ahead of it. That is a prior build's design decision, not an obstacle: Settings moved to the
+  head of the utility group (Instructions / Manual / Help / Credits) instead, which is also where a
+  player looks for it. 1023's assertion is untouched.
+- **`test-1347`** matched *any* capture-phase keydown listener with a lazy window, and this build added
+  one that now comes **first in the file**. It was always about the accessibility handler, so it
+  requires `_a11yArm` inside the window now. That is build 1411's first-match trap in a regex rather
+  than an `indexOf` — **a pin that matches "the first thing shaped like X" is a pin on file order.**
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

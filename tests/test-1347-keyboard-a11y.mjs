@@ -46,8 +46,12 @@ assert(/half-implemented tablist reads worse|aria-selected/.test(src),
   assert(/observe\(document\.body/.test(arm.replace(/\s/g, '')), '...over the whole body');
   // the arming trigger is the Tab key, and keydown fires BEFORE the browser moves focus, so the elements
   // are in the tab order in time for the very keystroke that armed them
-  const kd = src.match(/addEventListener\('keydown', \(e\)=>\{[\s\S]{0,1400}?\}, true\);/);
-  assert(kd, 'the keydown handler exists');
+  // build 1456: this was a FIRST-MATCH pin over "any capture-phase keydown listener", and build 1456
+  // added one (Escape closes the title-screen settings card) that now comes first in the file. The
+  // assertion was always about THE ACCESSIBILITY handler, so it anchors on _a11yArm, which is unique to
+  // it — the same first-match trap build 1411 recorded for indexOf.
+  const kd = src.match(/addEventListener\('keydown', \(e\)=>\{[\s\S]{0,80}_a11yArm\(\)[\s\S]{0,1400}?\}, true\);/);
+  assert(kd, 'the keyboard-accessibility keydown handler exists');
   assert(/if\(e\.key === 'Tab'\)\{ _a11yArm\(\); return; \}/.test(kd[0]),
     'Tab arms it — a mouse-only session never walks the DOM at all');
   assert(/renderEditorFields|3,000 nodes|8-27 ms/.test(src),
@@ -57,7 +61,7 @@ assert(/half-implemented tablist reads worse|aria-selected/.test(src),
 
 // ---- Enter/Space activate, because that is what role=button PROMISES ----
 {
-  const kd = src.match(/addEventListener\('keydown', \(e\)=>\{[\s\S]{0,1400}?\}, true\);/)[0];
+  const kd = src.match(/addEventListener\('keydown', \(e\)=>\{[\s\S]{0,80}_a11yArm\(\)[\s\S]{0,1400}?\}, true\);/)[0];
   assert(/e\.key !== 'Enter' && e\.key !== ' ' && e\.key !== 'Spacebar'/.test(kd), 'Enter and Space activate');
   assert(/_A11Y_NATIVE\[el\.tagName\]\) return;/.test(kd),
     'a native control is left to the browser — double-firing a real <button> would be a new bug');

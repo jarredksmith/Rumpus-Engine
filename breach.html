@@ -1091,6 +1091,14 @@
   .pPanel { display:none; flex-direction:column; gap:10px; }
   .pPanel.on { display:flex; }
   #pauseFooter { width:100%; flex:0 0 auto; display:flex; flex-direction:column; gap:8px; }
+  /* build 1456: the SAME pause card, opened from the title screen. Everything in it is a per-device
+     preference except three controls that need a match running - Exit to main menu (there is nothing
+     to exit), Edit HUD layout (it hides the card and edits the live play HUD) and Loadout (it reads the
+     weapons you currently own). Hiding those is safer than showing controls whose consequence is absent,
+     and it needs no second copy of the markup: one element, one set of bindings, nothing to drift. */
+  #pauseMenu.setOnly #pauseExit,
+  #pauseMenu.setOnly #pauseEditHud,
+  #pauseMenu.setOnly #pauseLoadout { display:none !important; }
   #pauseMenu h2 {
     font-family:var(--display-font); color:var(--accent); letter-spacing:8px;
     font-size:30px; margin:0 0 6px;
@@ -1411,6 +1419,7 @@
   <div class="menuBtns menuSub">
     <button id="campaignBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.5 12.9 17 22l-5-3-5 3 1.5-9.1"/></svg>Play campaign</button>
     <button id="loadCampBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>Load campaign</button>
+    <button id="settingsBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
     <button id="instrBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Instructions</button>
     <button id="manualBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Field manual</button>
     <button id="helpBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Help &amp; tutorials</button>
@@ -1560,7 +1569,7 @@
 <button id="pauseBtn" title="Pause (Esc)" style="display:none">❚❚</button>
 <div id="pauseMenu" class="hidden">
   <div class="pauseCard">
-    <h2>PAUSED</h2>
+    <h2 id="pauseTitle">PAUSED</h2>
     <!-- build 1375: the pause card is TABBED. It had grown into the whole settings surface (36 controls
          in one scrolling column, Exit to main menu below the fold at 900px), so the rows are grouped
          into four panels and the footer (Resume / Help / Exit) never scrolls away. Every control row
@@ -22601,6 +22610,7 @@ renderer.domElement.addEventListener('drop', (e)=>{
   e.preventDefault();
   if(typeof _importLocalModel==='function') _importLocalModel(f, null);
 });
+document.addEventListener('keydown', (e)=>{ if(e.code==='Escape' && _settingsOpen){ e.preventDefault(); e.stopPropagation(); closeSettings(); } }, true);   // build 1456: on the title screen nothing else owns Escape (there is no pointer lock to release)
 document.addEventListener('pointerlockchange', ()=>{ const was=locked; locked = document.pointerLockElement === renderer.domElement; if(locked && !was){ lookFresh = true; _lastLookDX=0; _lastLookDY=0; if(paused) resumeGame(); }
   if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !(typeof _hwCursorFree!=='undefined' && _hwCursorFree)) openPause(); });   // Esc releases the lock -> show the pause menu (but not when opening chat, or when build 1255's HUD buttons freed the cursor on purpose — LIVE-PROBED: without this, making a button clickable was itself what paused the game and covered it with the pause menu)
 // Ctrl+W (crouch + forward) is the browser's close-tab shortcut and can't be cancelled from a keydown.
@@ -34729,7 +34739,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1455 · 2026-08-09';
+const BUILD_VERSION = 'build 1456 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -53592,6 +53602,7 @@ function bindMenu(){
   try{ localStorage.setItem('breach_seen','1'); }catch(e){}
   const hb=document.getElementById('manualBtn'); if(hb) hb.onclick=()=>{ try{ window.open('breach-help.html','_blank'); }catch(e){} };   // build 850: the field manual ships beside the game again (it was a dead link — and this button shared helpBtn's id, so Help & tutorials had stolen its click)
   const crb=document.getElementById('creditsBtn'); if(crb) crb.onclick=openCredits;   // build 549: player-facing credits + license screen
+  const stb=document.getElementById('settingsBtn'); if(stb) stb.onclick=()=>{ if(typeof openSettings==='function') openSettings(); };   // build 1456: options WITHOUT starting a match
   const hlb=document.getElementById('helpBtn'); if(hlb) hlb.onclick=openHelp;   // build 848: help & tutorials from the home menu
   const cmb=document.getElementById('commBtn'); if(cmb) cmb.onclick=openCommunity;   // build 851: the community level library
   const cb=document.getElementById('ctrlBtn');
@@ -54086,7 +54097,43 @@ function openPause(){
   const eh=document.getElementById('pauseEditHud'); if(eh) eh.style.display = isTouch ? '' : 'none';
   const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.remove('hidden');
 }
+/* build 1456 (UI audit): the main menu had ELEVEN buttons and none of them opened settings. Volumes,
+   mute, all six comfort sliders, colour-vision correction, interface size, mouse sensitivity, keybinds
+   and the touch-layout editor lived ONLY in the pause card - so a photosensitive, motion-sick,
+   colour-blind or low-vision player had to Deploy into live combat and then pause before they could
+   protect themselves. Every console TRC and every engine template puts Options on the title screen.
+
+   It opens the SAME element rather than lifting the markup into a second panel: bindPauseMenu reads
+   every control by id, so a copy would mean duplicate ids or a second set of bindings, which is the
+   defect this file records more than any other. One card, one binding, nothing to drift.
+
+   `paused` is deliberately NOT touched - there is no match to pause, and writing it would make the
+   frame loop's gates disagree with the world. */
+let _settingsOpen = false;
+function openSettings(){
+  if(_settingsOpen || paused || gameOn) return;   /* in a match, the pause menu is the door */
+  if(typeof bindPauseMenu==='function') try{ bindPauseMenu(); }catch(e){}   /* build 907: re-sync from live state */
+  const pm=document.getElementById('pauseMenu'); if(!pm) return;
+  _settingsOpen = true;
+  pm.classList.add('setOnly'); pm.classList.remove('hidden');
+  const t=document.getElementById('pauseTitle'); if(t) t.textContent='SETTINGS';
+  const r=document.getElementById('pauseResume'); if(r) r.textContent='Close';
+  if(typeof SFX!=='undefined' && SFX.uiOpen) SFX.uiOpen();
+}
+function closeSettings(){
+  if(!_settingsOpen) return;
+  _settingsOpen = false;
+  const pm=document.getElementById('pauseMenu'); if(pm){ pm.classList.add('hidden'); pm.classList.remove('setOnly'); }
+  const t=document.getElementById('pauseTitle'); if(t) t.textContent='PAUSED';
+  const r=document.getElementById('pauseResume'); if(r) r.textContent='Resume';
+  if(typeof SFX!=='undefined' && SFX.uiClose) SFX.uiClose();
+}
 function resumeGame(){
+  /* build 1456: resumeGame is the ONE chokepoint every close path already goes through - the Resume
+     button, the pad's B, the pad's Start, and pointer-lock recovery. Routing settings through it means
+     the title-screen card closes by every one of those with no second list of call sites to keep in
+     step, which is the mistake builds 1152/1158 had to fix twice. */
+  if(_settingsOpen){ closeSettings(); return; }
   if(!paused) return;
   paused = false; SFX.uiClose();   /* build 1363 */
   const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.add('hidden');
