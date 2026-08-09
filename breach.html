@@ -13935,6 +13935,26 @@ function _lgAddNode(type, x, y){
   logicGraph.nodes.push(n); _lgDirty();
   return n;
 }
+const LG_DUP_OFF = 26;   /* far enough that the copy is visibly its own node, near enough to read as a copy */
+/* build 1453: a graph node could be added and deleted and never COPIED. A booth wired with ten near-
+   identical `do` nodes — the shooting range's own shape, one per plate — meant picking the type and
+   re-filling every parameter ten times, and a `do` node carries up to nineteen of them (build 1407).
+
+   The params are DEEP-COPIED. Sharing one `p` object would make editing any copy edit all of them, which is
+   build 1438's defect exactly ("mirroring the list on every edit would overwrite whatever the other props
+   already carried") and would be invisible until a creator changed one and lost nine.
+
+   WIRES ARE NOT COPIED, and that is the decision rather than an omission. Copying the inbound ones fans the
+   same signal into two places and the outbound ones make every downstream verb fire twice — both silent, and
+   both the destructive direction. Every graph editor worth copying does the same for a single node: the copy
+   arrives unwired, which is the state a creator can act on. */
+function _lgDupNode(id){
+  const n = _lgNode(id); if(!n) return null;
+  const c = { id:_lgNewId(), type:n.type, x:Math.round(n.x + LG_DUP_OFF), y:Math.round(n.y + LG_DUP_OFF), p:{} };
+  for(const k in n.p) if(Object.prototype.hasOwnProperty.call(n.p, k)) c.p[k] = n.p[k];
+  logicGraph.nodes.push(c); _lgDirty(); _lgRender();
+  return c;
+}
 function _lgDelNode(id){
   logicGraph.nodes=logicGraph.nodes.filter(n=>n.id!==id);
   logicGraph.wires=logicGraph.wires.filter(w=>w.a!==id && w.b!==id);
@@ -13974,6 +13994,12 @@ function _lgRenderNode(n){
   const hd=document.createElement('div');
   hd.style.cssText='display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid '+col+'33;cursor:grab;border-radius:9px 9px 0 0;background:'+col+'14;';
   hd.innerHTML='<span style="width:8px;height:8px;border-radius:50%;background:'+col+';flex:none;"></span><span style="flex:1;font-weight:700;letter-spacing:0.5px;color:#eafff7;">'+d.t+'</span>';
+  /* build 1453: duplicate, beside the delete it mirrors. `onpointerdown` stops the event on BOTH, or the
+     header's drag handler claims the press and the click never lands — the same reason the delete has it. */
+  const dup=document.createElement('span'); dup.textContent='\u29c9'; dup.style.cssText='cursor:pointer;color:#7fa79a;padding:0 2px;'; dup.title='Duplicate node (params copied, wires not)';
+  dup.onpointerdown=(e)=>e.stopPropagation();
+  dup.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _lgDupNode(n.id); };
+  hd.appendChild(dup);
   const del=document.createElement('span'); del.textContent='\u00d7'; del.style.cssText='cursor:pointer;color:#7fa79a;padding:0 2px;'; del.title='Delete node';
   del.onpointerdown=(e)=>e.stopPropagation();
   del.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _lgDelNode(n.id); };
@@ -34660,7 +34686,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1452 · 2026-08-09';
+const BUILD_VERSION = 'build 1453 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

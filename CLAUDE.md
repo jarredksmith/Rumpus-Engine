@@ -1940,6 +1940,50 @@ arriving for reviewers: *a critic cannot silently review a build that is not in 
 reason it did not poison the results is that they were told to state what they could not verify, and did.
 Every finding acted on was re-verified against the recovered tree first.
 
+## A graph node could be added and deleted and never copied (build 1453)
+
+`grep -c "_lgDup|duplicateNode|dupNode"` returned **0**. So a booth wired with ten near-identical `do`
+nodes — the shooting range's own shape, one per plate — meant picking the type and re-filling every
+parameter ten times, and a `do` node carries up to nineteen of them (build 1407).
+
+**The params are DEEP-COPIED**, and that is the load-bearing line. Sharing one `p` object makes editing any
+copy edit all of them — build 1438's defect exactly (*"mirroring the list on every edit would overwrite
+whatever the other props already carried"*) — and it is invisible until a creator changes one and loses
+nine. The test makes ten copies, renames each, and asserts **eleven independent targets**, which is the
+whole reason to duplicate a node.
+
+**Wires are NOT copied, and that is a decision rather than an omission.** Copying the inbound ones fans one
+signal into two places; copying the outbound ones fires every downstream verb twice. Both are silent, and
+both are the destructive direction. Every graph editor worth copying does the same for a single node — and
+here there is no multi-node selection, so there is no "copy the wires between the selected nodes" case to
+get right. The copy arrives unwired, which is a state a creator can act on, and the tooltip **says so**
+rather than leaving "duplicate" to be read as "with its wires".
+
+Two smaller things: `onpointerdown` is stopped on the button because the node header is a **drag handle** and
+would otherwise claim the press so the click never lands (which is why the delete beside it already has that
+line), and only OWN keys are copied, because `p` comes out of a level file (build 1325).
+
+### Measured live, through the real board
+
+```
+click the real button   nodes 1 -> 2, offset [26, 26], params match, p is a SEPARATE object
+                        and the copy is rendered on the board
+edit the copy           original plate1, copy plate2 — independent
+FIRE IT                 an event wired into both showed BOTH props
+round trip              3 nodes out and back, do-targets [plate1, plate2]
+```
+
+That third row is the one that matters: build 1277's rule is that pinning the two ends of a wire proves
+nothing about the wire, so the probe fires a real event through the real dispatch and reads the WORLD. A
+duplicated node that cannot execute is the failure this feature could plausibly have shipped with.
+
+**And the backtick trap for the twelfth time** — a `sed` inserted a comment naming `_lgOpen` in backticks
+*inside* the page-code template literal. Build 1415's rule is to run `tools/probe/lint.mjs` after the last
+edit rather than before the first; I ran it before the `sed` and paid for it. The engine's own name for the
+board opener is `_lgOpen`, not the `openLogicGraph` I guessed — build 1429's rule, again.
+
+Zero pins moved.
+
 ## The undo history was bounded in steps, not in bytes (build 1452)
 
 `pushUndoSnapshot` capped `editorUndo` at 60 entries and at nothing else, so what the history HOLDS scaled
