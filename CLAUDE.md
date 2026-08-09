@@ -1940,6 +1940,68 @@ arriving for reviewers: *a critic cannot silently review a build that is not in 
 reason it did not poison the results is that they were told to state what they could not verify, and did.
 Every finding acted on was re-verified against the recovered tree first.
 
+## The undo history was bounded in steps, not in bytes (build 1452)
+
+`pushUndoSnapshot` capped `editorUndo` at 60 entries and at nothing else, so what the history HOLDS scaled
+with the level. Measured live:
+
+```
+                       59 props      659 props
+bytes per snapshot       14,407        64,944
+a full 60-deep history    0.86 MB       3.72 MB
+```
+
+...and the undo and redo stacks are both live at once, so the real ceiling is twice that. **A creator's
+level is the one thing in this engine with no upper bound** — build 1424's report was a 30-million-triangle
+scene — so a count cap is a memory bound that grows with exactly the content least able to afford it.
+
+`UNDO_MAX_BYTES` is 8 MB across BOTH stacks. On the 659-prop fixture that is ~123 snapshots, so **the count
+cap still binds and nothing a creator has today changes** — measured, not assumed. It starts trimming
+around 140 KB a snapshot, a level several times larger than any measured here.
+
+Three decisions:
+- **`UNDO_MIN_DEPTH` (8) is the fail-USEFUL direction**, and the reason this is not simply a smaller number:
+  however enormous one snapshot is, the creator keeps eight steps. A one-deep undo is worse than the memory
+  it saves, and the test drives a snapshot bigger than the whole budget to prove the floor wins.
+- **It trims the OLDEST**, the same end the count cap already drops from, so it can never discard the step
+  the creator is about to reach for.
+- **Undo is trimmed before redo.** A redo entry is forward history the creator has already undone past;
+  losing its far end costs less than losing how they got here.
+
+**Both growth sites, or the cap leaks at the other.** The stacks grow in exactly two places —
+`pushUndoSnapshot`, and `_historyStep` moving a step across — and `test-1452` counts them, so a third
+would fail there.
+
+```
+659 props, 70 edits    depth 60, 3.72 MB, under budget      <- unchanged
+a level 5x larger      311 KB/snapshot, depth 60 -> 26, 7.72 MB, floor respected
+undo after trimming    runs, restores the prop by 0.01, redo gains its entry
+```
+
+### What this deliberately does NOT change, with the numbers
+
+The same probe measured the OTHER half of the finding: **~1 ms a snapshot at 659 props, and 5 of 6
+focus-time snapshots discarded** because the state had not changed — the dedup check runs after the
+serialize. That is 412 call sites' worth of redundancy, and it is left alone: 1 ms per discrete user
+gesture is imperceptible (unlike a per-frame cost), and moving the snapshot from focus to first-mutation
+would break build 1163's one-snapshot-per-gesture rule at every one of those sites. Recorded in
+`test-1452` as a deliberate non-change rather than left to be rediscovered as a defect.
+
+### Two probe faults, both mine, both about a convention rather than the engine
+
+- **A held object reference across a restore.** `performUndo` can restore through a full reload, which
+  replaces `propModels` — so a reference taken before it reads "nothing moved" whatever happened. Re-resolve
+  by nid.
+- **The fixture snapshotted AFTER the mutation.** The engine snapshots BEFORE (build 1163 takes it at focus
+  or mousedown), so `editorUndo[n]` is the state to RETURN to. Pushing after the edit makes the first undo
+  restore the current state and read as a broken undo. The engine was right both times.
+
+`extractConst` cannot read two declarators on one line (build 1413's recorded trap), so the two constants
+are declared separately with a note saying why.
+
+One pin moved (1291), an executing rig whose scope genuinely lacked the trimmer; it is handed
+`_undoBytes`/`_undoTrim` **lifted from source**, never restated.
+
 ## The transparent-material registry, measured and declined (probe pass, after build 1451)
 
 Build 1168 named *"replacing `_aoHideNoDepth`'s traverse with a transparent-material registry"* as the half

@@ -34660,7 +34660,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1451 · 2026-08-09';
+const BUILD_VERSION = 'build 1452 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45251,6 +45251,36 @@ function renderCampaignPanel(){
 // props/lights and re-applies gun/aim/station/world/loot settings.
 const editorUndo = [];
 const editorRedo = [];   // build 1129: the forward half of the history
+/* build 1452: the history was capped by COUNT (60) and by nothing else, so what it HOLDS scales with the
+   level. Measured: a full 60-deep history on a 659-prop level is 64,944 bytes a snapshot and **3.72 MB**,
+   and the undo and redo stacks are both live at once, so the real ceiling is twice that. A creator's level
+   is the one thing in this engine that has no upper bound — the report that produced build 1424 was a
+   30-million-triangle scene — so a count cap is a memory bound that grows with exactly the content least
+   able to afford it.
+
+   `UNDO_MAX_BYTES` is 8 MB across BOTH stacks. On the 659-prop fixture that is ~123 snapshots, so the
+   count cap of 60 still binds and nothing a creator has today changes; it only starts trimming somewhere
+   around 140 KB a snapshot, which is a level several times larger than any measured here.
+
+   `UNDO_MIN_DEPTH` is the fail-USEFUL direction and the reason this is not just a smaller number: however
+   enormous one snapshot is, the creator keeps 8 steps of history. A one-deep undo is worse than the memory. */
+const UNDO_MAX_BYTES = 8388608;   /* 8 MB across BOTH stacks */
+const UNDO_MIN_DEPTH = 8;         /* declared separately: extractConst cannot read two declarators on one line (build 1413) */
+function _undoBytes(){
+  let n = 0;
+  for(let i=0;i<editorUndo.length;i++) n += editorUndo[i].length;
+  for(let i=0;i<editorRedo.length;i++) n += editorRedo[i].length;
+  return n;
+}
+/* Trims the OLDEST entries — the same end the count cap already drops from, so this can never discard a
+   step the creator is about to reach for. Trims the undo stack first: a redo entry is forward history the
+   creator has already undone past, and losing the far end of it costs less than losing how they got here. */
+function _undoTrim(){
+  let n = _undoBytes();
+  while(n > UNDO_MAX_BYTES && editorUndo.length > UNDO_MIN_DEPTH) n -= editorUndo.shift().length;
+  while(n > UNDO_MAX_BYTES && editorRedo.length > 0) n -= editorRedo.shift().length;
+  return n;
+}
 let editorUndoActive = false;
 function pushUndoSnapshot(){
   if(editorUndoActive || !editorOpen) return;
@@ -45260,6 +45290,7 @@ function pushUndoSnapshot(){
     if(editorUndo.length && editorUndo[editorUndo.length-1] === snap) return;   // identical to last -> skip
     editorUndo.push(snap);
     if(editorUndo.length > 60) editorUndo.shift();
+    _undoTrim();   /* build 1452: and by BYTES, because 60 snapshots of a big level is megabytes */
     // build 1129: editing after an undo forks the history — the old forward branch is unreachable and
     // keeping it would redo work the author has already replaced.
     editorRedo.length = 0;
@@ -45503,7 +45534,7 @@ function _historyStep(snap, pushTo){
     try { restoreLevel(level); } finally { editorUndoActive = false; }
     _reselectByNids(selN);
   }
-  if(cur != null){ pushTo.push(cur); if(pushTo.length > 60) pushTo.shift(); }
+  if(cur != null){ pushTo.push(cur); if(pushTo.length > 60) pushTo.shift(); _undoTrim(); }   /* build 1452 */
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
 }

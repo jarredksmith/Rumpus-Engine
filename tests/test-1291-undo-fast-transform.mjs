@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 // build 1291: every Ctrl+Z ran restoreLevel — a full teardown and respawn of every prop, light, zone and
 // marker, with each imported model re-fetched or re-cloned and re-materialised. So nudging a crate and
@@ -132,7 +132,12 @@ const mkStep = () => {
   const st = { restored: 0, fastRefresh: 0, resel: 0, active: [], serial: null, throwOnApply: false };
   const fn = new Function('serializeLevel', 'restoreLevel', '_undoMoveDiff', '_applyUndoMoves',
     '_edFastRefresh', '_selNids', '_reselectByNids', '_edSyncHistoryBtns', 'ST',
-    'let editorUndoActive=false;\n' + extractFunction('_historyStep') +
+    // build 1452 caps the history in bytes at both growth sites; this rig's subject is the fast transform
+    // path, so the trimmer is LIFTED FROM SOURCE with its own local stacks rather than restated.
+    'let editorUndoActive=false, editorUndo=[], editorRedo=[];\n' +
+    'const UNDO_MAX_BYTES=' + extractConst('UNDO_MAX_BYTES') + ', UNDO_MIN_DEPTH=' + extractConst('UNDO_MIN_DEPTH') + ';\n' +
+    extractFunction('_undoBytes') + '\n' + extractFunction('_undoTrim') + '\n' +
+    extractFunction('_historyStep') +
     '; return { step:_historyStep, act:()=>editorUndoActive };')(
     () => st.serial,
     (lv) => { st.restored++; st.serial = lv; },
