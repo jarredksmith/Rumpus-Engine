@@ -1940,6 +1940,65 @@ arriving for reviewers: *a critic cannot silently review a build that is not in 
 reason it did not poison the results is that they were told to state what they could not verify, and did.
 Every finding acted on was re-verified against the recovered tree first.
 
+## A reload never said how far through it was (build 1450)
+
+`grep -c "reloadBar|reloadProg|reloadRing"` returned **0**. The flat path put `--` in the ammo counter and
+that was the entire readout — so *"how much longer"* was unanswerable, on a duration that runs from 700 ms
+for a pistol to 1600 for a sniper (build 1211 made those per-weapon). Build 1172 made that question
+**actionable** rather than merely annoying: switching cancels a reload, so knowing you are a tenth of the way
+in is what decides whether to switch out of it.
+
+### Two timestamps, written where the timeouts are scheduled
+
+`_rlArm(ms)` is called immediately before each `setTimeout`, with the **same value that timeout takes** — so
+the bar and the wait cannot come to different answers about how long a reload is. The flat path arms once
+with `reloadMs`; the shell path (1249) re-arms per shell, which is the design rather than a side effect:
+that build's mag counter already shows the COUNT, and what it never showed is **when the next shell lands**
+— the beat that decides whether to cancel-fire with what is in the tube.
+
+**Nothing clears the timestamps.** `reloading` is the gate, so all four ways a reload ends — 1172's switch,
+1249's fire, and both completions — take the bar down for free. A timer of the bar's own would have needed
+unwinding at four sites, which is how one of them gets missed; this is build 1367's state-keyed restore.
+
+Three details in the tick, each a real cost without it:
+- **`scaleX`, not `width`** — a transform is composited and lays nothing out, and this runs every frame of
+  every session.
+- **It writes only on a CHANGE**, at whole-percent granularity: three frames at the same percent perform one
+  style write, and an idle session performs **zero** — proven by counting writes against a fake element.
+- **A degenerate window reads 0, never NaN.** `scaleX(NaN)` leaves the element in a state nobody can debug.
+
+It is a sibling of the crosshair (which is what centres it) and rides `hud-hide-crosshair`, because a player
+who turned the reticle off wants a clean centre.
+
+### Measured live
+
+```
+fill across a held window   0% -> scaleX(0) · 25% -> 0.25 · 50% -> 0.5 · 90% -> 0.9 · 100% -> 1
+geometry                    bar [292,198,56,3] under crosshair [308,168,24,24]
+                            no overlap · horizontally centred to <1 px · below the reticle
+hide-crosshair              takes the bar with it, and gives it back
+a real rifle reload         came up, and was down again after it completed
+switch mid-reload           down    ·   fire mid-shell-reload   down
+a shell reload              mag 0 -> 1 -> 1 -> 2 with fill 0.77 -> 0 -> 0.97 -> 0.47
+```
+
+That last row is the one worth reading: **one sweep per shell, resetting as each lands**, beside a counter
+that climbs. Two complementary readouts, not two of the same one.
+
+**The fill had to be measured on a HELD state and the reason is the renderer.** A reload is 700–1600 ms and
+this sandbox runs ~1.5 fps, so sampling a real one between probe round trips reads a reload that has already
+finished — the first run did exactly that (`reloading:false, mag:30` on the second sample). So the fill is
+read across a window held open, which is the same state a real reload produces standing still, and the real
+reload is measured for its TRANSITIONS, which is what it can honestly answer. Its `reachedFill: 0` is that
+limit stated rather than hidden: two frames is not enough to catch a percent.
+
+**And the held window was wrong first, in my rig rather than the engine.** `_rlArm(10000)` then
+`_rlT0 = now - frac*10000` moves the START without moving the end, so the window widens to `10000*(1+frac)`
+and every reading came out low — 100% read as 0.5. Set both ends.
+
+Two pins moved (1172, 1249) — both executing rigs whose scope genuinely lacked the new helper; each is handed
+`_rlArm` **lifted from source**, never restated.
+
 ## The knobs a shooting range is built from (build 1449)
 
 Build 1191 made hp, damage and speed per-level and stopped there. **Fire interval, burst size, bolt speed,

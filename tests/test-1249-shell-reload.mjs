@@ -11,7 +11,9 @@ const shellSrc = extractFunction('_shellNext');
 function rig(weapon) {
   const world = { q: [], sfx: 0, anim: 0, hud: 0 };
   const mk = new Function('W', 'SFX', 'triggerGunAnim', 'updateHUD', 'world', `
-    let reloading = false, _reloadTok = 0;
+    let reloading = false, _reloadTok = 0, _rlT0 = 0, _rlT1 = 0;
+    /* build 1450's progress window, lifted from source — this rig's subject is the shell chain */
+    ${extractFunction('_rlArm')}
     const setTimeout = (fn, ms) => { world.q.push({ fn, ms }); };
     ${shellSrc}
     ${reloadSrc}

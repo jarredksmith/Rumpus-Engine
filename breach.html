@@ -448,7 +448,7 @@
   body.hud-shape-square #hud .panel, body.hud-shape-square #prompt, body.hud-shape-square #grabHint, body.hud-shape-square #goalBanner, body.hud-shape-square #dialogue { border-radius: 0; }
   body.hud-noborder #hud .panel, body.hud-noborder #prompt, body.hud-noborder #grabHint, body.hud-noborder #goalBanner, body.hud-noborder #dialogue { border-color: transparent !important; }
   body.hud-hide-minimap #minimap, body.hud-hide-score #score, body.hud-hide-wave #wavePanel,
-  body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair,
+  body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair, body.hud-hide-crosshair #reloadBar,
   body.hud-hide-killfeed #killFeed, body.hud-hide-prompt #prompt, body.hud-hide-grab #grabHint { display: none !important; }
   body.hud-hide-goal #goalBanner { opacity: 0 !important; }   /* build 701: banner uses opacity (not display) so it never reflows */
   body.hud-hide-dlg #dialogue { display: none !important; }
@@ -522,6 +522,19 @@
        against snow — invisible exactly when aiming matters. A 1px dark outline under every stroke costs
        nothing and makes it legible on white and on black, which is what every shipped shooter does. */
     filter: drop-shadow(0 0 1px rgba(0,0,0,.95)) drop-shadow(0 0 2px rgba(0,0,0,.55));
+  }
+  /* build 1450: how far through a reload you are. Under the reticle because that is where the eye already
+     is while reloading, and 18px down so it clears the widest crosshair gap without covering it. It rides
+     the same hide-crosshair toggle (below) — a player who turned the reticle off wants a clean centre. */
+  #reloadBar {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, 18px);
+    width: 56px; height: 3px; border-radius: 2px;
+    background: rgba(0,0,0,.55); box-shadow: 0 0 0 1px rgba(0,0,0,.5);
+    overflow: hidden; pointer-events: none;
+  }
+  #reloadBar > span {
+    display: block; height: 100%; width: 100%; border-radius: 2px; transform: scaleX(0);
+    background: var(--accent); transform-origin: left center;
   }
   #crosshair::before, #crosshair::after { display:none; }   /* crosshair is built in JS now (configurable) */
   #crosshair .dot {
@@ -1293,6 +1306,7 @@
 <div id="hud" class="hidden">
   <canvas id="minimap" width="180" height="180"></canvas>
   <div id="crosshair"><span class="dot"></span></div>
+  <div id="reloadBar" class="hidden"><span></span></div>
   <div id="hitmarker">✕</div>
   <div id="touchUI">
     <div id="tLook"></div>
@@ -23506,14 +23520,49 @@ let _reloadTok = 0;
 // 1.3s, but you are never locked out of the fight while it runs. Each shell clicks (SFX) and dips
 // the gun (the reload anim retriggers), and the HUD counts the mag UP shell by shell — the flat
 // path's '--' placeholder would hide exactly the feedback this exists to give.
+/* build 1450: a reload had NO progress readout of any kind. The flat path showed '--' in the ammo counter
+   and nothing else, so "how much longer" — a real question at 700 ms for a pistol against 1600 for a
+   sniper, and the question build 1172's reload-cancel makes actionable — was unanswerable.
+
+   Two timestamps, written wherever a reload interval is SCHEDULED, so the bar and the timeout can never
+   disagree about how long it is. Nothing clears them: `reloading` is the gate, so every cancel path
+   (build 1172's switch, build 1249's fire, both completions) takes the bar down for free — the state-keyed
+   restore build 1367 used, rather than a timer of the bar's own that would have to be unwound at four
+   sites. */
+let _rlT0 = 0, _rlT1 = 0, _rlEl = null, _rlShown = false, _rlPct = -1;
+function _rlArm(ms){
+  const now = (typeof performance!=='undefined') ? performance.now() : Date.now();
+  _rlT0 = now; _rlT1 = now + Math.max(1, +ms || 0);
+}
+/* The FRACTION, pure and separately testable. A shell reload re-arms per shell (below), so this reads as
+   one sweep per shell — which is exactly the "the next shell lands now" beat that decides whether to
+   cancel-fire with what is already in the tube. */
+function _reloadFrac(now){
+  if(_rlT1 <= _rlT0) return 0;
+  const f = (now - _rlT0) / (_rlT1 - _rlT0);
+  return f < 0 ? 0 : (f > 1 ? 1 : f);
+}
+function _reloadBarTick(){
+  const el = _rlEl || (_rlEl = document.getElementById('reloadBar'));
+  if(!el) return;
+  const on = !!reloading;
+  if(on !== _rlShown){ _rlShown = on; el.classList.toggle('hidden', !on); }
+  if(!on) return;
+  const now = (typeof performance!=='undefined') ? performance.now() : Date.now();
+  /* scaleX rather than width: a transform is composited and does not lay the page out, which matters for
+     something written every frame (build 1322's rule about per-frame DOM work) */
+  const p = Math.round(_reloadFrac(now) * 100);
+  if(p !== _rlPct){ _rlPct = p; el.firstElementChild.style.transform = 'scaleX(' + (p/100) + ')'; }
+}
 function _shellNext(w, tok, delayMs){
+  _rlArm(delayMs);   /* build 1450: the bar spans THIS shell's interval */
   setTimeout(()=>{
     if(tok !== _reloadTok || !reloading) return;   // cancelled (switch or fire): keep every shell already loaded
     if(w.mag >= w.magSize || w.reserve <= 0){ reloading = false; updateHUD(); return; }
     w.mag++; w.reserve--;
     SFX.reload(); triggerGunAnim('reload');
     if(w.mag >= w.magSize || w.reserve <= 0) reloading = false;
-    else _shellNext(w, tok, w.shellMs || 420);
+    else _shellNext(w, tok, w.shellMs || 420);   /* re-arms the bar for the next shell */
     updateHUD();
   }, delayMs);
 }
@@ -23523,6 +23572,7 @@ function reload(){
   reloading = true; const tok = ++_reloadTok; SFX.reload(); triggerGunAnim('reload');
   if(w.shellReload){ _shellNext(w, tok, w.shellIntroMs || 260); updateHUD(); return; }   // build 1249: pump open, then a shell at a time
   const need = w.magSize - w.mag;
+  _rlArm(w.reloadMs);   /* build 1450: the flat path spans the whole reload — the same value the timeout takes */
   setTimeout(()=>{
     if(tok !== _reloadTok || !reloading) return;   // switch-cancelled: the mag stays as it was
     const take = Math.min(need, w.reserve);
@@ -34586,7 +34636,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1449 · 2026-08-09';
+const BUILD_VERSION = 'build 1450 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -41161,6 +41211,7 @@ function loop(){
   updateFlipbooks(dt);   // sprite-sheet explosions / smoke / fire
   updateLowHp(dt);       // low-health vignette + heartbeat
   updateHurtDir(dt);     // directional hit indicator
+  _reloadBarTick();      // build 1450: how far through a reload you are
   if(typeof navWarmupTick==='function' && navWarmupTick(dt)){ /* bots held during pre-match build/countdown */ } else updateBots(dt);
   updateXAnim(dt);                       // moving platforms / doors (all peers)
   updateLights(dt);                      // build 699: fade signal-controlled scene lights on/off
