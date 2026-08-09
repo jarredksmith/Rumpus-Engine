@@ -2215,6 +2215,67 @@ better than being in a batch.
 draw calls and triangles are the only trustworthy instruments; a creator's own machine is the only place
 the wall clock means anything, which is what the perf HUD's `other` / `idle` split (1426) is for.
 
+## A prop finally says how hard it was hit (build 1443)
+
+Every enemy damage site has spawned a floating number since build 625 — the shot, the swing, the mounted
+turret. **`damageProp` never did.** So the shooting-range plate that builds 1390, 1391, 1397, 1421 and 1422
+exist to make shootable, resettable and scoreable was the one target in the game with no readout of the
+shot that hit it — on a range, the headline activity.
+
+### The rule was read off the existing call sites, not invented
+
+A damage number in this engine is the SHOOTER'S feedback on **direct, aimed** damage. `spawnDamageNumber`
+appears at exactly four places before this build — the bullet, the swing, the turret and the PvP relay —
+and at none of them is it an explosion or damage another player dealt. A blast across twenty enemies would
+be a wall of numbers.
+
+**That is why the decision is a parameter the aiming sites pass rather than something `damageProp` infers
+from `byId`** — a grenade you threw carries your own id too, so the obvious inference is exactly wrong.
+Three sites declare it; the test counts them, because a fourth would be a blast or someone else's shot.
+
+### The fuse branch is what makes the parameter worth having
+
+Build 629's first shot on a fused explosive **lights it and deals no damage at all**, returning early. A
+number there would be a small lie about the only shot in the game that deliberately does nothing. It comes
+out right for free, because the spawn sits below that return — and it could not have, had the number been
+spawned at the call site after `damageProp` returned.
+
+An **unbreakable** target still shows its number. Build 1421's rule is that damage LANDS on one — flash,
+sound, the `damaged` signal — and only the health never drops; a number is that same feedback, and leaving
+it off would silence the exact prop class a shooting range is built from.
+
+### Measured live, through the real function
+
+```
+aimed shot, 15 dmg          one number at the contact point, hp 100 -> 85
+the same call WITHOUT it    NO number, and hp 85 -> 70      <- the parameter decides, not the damage
+UNBREAKABLE target          a number, and hp stays 100
+fused barrel, first shot    NO number — that shot only LIT it
+...second shot              a number
+lethal shot                 kill styling, the same "!" an enemy's killing blow gets
+no contact point            the collider box CENTRE, not the origin 45 m away
+dmgNumCfg.on = false        0 sprites; back on, 1
+```
+
+That second row is the control the build rests on: identical damage, identical everything, and the number
+appears or does not purely by the caller's declaration.
+
+**Where it appears is the prop-specific part.** An imported prop's origin can sit metres off its mass, so a
+hit with no contact point falls back to the collider box's centre — build 1439's lesson for the aim assist,
+one system along.
+
+### An instrument fault worth the line
+
+The probe wrapped `spawnDamageNumber` and logged BEFORE delegating, so with `dmgNumCfg.on = false` it
+recorded a call the real function then declined — **the probe measuring itself**. Read the effect instead
+(how many sprites are live) and the row is 0 and 1.
+
+Five pins moved (101 ×2, 1295, 1305, 1421), every intent unchanged — four were quotations of lines that
+gained the declaration, and each is now expressed as the property it was always about rather than an arity
+that will keep moving. The fifth is the interesting one: `test-1305` asserts that the REASON a client
+predicts its own feedback is *recorded at the site*, and my reword broke it. The pin was right and the
+comment was wrong, so the sentence went back rather than the pin moving.
+
 ## The biggest thing in the post chain never asked what device it was on (build 1442)
 
 `_AO_GEO_MAXSTEP` was a plain `2`, so the half-res G-buffer prepass — an extra **scene render**, plus build

@@ -119,9 +119,11 @@ const crate = (url) => ({ userData: url === undefined ? {} : { hitSnd: url }, po
   assert(dp.indexOf('obj.userData.hp -= dmg;') < dp.indexOf('playPropHitSound'),
     '...and it sounds only once the prop has actually taken the damage');
   // A GUEST'S SHOT IS RELAYED, so damageProp runs on the HOST and the guest would never hear its own hit.
-  assert(/\}catch\(e\)\{\} playPropHitSound\(dprop, hp\); \}/.test(src),
+  // build 1443 appended the locally-predicted damage NUMBER to the same two branches, for the same
+  // reason. The pins follow the sound they are about; what they assert is unchanged.
+  assert(/\}catch\(e\)\{\} playPropHitSound\(dprop, hp\);/.test(src),
     'the client predicts its own SHOT impact locally');
-  assert(/\}catch\(e\)\{\} playPropHitSound\(o, pt\); \}/.test(src),
+  assert(/\}catch\(e\)\{\} playPropHitSound\(o, pt\);/.test(src),
     '...and its own SWING');
   eq((src.match(/playPropHitSound\(/g) || []).length, 4,
     'the definition plus exactly three call sites — the host chokepoint and the two client predictions');

@@ -631,7 +631,7 @@ Per-type **hp / dmg / spd×** for every enemy type; blank = factory. Applies at 
 - **Starts with** — any non-melee weapon (default rifle).
 - **Start unarmed** (fists; G grabs/carries/throws) + **Allow picking up weapons found in the level**.
 - **Flashlight** (L) with Brightness 0.5–20, Cone 8–60°, Edge softness 0–100%, Range 5–150 m, Beam colour.
-- **Hit numbers** — floating damage numbers, font 10–120, Hit and Kill colors.
+- **Hit numbers** — floating damage numbers, font 10–120, Hit and Kill colors. Shown for aimed damage — shots, swings and turret fire — on enemies **and, since build 1443, on props**, so a shooting-range target reads out every hit; a hit on an unbreakable target shows its number even though its health never drops. Explosions and other players’ hits never show one.
 
 ### World-rule blocks
 - **Multiplayer spawn area** — circle (center, radius 3–200) or clicked outline polygon (3+ points, Top view).

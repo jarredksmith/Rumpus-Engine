@@ -32226,8 +32226,8 @@ function turretFire(){
     const dmg=TURRET_GUN.dmg*(isHead?HEADSHOT_MUL:1);
     let dn=hit.object, dprop=null; while(dn&&!dprop){ if(_isDamageable(dn)) dprop=dn; dn=dn.parent; }   /* build 1392 */
     if(dprop){ const dir=raycaster.ray.direction.clone().normalize();
-      if(!clientMode){ if(!damageProp(dprop,dmg,hit.point,dir,7,NET.myId)) pushDynamic(dprop,dir,7,hit.point); }
-      else if(NET.conn){ try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:dmg, dir:[dir.x,dir.y,dir.z], s:7, pt:[hit.point.x,hit.point.y,hit.point.z]}); }catch(e){} }
+      if(!clientMode){ if(!damageProp(dprop,dmg,hit.point,dir,7,NET.myId,true)) pushDynamic(dprop,dir,7,hit.point); }   /* build 1443 */
+      else if(NET.conn){ try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:dmg, dir:[dir.x,dir.y,dir.z], s:7, pt:[hit.point.x,hit.point.y,hit.point.z]}); }catch(e){} _propDmgNumber(dprop, dmg, hit.point, false); }   /* build 1443 */
       spark(hit.point,0xffd166); showHitmarker(); }
     else if(clientMode){ let node=hit.object,id=null; while(node&&id==null){ if(node.userData&&node.userData.enemyId!=null) id=node.userData.enemyId; node=node.parent; }
       if(id!=null){ if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:dmg}); }catch(e){} spark(hit.point,isHead?0xffd166:0xff6b6b); showHitmarker(isHead?'head':'hit'); if(isHead) SFX.headshot(); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } }
@@ -34436,7 +34436,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1442 · 2026-08-09';
+const BUILD_VERSION = 'build 1443 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36518,7 +36518,30 @@ function damageableProps(){          // reused array (build 1168): a swing must 
 // `userData.breakable = true` on EVERY prop it loads unless the file says `brk:false`, so reusing it would
 // have made every wall in every level ever saved shootable. `shootable` defaults to undefined, so nothing
 // that exists today changes by one byte.
-function damageProp(obj, dmg, point, dir, power, byId){
+/* build 1443: a prop takes a hit and says NOTHING about how hard. Every enemy damage site has spawned a
+   floating number since build 625 — the shot, the swing, the mounted turret — and `damageProp` never did,
+   so the shooting-range plate that builds 1390/1391/1397/1421/1422 exist to make shootable, resettable and
+   scoreable was the one target in the game with no readout of the shot that hit it.
+
+   The rule this follows is the engine's OWN, read off the existing call sites rather than invented: a
+   damage number is the SHOOTER'S feedback on DIRECT, AIMED damage. Explosions never spawn one (a blast
+   across twenty enemies would be a wall of numbers) and neither does damage another player dealt. That is
+   why the decision is a parameter the aiming call sites pass rather than something `damageProp` infers
+   from `byId` — a grenade you threw carries your own id too.
+
+   WHERE it appears is the prop-specific part: an imported prop's ORIGIN can sit metres off its mass, so a
+   blast with no contact point falls back to the collider box's centre, which is build 1439's lesson for the
+   aim assist one system along. */
+function _propDmgNumber(obj, dmg, point, broke){
+  let p = point;
+  if(!p){
+    const b = obj && obj.userData && obj.userData.box;
+    p = b ? { x:(b.min.x+b.max.x)*0.5, y:(b.min.y+b.max.y)*0.5, z:(b.min.z+b.max.z)*0.5 }
+          : (obj && obj.position);
+  }
+  if(p) spawnDamageNumber(p, dmg, broke, false);   /* spawnDamageNumber owns the on/off, size and colours */
+}
+function damageProp(obj, dmg, point, dir, power, byId, showNum){
   if(!obj.userData.phys && !obj.userData.shootable) return false;
   /* build 1421: `breakable:false` means it never BREAKS — not that nothing lands on it.
      Reported from play, one message after the range loop first worked: "if you don’t also have Breakable
@@ -36563,7 +36586,16 @@ function damageProp(obj, dmg, point, dir, power, byId){
   if(typeof NET==='undefined' || NET.mode!=='client'){
     try{ _lgPropEvent(obj, 'damaged', _propCtx(obj)); }catch(e){}
   }
-  if(_brk && obj.userData.hp <= 0){ shatterProp(obj, point, dir, power, byId); return true; }
+  const _broke = _brk && obj.userData.hp <= 0;
+  /* Before the shatter, deliberately: shatterProp takes the prop out of the scene, and the number belongs
+     at the impact rather than at wherever the debris ended up. `_broke` gives it the kill styling, which is
+     the same "!" an enemy's killing blow gets.
+     An UNBREAKABLE target still shows its number. Build 1421's rule is that damage LANDS on one — flash,
+     sound, the `damaged` signal — and only the health never drops; a number is that same feedback, and
+     leaving it off would silence the exact prop class a shooting range is built from. The fuse-ignite
+     branch above returns before this line, so the shot that only LIGHTS a barrel correctly shows nothing. */
+  if(showNum) _propDmgNumber(obj, dmg, point, _broke);
+  if(_broke){ shatterProp(obj, point, dir, power, byId); return true; }
   return false;
 }
 // Step the simulation (fixed timestep) and sync dynamic meshes from their bodies. Host/solo only.
@@ -37082,8 +37114,8 @@ function _meleeStrike(wep, RANGE, DMG){
     }
     if(target){
       { const o=target, dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize(), pt=tpt;
-        if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:o.userData.nid, d:DMG, dir:[dir.x,dir.y,dir.z], s:8, pt:[pt.x,pt.y,pt.z]}); }catch(e){} playPropHitSound(o, pt); }   /* host-authoritative, exactly like a shot — but the sound is predicted locally (build 1305) */
-        else { const broke=damageProp(o, DMG, pt, dir, 8, NET.myId); if(!broke) pushDynamic(o, dir, 8, pt); }
+        if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:o.userData.nid, d:DMG, dir:[dir.x,dir.y,dir.z], s:8, pt:[pt.x,pt.y,pt.z]}); }catch(e){} playPropHitSound(o, pt); _propDmgNumber(o, DMG, pt, false); }   /* host-authoritative, exactly like a shot — but the sound and the number are predicted locally (builds 1305/1443) */
+        else { const broke=damageProp(o, DMG, pt, dir, 8, NET.myId, true); if(!broke) pushDynamic(o, dir, 8, pt); }   /* build 1443 */
         /* build 1305: "it would also be nice to have some sort of visual that the blow landed". The BULLET
            path has sparked at its hit point since long before this; the swing never did, so a melee hit on a
            prop had no impact at all until the prop broke. The spark goes HERE rather than inside damageProp
@@ -37220,10 +37252,10 @@ function shoot(){
         const dir = raycaster.ray.direction.clone().normalize();
         const power = 6 + w.dmg*0.04;
         const hp = hit.point;
-        if(clientMode){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:w.dmg*dmgMul, dir:[dir.x,dir.y,dir.z], s:power, pt:[hp.x,hp.y,hp.z]}); }catch(e){} playPropHitSound(dprop, hp); }   /* build 1305: damageProp runs on the HOST, so a guest predicts its own impact sound or never hears the crate it just hit */
+        if(clientMode){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:w.dmg*dmgMul, dir:[dir.x,dir.y,dir.z], s:power, pt:[hp.x,hp.y,hp.z]}); }catch(e){} playPropHitSound(dprop, hp); _propDmgNumber(dprop, w.dmg*dmgMul, hp, false); }   /* build 1305: damageProp runs on the HOST, so a guest predicts its own impact sound or never hears the crate it just hit — and build 1443 predicts its own damage NUMBER for the same reason, or the one player who took the shot is the only one who cannot see what it did. `broke` is false because a client cannot know; the PvP path has made that same trade since build 625 */
         else {
           // breakable props take damage; a lethal shot shatters them instead of just shoving
-          const broke = damageProp(dprop, w.dmg*dmgMul, hp, dir, power, NET.myId);
+          const broke = damageProp(dprop, w.dmg*dmgMul, hp, dir, power, NET.myId, true);   /* build 1443: an aimed shot shows its damage, exactly as it does on an enemy */
           if(!broke) pushDynamic(dprop, dir, power, hp);
         }
         spark(hit.point, 0xffd166); if(p===0){ showHitmarker(); if(!_propSndFresh()) SFX.hit(); }   /* build 1314 */

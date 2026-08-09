@@ -23,9 +23,11 @@ assert(/for\(const o of dynamicProps\.slice\(\)\)\{/.test(ex) &&
 assert(/if\(!broke\) _blastShoveProp\(o, pos, R, f\);/.test(ex),
   '...and throws the ones it did not destroy (build 1405)');
 
-assert(/function damageProp\(obj, dmg, point, dir, power, byId\)/.test(src) && /function shatterProp\(obj, point, dir, power, byId\)/.test(src), 'destroyer id threaded through destruction');
+// build 1443 added a trailing `showNum` to damageProp. The subject here is the DESTROYER ID, so the pin
+// asserts byId reaches both functions rather than quoting an arity that will keep moving.
+assert(/function damageProp\(obj, dmg, point, dir, power, byId\b/.test(src) && /function shatterProp\(obj, point, dir, power, byId\)/.test(src), 'destroyer id threaded through destruction');
 assert(/if\(obj\.userData\.explosive\)\{ explodeAt\(_shCtr\.clone\(\), obj\.userData\.blastRadius\|\|7, obj\.userData\.blastDmg\|\|70, byId\); \}/.test(src), 'destruction detonates an explosive prop');
-assert(/const broke = damageProp\(dprop, w\.dmg\*dmgMul, hp, dir, power, NET\.myId\)/.test(src), 'shots credit the shooter as destroyer');
+assert(/const broke = damageProp\(dprop, w\.dmg\*dmgMul, hp, dir, power, NET\.myId\b/.test(src), 'shots credit the shooter as destroyer');
 assert(/exp:obj\.userData\.explosive\?1:0, br:obj\.userData\.blastRadius\|\|7/.test(src), 'break message carries the explosive flag + radius');
 assert(/if\(msg\.exp\)\{ explodeAt\(ctr\.clone\(\), msg\.br\|\|7, 0, null\); \}/.test(src), 'clients render the blast on break');
 
