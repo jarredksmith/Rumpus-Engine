@@ -79,8 +79,21 @@ assert(/if\(!_newLevelPending && !_foreignLevel && _autoSaveOn && _levelDirty\) 
 assert(/const _ok = saveLevel\(\); if\(_ok\) _foreignLevel = false;/.test(src),
   'an explicit Save adopts the level as yours (Ctrl+S clicks the same button)');
 // the five entry points
-assert(/markForeignLevel\('a shared level'\); restoreLevel\(lvl\);/.test(src), 'entry 1: a #lvl= share link');
-assert(/markForeignLevel\('"'\+slug\+'"'\); restoreLevel\(lvl\); loaded=true;/.test(src), 'entry 2: a ?game= URL');
+// build 1462 put the campaign adopter BETWEEN the mark and the restore at both URL entry points. What
+// these two have always meant is an ORDER — mark it foreign, then load it — so they assert that rather
+// than quoting two statements that happened to be adjacent (the neighbourhood trap, build 1422).
+{
+  const i = src.indexOf("markForeignLevel('a shared level')");
+  assert(i > 0, 'entry 1: a #lvl= share link marks the level foreign');
+  const blk = src.slice(i, i + 600);
+  assert(/restoreLevel\(lvl\);/.test(blk), '...and then restores it');
+}
+{
+  const i = src.indexOf("markForeignLevel('\"'+slug+'\"')");
+  assert(i > 0, 'entry 2: a ?game= URL marks the level foreign');
+  const blk = src.slice(i, i + 800);
+  assert(/restoreLevel\(lvl\); loaded=true;/.test(blk), '...and then restores it');
+}
 assert(/markForeignLevel\('"'\+\(entry\.name\|\|file\)\+'"'\);   \/\/ build 1254: a gallery level never autosaves over yours/.test(src), 'entry 3: the community gallery (Play AND Open in editor)');
 assert(/markForeignLevel\('an imported level'\);/.test(src), 'entry 4: file import (one explicit Save adopts your own backup)');
 assert(/markForeignLevel\('an example project'\);/.test(src), 'entry 5: help-modal example projects');

@@ -92,7 +92,7 @@ const src = gameSource();
 {
   assert(/\['showprop','Show props'\],\['hideprop','Hide props'\],\['moveprop','Move props'\],\['delprop','Destroy props'\]/.test(src),
     'the Do node offers all four');
-  assert(/'unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop'\]\]/.test(src), 'the tag field appears for them');
+  assert(/'unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop'[^\]]*\]\]/.test(src), 'the tag field appears for them');
   assert(/'teleport','command','moveprop','spawnprop','pushprop'/.test(src), 'and the place field for move (and spawnprop since 1216, pushprop since 1258, the area verbs since 1288)');
   assert(/if\(o && o\.userData && o\.userData\._pvHidden && typeof _pvApplyOne==='function'\) _pvApplyOne\(o, 'show', null\);/.test(src),
     'deploy un-hides everything — hide is MATCH state, not a level edit');

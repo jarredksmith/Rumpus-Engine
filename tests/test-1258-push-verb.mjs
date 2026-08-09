@@ -98,7 +98,7 @@ const at = (x, z) => ({ x, y: 0, z });
 
 // --- wiring pins ------------------------------------------------------------------------------------
 assert(/\['pushprop','Push props'\]/.test(src), 'the verb is offered in the Do-action dropdown');
-assert(/'moveprop','delprop','resetprop','pushprop'\]\]/.test(src), 'the tag field appears for it');
+assert(/'moveprop','delprop','resetprop','pushprop'[^\]]*\]\]/.test(src), 'the tag field appears for it');
 assert(/'moveprop','spawnprop','pushprop'/.test(src), 'so does the place field (the origin it pushes away from)');
 assert(/ifv:\['verb',\['damage','heal','pushprop'\]\]/.test(src), 'and the amount field (shared with damage/heal)');
 assert(/'moveprop','delprop','pushprop','resetprop'\]\);/.test(src), 'a missing tag is reported like every other tag verb (_LG_TAG_VERBS)');

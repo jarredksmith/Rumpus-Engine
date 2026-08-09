@@ -1646,6 +1646,130 @@ value exactly.
 engine HOLDS, not what you asked it to hold. And #1/#3 are build 1124's rule for the third time in this
 session — know what is in the frame before attributing anything to it.
 
+## A campaign could not be shared (build 1462)
+
+A campaign lived in **localStorage**. It could be exported to a file and nothing else — no share link, no
+`/game/` page, no community entry — so a creator who split a gauntlet into five rooms, which is exactly
+what build 1394's doorway invites, **could not ship it at all**. Every publishing path in the engine
+serializes ONE level.
+
+### The server change was the obvious fix and the wrong one
+
+`publish.php` is deployed by hand to a cPanel host, so a payload the server has to learn about strands
+every creator until that upload happens. So a shared campaign is **ONE LEVEL — its first room — carrying
+the rest** in `level.campaign`. The server's own validator asks for `props`/`world`, which the first room
+has, so it accepts the payload **unchanged and no upload is needed for any of this**.
+
+**Room 1 is in the file twice, and that duplication IS the compatibility story:** a client predating this
+build finds a perfectly ordinary level and plays room 1, instead of a payload it cannot read. Gzip eats
+it almost entirely — measured on the stock level:
+
+```
+rooms      json      code    ratio
+    1    28,871    4,944     5.8x
+    3    57,719    5,367    10.8x
+    8   129,839    6,299    20.6x
+   20   302,938    8,299    36.5x
+```
+
+**The ceiling is the SERVER's**, and it binds on the decoded JSON rather than the code: `COMM_LIMITS['json']`
+is 500,000, so ~6 rooms of substantial content. `CAMPAIGN_JSON_CAP` states it once and `test-1462` reads
+the number back out of `_community_lib.php`, so the two cannot drift — a client that guessed low would
+refuse payloads the server would take, and one that guessed high would let the upload fail with the
+server's own wording instead of the creator's byte count.
+
+### Adoption is build 1254's rule one tier up
+
+A campaign that arrived from a link must never quietly overwrite the one the visitor built. All ten
+`saveCampaign()` writers are explicit gestures in the panel — nothing autosaves — so the guard lives
+**inside `saveCampaign` itself**, where no call site has to remember it, and the panel says so with an
+explicit *Keep this campaign* behind a confirm. Without the banner every button in that panel appears
+to do nothing.
+
+Measured live through the real codec, with the visitor's own two-level campaign as the control:
+
+```
+built      room 1 IS the outer body (10 props) · carries [Room 1, Room 2, Room 3] · 39,795 json / 4,644 code
+adopted    took · foreign · [Room 1, Room 2, Room 3] with 10/15/20 props
+           saveCampaign() -> false, and localStorage BYTE-IDENTICAL
+control    a plain level adopts NOTHING; so do a one-room list, an empty list, junk and null
+adopt      flag cleared -> saved -> read back
+cap        12 x 60 KB rooms -> 720,443 bytes, refused BY THE CLIENT with its size
+```
+
+**`restoreLevel` deliberately does NOT adopt**, and neither does `loadLevelFromNet`: they run per ROOM
+during a campaign (`_campaignLoad` uses the net loader), so adopting there would reinstall the campaign on
+every transition. The three arrival paths — `#lvl=`, `?game=`, the community gallery — adopt, and the test
+asserts the adopter has exactly those three call sites.
+
+**`_uiDialog`, not `uiConfirm`, in the publish flow.** `uiConfirm(msg, onYes, yesLabel)` has no callback on
+Cancel, and this one *awaits an answer* — a cancel that never resolves would hang the publish flow with no
+way out. The decline is a labelled choice (*Just this level*), because publishing one room of a campaign on
+purpose is a real thing to want.
+
+**Three pins moved, and all three were the neighbourhood trap** (build 1422): test-34's two and test-1254's
+two quoted `markForeignLevel(...); restoreLevel(...)` as *adjacent statements*, and this build put the
+adopter between them with every part of what they meant still true. They assert the ORDER now.
+
+## Eight doors, one tag, one counter each (build 1461 — feature audit CRITICAL)
+
+The graph had no **per-instance state**. Every variable was ONE number under ONE global name, so eight
+doors each needing their own three-hit counter meant eight variables and eight branch chains inside a
+200-node budget — and a tycoon's per-building upgrade level, a tower-defence's per-tower rank or a shop's
+twelve items were simply **unsayable**.
+
+The value lives on the prop (`userData._lv`) and is **MATCH state, not level data**: `logicStart` clears
+it and no serializer writes it, which is build 1170's rule — *a runtime verb must not edit the level*.
+Verified live rather than assumed: after setting a value on a door, `serializeLevel()` carries no `_lv`
+and no `42`.
+
+### `#self` is the whole feature
+
+A tag names a **SET** here (build 1299), so `setpropvar` on a tag writes every prop carrying it — which is
+right for *"reset all the plates"* and useless for a counter. `#self` resolves to `_lgCtx.prop`, the prop
+whose own signal is firing, and it **survives an `emit`** because `logicEvent` does not reset the context
+(build 1397). So eight doors share ONE tag, ONE graph and ONE node pair, and each keeps its own count.
+
+Measured live through the real chain — a real `damaged` signal → `emit` → `On event` → `Do setpropvar
+#self` → `Read propvar #self` — with the other seven doors as the control:
+
+```
+base                 [0,0,0,0,0,0,0,0]
+door 3, three hits   [0,0,0,3,0,0,0,0]      <- a #self that resolved the TAG would move all eight
+door 6, one hit      [0,0,0,3,0,0,1,0]      <- a context that died at the emit would move none
+the read node        lastHits 1             <- door 6's own value, two nodes downstream
+tag write, set 0     [0,0,0,0,0,0,0,0]      <- and a TAG still reaches the whole set at once
+logicStart           [0,0,0,0,0,0,0,0], residue 0
+serializeLevel       no `_lv`, no `42`
+```
+
+**A WRITE is the whole set; a READ takes the FIRST.** That asymmetry is build 1394/1412's rule and the two
+halves live 1,300 lines apart, so `test-1461` asserts both ends: a read that resolved a set would have to
+invent a rule for which member wins, and *one place* is the only answer that is never surprising.
+
+### Four guards, each of which is a defect the other way
+
+- **`#self` outside an event resolves NOBODY, never everybody.** The fail-closed direction: a graph that
+  silently wrote every prop in the level because a context was missing is unrecoverable.
+- **Both misses are REPORTED by name** (build 1214's channel) — *"targets the event's own prop, but this
+  event carries none — use a tag, or fire it from a prop signal"*, and the tag form names the tag that
+  missed. A value that reads 0 forever looks exactly like a value that is 0.
+- **The name is capped at `LG_PV_MAX` before it indexes an object**, because it is level-authored text
+  (build 1325), and `hasOwnProperty` guards the lookup — a plain object inherits `constructor` (build 1271).
+- **NaN and Infinity are refused at the WRITE** (build 1169: one NaN poisons every later compare).
+
+### The wire, not its ends
+
+Build 1277 found six verbs that had shipped with both ends pinned and nothing in between, so `test-1461`
+walks the router chain, the `SIG_KEYS` short keys (`pvn`/`pvv`/`pvop` — build 1406's fourteen-of-seventeen
+lesson), both node parameter tables and the signal editor's own row. The probe fires an event node rather
+than calling the handler.
+
+**One pin-writing note, for the tenth time:** the count of `_lv` references in the engine matched 6 against
+5 real ones — the sixth was **this build's own design comment naming the field in prose**. The count is
+taken against a comment-stripped source now. Seven whole-list pins moved (1033, 1170, 1258, 1277, 1352,
+1391, 1412), every one converted from a quoted list to a membership assertion.
+
 ## The macro layer, and the frames that were judged without a texture (build 1382)
 
 A cold rendering critic scored the engine **3/10 vs AAA** and its blind verdict named ONE tell: *"regular,

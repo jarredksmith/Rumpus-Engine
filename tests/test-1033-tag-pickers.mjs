@@ -1,3 +1,5 @@
+// build 1461: a pin that quotes a WHOLE LIST is a pin against the list, not against what it says
+// (builds 519, 928, 1412). `setpropvar` legitimately joined it. Assert MEMBERSHIP.
 // (build 1033) TAG & EVENT PICKERS — the Do-action node's tag field and the On event /
 // Send event name fields are combo boxes: a dropdown of every tag props/lights already carry
 // (with counts) and every logic event name declared anywhere, while typing a brand-new name
@@ -36,7 +38,7 @@ const evts = env.events();
 eq(evts.join(','), 'platePressed,roundStart', 'event names from prop signals + graph nodes, deduped and sorted');
 
 // ---- wiring ----
-assert(/\{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:\['verb',\['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop'\]\]\}/.test(src),   // build 1170: the prop lifecycle verbs take a tag too
+assert(/\{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:\['verb',\[[^\]]*'pushprop'[^\]]*\]\]/.test(src),   // build 1170: the prop lifecycle verbs take a tag too
   'the Do-action tag field opts into the tag list (and build 1073 hides it for the verbs that take a place instead)');
 eq((src.match(/\{k:'name',l:'name',w:86,listId:'lgEvtList'\}/g)||[]).length, 2, 'On event AND Send event name fields opt into the event list');
 assert(/if\(pm\.listId\) inp\.setAttribute\('list', pm\.listId\);/.test(src), 'the param builder wires the datalist');

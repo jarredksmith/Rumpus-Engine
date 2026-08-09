@@ -16,7 +16,9 @@ const src = gameSource();
 // Build 1277 found six verbs that shipped in the dropdown and never reached a handler, because the
 // signal router gates on a hand-kept list. This build committed that defect and the probe caught it.
 {
-  assert(/\|\|s\.do==='view'\|\|s\.do==='marker'\)\{/.test(src),
+  // build 1461: this pinned `marker` as the LAST verb in the router chain, so the next verb to join it
+  // broke an assertion whose intent — that the router forwards `marker` — was still true. Membership.
+  assert(/s\.do==='marker'/.test((src.match(/if\(s\.do==='spawn'[\s\S]{0,900}?\)\{/) || [''])[0]),
     'the signal router forwards `marker` to the world handler — build 1277: the WIRE, not the ends. ' +
     'Without this the verb is in the dropdown, in the node, serialized, and completely inert');
   assert(/\['marker','Objective marker'\]/.test(src), 'the Do node offers it');
