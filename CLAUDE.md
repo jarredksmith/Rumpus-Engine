@@ -1940,6 +1940,79 @@ arriving for reviewers: *a critic cannot silently review a build that is not in 
 reason it did not poison the results is that they were told to state what they could not verify, and did.
 Every finding acted on was re-verified against the recovered tree first.
 
+## The gunner fired on the frame its cooldown expired (build 1448)
+
+A melee enemy has wound up before it swings since build **627** (320 ms), audible since **1283** and visible
+on a capsule since **1367**; a charger since **635**. A gunner had nothing — `fireEnemyShot` ran on the exact
+frame `shootCd` reached zero, so stepping out of cover meant being hit before anything on screen or in the
+mix had said a shot was coming.
+
+**Build 1371 covered the first acquisition and nothing after it.** That build floors `shootCd` to 0.35–0.60 s
+on the AWARE rising edge — a beat when an enemy first notices you. In an ongoing firefight every later round
+was still instant, which is most of the shots a player takes.
+
+### Where the cooldown is charged is the whole build
+
+`en.shootCd = en.fireCd` is spent at the **wind-up**, not at the shot. Spend it at the shot and the cycle
+becomes `fireCd + aimMs` — every ranged enemy in every level ever authored silently loses fire rate, a
+stealth nerf wearing a feature's name. Charged at the wind-up, the cycle is exactly `fireCd` and only the
+FIRST round after acquisition arrives later than it used to. Measured on a real gunner: the gaps between
+rounds are **identical** to the control's.
+
+### The re-check IS the counterplay
+
+Everything is re-tested when the wind-up completes — sight, range, height, a fresh `segmentBlocked` — so
+ducking behind cover during the tell means the round never comes. And the cooldown **stays spent**: the enemy
+committed and the player beat it, so peeking is not free either. Build 1209's heavy-hit branch clears
+`_aimT` beside the melee and lunge ones, which is what finally makes suppressing fire mean something.
+
+Three more decisions:
+- **260 ms, not melee's 320.** A swing is a body committing its whole mass; a shot is a weapon coming up, at
+  a range where the player already has distance to react.
+- **Per-TYPE (`aimMs`)**, beside `fireCd`/`burst`/`projSpeed`/`standoff` — and tested for `!= null`, not
+  falsiness, so an authored **0 is exactly the pre-1448 instant shot** rather than silently meaning "default".
+- **A burst is ONE commitment.** Rounds 2..n come from the `_burstN` branch above the gate, so they are not
+  each telegraphed — one tell, then the stream.
+
+The pulse rides build 1367's own `_telegraphFrac` rather than growing a second visual language, measured
+against its **own** window (260 ms read against melee's 320 would look half-finished the moment it started),
+and `SFX.rangedWind` is thinner and higher than the melee tell so a player under fire from both can tell them
+apart.
+
+### Measured live, on the frame rig, with the pre-1448 engine as the control
+
+```
+                     shots   winds   first shot   lead     gaps
+aimMs 0 (control)      2       0        483 ms      —      [100]
+aimMs 260              2       4        900 ms    267 ms   [100]
+aimMs 800              2       4       1483 ms    816 ms   [100]
+cover during the tell  0       1          —         —      cooldown still spent
+```
+
+**The real clock cannot measure this and the first run proved it.** SwiftShader renders ~1.5 fps here, so a
+260 ms window opens and closes inside one frame — the tell and the shot were logged at the same instant, and
+the control fired nothing at all in 3.6 s. Build 1406's `__drive` rig with its virtual clock is the only
+instrument that can see a sub-frame window.
+
+**Two more probe faults, both the same rule.** `spawnEnemy` PUSHES and returns nothing (read `enemies[len-1]`);
+and `en._see` is recomputed from a real raycast every frame, so writing it from outside is overwritten before
+the fire gate reads it — the abort check reported failing until cover became **real cover**, a wall dropped
+between them on the frame the wind-up appears. A fixed frame number could not work either: acquisition takes
+as long as the AI takes, and the first attempt dropped the wall before any wind-up had started (`winds: 0`,
+which measures nothing).
+
+### The regression the suite caught, and it is a recorded trap
+
+My edit anchor was `..., shootCd: 0` — which matched the **prefix** of `shootCd: 0.4 + Math.random()*0.8`,
+so the scripted edit's count assert passed and it silently truncated build 1371's spawn stagger to zero,
+making every gunner in a wave fire in unison. `test-1371` failed on it. This file already records the trap
+under build 1400 (*a short name in a source pin is a substring of everything that ends with it*) — this is
+the same thing at the other end, in an EDIT anchor rather than a test pin, where the count assert gives a
+false sense of safety. **An anchor must end on a boundary, not mid-value.**
+
+One pin moved (843), and its intent is now stronger: it counted **two** budgeted fire-gate casts; the
+wind-up's re-check is a third, and what that assertion always meant is that *every* one of them is budgeted.
+
 ## The game had no sense of touch (build 1447)
 
 `grep -c "vibrat|hapticActuators|vibrationActuator"` returned **2**, and both were prose about enemy

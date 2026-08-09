@@ -6835,6 +6835,9 @@ const SFX = {
   // which is the whole point for something behind you. They RISE in pitch through the wind-up because a
   // rising tell reads as "about to happen" without needing to be loud.
   meleeWind(at){ tone({freq:150, type:'sawtooth', dur:0.26, vol:0.075, slideTo:330, at}); },
+  /* build 1448: the ranged tell. Thinner and higher than the melee one and with no body to it — a weapon
+     coming up rather than a mass winding up — so a player under fire from both can tell them apart. */
+  rangedWind(at){ tone({freq:420, type:'triangle', dur:0.22, vol:0.055, slideTo:900, at}); },
   lungeWind(at){ tone({freq:110, type:'sawtooth', dur:0.42, vol:0.10, slideTo:420, at});
     noise({dur:0.18, vol:0.05, filterFreq:400, type:'lowpass', at}); },
   meleeSwing(at){ noise({dur:0.13, vol:0.11, filterFreq:1200, type:'bandpass', at}); tone({freq:220, type:'square', dur:0.06, vol:0.05, slideTo:80, at}); },
@@ -23796,6 +23799,7 @@ function spawnEnemy(spawn){
   const _hp = Math.round(_eff.hp * _wr);
   const e = { id: nextEnemyId++, mesh, hp:_hp, maxHp:_hp, speed: _eff.speedMin + Math.random()*(_eff.speedMax-_eff.speedMin), dmg:_eff.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
     ranged: !!ty.ranged, standoff: ty.standoff||11, fireCd: ty.fireCd||1.5, projSpeed: ty.projSpeed||24, burst: ty.burst||1, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
+    aimMs: (ty.aimMs != null) ? ty.aimMs : RANGED_AIM_MS,   // build 1448: the wind-up before the round leaves; 0 is the pre-1448 instant shot.4 + Math.random()*0.8,
     exploder: !!ty.exploder, blastR: ty.blastR||6, blastDmg: ty.blastDmg||40,   // build 628: Sapper detonation
     strafe: !!ty.strafe,   // build 633: ranged enemy strafes while holding standoff
     cover: !!ty.cover, bravery: ty.cover ? (0.30 + Math.random()*0.15) : 0, flankSide: Math.random()<0.5?1:-1,   // build 1189: the bot brain's cover-break + flank, per type
@@ -27399,6 +27403,17 @@ function botHurt(b, dmg, sx, sz){
   return false;
 }
 let matchWarmup = 0;
+/* build 1448: the ranged half of build 627's telegraph. A melee enemy has wound up before it swings since
+   627, and a charger since 635 — but a GUNNER fired on the exact frame its cooldown expired, so a player who
+   stepped out of cover was hit before anything on screen or in the mix had told them a shot was coming.
+   Build 1371 floored `shootCd` on the AWARE rising edge, which covers the first acquisition and nothing
+   after it: in an ongoing firefight every subsequent round was still instant.
+
+   260 ms rather than melee's 320. A swing is a body committing its whole mass; a shot is a weapon coming up,
+   and it happens at range where the player is already at a distance to react. It is per-TYPE (`aimMs`) beside
+   fireCd/burst/projSpeed/standoff, so a creator can lengthen it for a sniper or set 0 to get exactly the
+   pre-1448 instant fire back. */
+const RANGED_AIM_MS = 260;
 const ENEMY_MELEE_WINDUP_MS = 320;   // build 627: telegraph window — a melee enemy winds up, then strikes; back out of reach during it and the swing whiffs
 let _warmupBroadcast = false;   // build 624: host has sent the live {t:'warmup'} count to clients this match (sent once)
 let _clientWarmupHold = false;  // build 624: client is frozen on "GET READY" until the host's synced count arrives
@@ -34536,7 +34551,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1447 · 2026-08-09';
+const BUILD_VERSION = 'build 1448 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37453,6 +37468,9 @@ function enemyHurt(en, dmg, sx, sz, byEnemy){   /* build 1355: byEnemy — anoth
   en._slowT=Math.max(en._slowT||0, 0.15);
   if(frac>=0.25){                                         // a heavy hit breaks a commitment
     if(en._windupT){ en._windupT=0; en.cooldown=Math.max(en.cooldown||0,0.5); }
+    /* build 1448: and a gunner's aim. The cooldown was charged when the wind-up STARTED, so breaking it
+       costs the shot outright — which is what makes suppressing fire mean something. */
+    if(en._aimT){ en._aimT=0; en._aimTgt=null; }
     if(en._lungeWind){ en._lungeWind=0; en._lungePending=false; en.cooldown=Math.max(en.cooldown||0,1.0); }
   }
   if(sx!=null && now>(en._evtCd||0) && en.mesh && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
@@ -38150,6 +38168,10 @@ function _telegraphFrac(en, nowMs){
      strike zeroes _windupT, the dash consumes _lungePending. Every exit reads -1 on the next frame,
      so the restore follows the STATE and never a timer of its own. */
   if(en._windupT && nowMs < en._windupT) return 1 - (en._windupT - nowMs)/ENEMY_MELEE_WINDUP_MS;
+  /* build 1448: the ranged wind-up is the same kind of thing — a commitment the player can act on — so it
+     rides the same pulse rather than growing a second visual language. Its own window, because a 260 ms
+     tell measured against melee's 320 would read as already half-finished the moment it started. */
+  if(en._aimT && nowMs < en._aimT) return 1 - (en._aimT - nowMs)/(en.aimMs || RANGED_AIM_MS);
   if(en._lungePending && en._lungeWind > nowMs) return 1 - (en._lungeWind - nowMs)/(en.lungeWind||520);
   return -1;
 }
@@ -41640,13 +41662,39 @@ function _enStep(en, tvx, tvz, dt){
             if(en._burstN<=0) en._burstTgt=null;
           }
         }
+        /* build 1448: resolve a wound-up shot. Everything is RE-CHECKED here, and the re-check IS the
+           counterplay: duck behind cover during the tell and the round never comes. The cooldown was spent
+           at the START of the wind-up (below), so an aborted shot still costs the enemy its full cycle —
+           the enemy committed, and the player beat it. */
+        else if(en._aimT){
+          if(nowMs >= en._aimT){
+            const tg = en._aimTgt;
+            en._aimT = 0; en._aimTgt = null;
+            if(tg && tg.pos && !editorOpen && en._see && en._chase
+               && Math.abs((tg.pos.y - EYE) - en.mesh.position.y) < 2.6
+               && _losBudget>0
+               && (_losBudget--, !segmentBlocked(en.mesh.position.x, en.mesh.position.z, tg.pos.x, tg.pos.z, (en.mesh.position.y + (tg.pos.y!=null?tg.pos.y:en.mesh.position.y)) * 0.5))){
+              fireEnemyShot(en, tg, (en.burst>1)?0.02:0);
+              en._burstN = Math.max(0,(en.burst||1)-1); en._burstT = en.burstGap; en._burstTgt = (en._burstN>0)?tg:null;
+            }
+          }
+        }
         else if(en._chase && en._see && en.shootCd<=0 && !editorOpen && en._dist < en.standoff*1.7
            && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.6   // roughly the same level — no shooting through a floor
            && _losBudget>0   // build 843: the fire-gate cast draws from the LOS budget too — it was the one unbudgeted raycast left in the wave loop
            && (_losBudget--, !segmentBlocked(en.mesh.position.x, en.mesh.position.z, near.pos.x, near.pos.z, (en.mesh.position.y + (near.pos.y!=null?near.pos.y:en.mesh.position.y)) * 0.5))){
-          fireEnemyShot(en, near, (en.burst>1)?0.02:0);   // round 1 of the burst (or the whole shot for single-fire types)
-          en._burstN = Math.max(0,(en.burst||1)-1); en._burstT = en.burstGap; en._burstTgt = (en._burstN>0)?near:null;
-          en.shootCd = en.fireCd; en._attackT = nowMs + (en.burst>1 ? 450 + en.burst*en.burstGap*1000 : 450);   // attack anim spans the whole burst
+          /* The COOLDOWN IS CHARGED HERE, at the wind-up, not at the shot — so the cycle stays exactly
+             `fireCd` and no authored fire rate is silently slowed by the length of its own tell. Only the
+             first round after acquisition arrives later than it used to. */
+          en.shootCd = en.fireCd; en._attackT = nowMs + (en.burst>1 ? 450 + en.burst*en.burstGap*1000 : 450);   // attack anim spans the whole burst — and it starts at the wind-up, so a modelled gunner visibly raises its weapon
+          const _aim = en.aimMs;
+          if(_aim > 0){
+            en._aimT = nowMs + _aim; en._aimTgt = near;
+            if(typeof SFX!=='undefined' && SFX.rangedWind) SFX.rangedWind(en.mesh.position);   // positional, so it tells you WHERE from as well as that it is coming
+          } else {
+            fireEnemyShot(en, near, (en.burst>1)?0.02:0);   // an authored 0 is the pre-1448 instant shot, exactly
+            en._burstN = Math.max(0,(en.burst||1)-1); en._burstT = en.burstGap; en._burstTgt = (en._burstN>0)?near:null;
+          }
         }
       } else if(en._chase && en._dist < (en._reach || 2.4) && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.6 && en.cooldown<=0 && !editorOpen && !en._windupT){   // build 539: a chasing melee enemy in reach AND at roughly the same height attacks on PROXIMITY (no LOS gate — at melee range the sightline is moot, and requiring it meant they only swung when literally touching on a cover-heavy map)
         en.cooldown = 0.8; en._attackT = nowMs + 550; en._windupT = nowMs + ENEMY_MELEE_WINDUP_MS;   // build 627: wind up now; the hit lands at the end of the wind-up, not on contact
