@@ -19,8 +19,14 @@ assert(/this\.state\.sx=o\.scale\.x; this\.state\.sy=o\.scale\.y; this\.state\.s
 assert(/ps\.sx=v\.x; ps\.sy=v\.y; ps\.sz=v\.z;/.test(src), 'setSelScale writes per-axis scale state');
 
 // gizmo drag-end pushes the result back into the sliders (mouse + touch)
+// This asked for TWO copies of the sync, one per input — build 1280's own lesson, that a test which counts
+// copies of a thing is a test of the copying: it would have gone green against two copies that had drifted
+// apart. Build 1444 gave both inputs ONE press chain, so the property is now asserted directly.
 const dragEnd = (src.match(/if\(_wg\)\{ const tg=editorTargets\[editorActive\]; if\(tg && typeof tg\.sync==='function'\) tg\.sync\(\); if\(typeof updateFieldDisplays==='function'\) updateFieldDisplays\(\); \}/g)||[]).length;
-assert(dragEnd >= 2, 'gizmo drag-end re-syncs fields on both mouse and touch (found '+dragEnd+')');
+assert(dragEnd === 1, 'gizmo drag-end re-syncs the fields, in exactly one place (found '+dragEnd+')');
+assert(/function _edPressUp\(e\)\{[\s\S]*?const _wg=gizmoDrag;/.test(src), '...which is _edPressUp');
+assert(/if\(e\.button===0\)\{ _edPressUp\(e\);/.test(src), '...reached by the mouse');
+assert(/if\(typeof _edPressUp==='function'\) _edPressUp\(e\);/.test(src), '...and by touch');
 
 // proportional toggle: dragging one scale slider scales all three axes (ratio-preserving) when ON
 assert(/if\(isScale && scaleProportional && editorActive==='props'\)/.test(src), 'scale sliders respect the proportional toggle');

@@ -32,7 +32,7 @@ assert(h[idx(center, farCol)] === 0, 'cells beyond the radius stay flat');
 
 // wiring assertions: brush is wired into the editor pointer flow + UI
 assert(/if\(terrainBrush\.on && terrainPointUnderPointer\(e\)\)\{ pushUndoSnapshot\(\); _brushStroke\(e\); _brushing = true;/.test(src), 'mousedown does not start a brush stroke');
-assert(/if\(_brushing\)\{ _brushStroke\(e\); editorDragMoved = true; return; \}/.test(src), 'mousemove does not continue the stroke');
+assert(/if\(_brushing\)\{ _brushStroke\(e\); editorDragMoved = true; return true; \}/.test(src), 'mousemove does not continue the stroke');
 assert(/if\(_brushing\)\{ _brushing = false;/.test(src), 'mouseup does not end the stroke');
 assert(/Terrain brush \\u2014 sculpt \/ paint \/ scatter \(drag the floor \\u00b7 B toggles\)/.test(src), 'brush UI toggle missing');   // build 882: renamed again when the B hotkey landed
 assert(/raycaster\.intersectObject\(floor, false\)/.test(src), 'terrainPointUnderPointer must raycast the floor mesh');

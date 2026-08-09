@@ -440,7 +440,7 @@ Per-tab numeric fields (slider + number; typed values may exceed slider range). 
 
 ## Zones, Terrain, Prefabs
 
-See World & Scene Settings for the eight zone tools and the terrain sculpt/paint/scatter brush. **Prefabs** (Build mode): **prefab name + Save selection** (captures the selection as a reusable component — signals, animations, physics, materials; the library follows you across levels; levels carry the prefabs they use) · **Place** (arrives grouped) · **Update** (rewrites the prefab from the selected instance — every other copy follows, keeping local overrides) · **Detach** · **×** remove from library.
+See World & Scene Settings for the eight zone tools and the terrain sculpt/paint/scatter brush. **On a tablet** (build 1444) a one-finger press runs the same chain a mouse does — terrain brush, gizmo handle, then the top-view marquee — anywhere except the movement stick at the bottom-left; two fingers still pan, orbit and pinch-zoom (build 1312). **Prefabs** (Build mode): **prefab name + Save selection** (captures the selection as a reusable component — signals, animations, physics, materials; the library follows you across levels; levels carry the prefabs they use) · **Place** (arrives grouped) · **Update** (rewrites the prefab from the selected instance — every other copy follows, keeping local overrides) · **Detach** · **×** remove from library.
 
 ## Selection, outliner, clipboard, undo, autosave
 

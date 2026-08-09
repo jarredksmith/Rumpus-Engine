@@ -2215,6 +2215,75 @@ better than being in a batch.
 draw calls and triangles are the only trustworthy instruments; a creator's own machine is the only place
 the wall clock means anything, which is what the perf HUD's `other` / `idle` split (1426) is for.
 
+## A finger and a mouse run the same press chain (build 1444)
+
+The editor audit reported that *"single-finger drag does nothing on touch"*. **Half of that was already
+false, and checking cost nothing:** `#tLook`'s editor branch has called `tryGizmoGrab` on press and
+`gizmoDragMove` on move for a long time, so dragging a gizmo handle and tap-to-select both work on a tablet
+today. What was genuinely unreachable is everything ELSE a press can start — the **terrain brush** and the
+**marquee** — because that branch knew about the gizmo and nothing else.
+
+**This is the second time an audit finding about touch has been partly wrong in the same way.** Build 1312's
+*"taps on the stick half do nothing"* turned out to be build 165's deliberate decision, caught by a test that
+was already asserting it. Read the handler before believing the report.
+
+### The fix is not a second copy of the priority order
+
+Two implementations of one behaviour is the defect this file records more than any other (1162, 1252, 1266,
+1280, 1400), and a **priority chain** is exactly the shape that drifts: the day somebody adds a fifth thing a
+press can claim, one input gets it. So `_edPressDown` / `_edPressMove` / `_edPressUp` **is** the chain —
+brush, then gizmo, then Alt-duplicate, then marquee — and the mouse and the pad each ask it first, then do
+their own input-specific thing with whatever is left (a look-drag, a pan, an orbit).
+
+`altKey` is false on every touch event, so that branch is simply never taken there — no gesture had to be
+invented for it, and nothing about the mouse changed.
+
+### The layout claim was wrong, and measuring is what caught it
+
+The first draft of this entry said the left 42% of a touch screen stays the movement stick, so a marquee
+cannot start there. **`#tLook` is `left:42%` IN PLAY only** — `body.editing #tLook { left:0; right:330px; }`
+widens it to everything except the editor panel, and `#tStick` is later in the DOM with no z-index, so it
+takes back its own 132 px circle. Measured: at a 900×700 viewport the pad reads `[0, 0, 570, 700]`.
+
+So on a tablet a press starts an edit **anywhere except that one circle at the bottom-left**, which stays the
+stick because it is a touch creator's only way to fly the camera. Far better than what was almost written
+down, and the difference was one `getBoundingClientRect`.
+
+### Measured with real PointerEvents at the real pad
+
+```
+top view, drag across props    0 -> 34 props selected, marquee closed cleanly
+CONTROL: editor CLOSED         0 selected, no marquee            <- the same gesture, doing nothing
+brush OFF, same drag           terrain unchanged
+brush ON, same drag            terrain 0 -> 1.773 at world (33.94, 0)
+gizmo grab                     still reached — the half the audit got wrong
+a clean tap                    still dispatches the select click
+```
+
+### Three instrument faults, and every one produced a null that looked like a defect
+
+- **`#touchUI` is `display:none`** until the frame manager shows it, and that wants `gameOn`. The pad
+  measured a zero rect, so dispatching straight at the element exercised the handlers but proved nothing
+  about whether a finger LANDS there.
+- **The top orthographic camera is positioned by the frame loop**, so switching to top view and raycasting
+  in the same synchronous eval casts every ray from `y = 0` and misses the floor. The brush row reported a
+  null world point and honestly measured nothing rather than printing a zero.
+- **And `paused = true` is what kept it at y=0** even after waiting for real frames: `loop()` early-returns
+  past the camera chain while a UI gate is up (build 1371's own note). Pausing for measurement stability was
+  the thing preventing the measurement. Nothing here is perturbed by the sim running — a selection count, a
+  DOM rect and a terrain height at a fixed point — so the probe simply does not pause.
+
+**A backtick inside page code for the eleventh time**, in a comment added after the lint had been run. Build
+1415's rule stands and I broke it again: run `tools/probe/lint.mjs` **after the last edit**, not before the
+first. Build 1389's staleness guard also fired correctly on the next run, because I had edited the source
+comment after staging.
+
+Six pins moved (118, 130, 175, 332, 429, 1377), every intent unchanged. **130's is the one worth reading:**
+it required the gizmo drag-end sync to appear **twice**, once per input — build 1280's own lesson that a test
+which counts copies of a thing is a test of the copying, and it would have gone green against two copies that
+had drifted apart. It now asserts the property directly: the sync exists once, and both inputs provably reach
+it.
+
 ## A prop finally says how hard it was hit (build 1443)
 
 Every enemy damage site has spawned a floating number since build 625 — the shot, the swing, the mounted

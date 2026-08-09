@@ -22498,11 +22498,7 @@ addEventListener('pagehide', ()=>{ try{ if(drivingCar && typeof exitCar==='funct
 document.addEventListener('mousemove', e=>{
   if(radialOpen){ radialMove(e.movementX, e.movementY); return; }
   if(editorOpen){
-    if(typeof _updateBrushRing==='function') _updateBrushRing(e);   // build 877: live brush cursor
-    if(_brushing){ _brushStroke(e); editorDragMoved = true; return; }    // painting the terrain
-    if(gizmoDrag){ gizmoDragMove(e); editorDragMoved = true; return; }   // dragging an axis handle
-    if(_altDupActive){ if(_altDup){ const gp = groundPointUnderPointer(e); if(gp){ _altDup.position.x = gp.x; _altDup.position.z = gp.z; } } editorDragMoved = true; return; }   // Alt-drag: move the fresh duplicate under the cursor
-    if(_marqueeOn){ _marqueeMove(e); editorDragMoved = true; return; }   // build 563: drawing the selection box
+    if(_edPressMove(e)) return;   /* build 1444: brush / gizmo / alt-dup / marquee, in one order both inputs share */
     if(_edOrbit && !editorTopView){ _edOrbitMove(e); return; }   // build 1377: Alt+LMB / MMB orbit about the pivot captured at drag start
     if(editorDragPan && editorTopView){
       const wpp = (2*topZoom)/innerHeight;   // world units per pixel at current zoom
@@ -22549,15 +22545,55 @@ document.addEventListener('mousemove', e=>{
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
   if(drivingCar && mx) drivingCar.userData._lookCd = 0.6;   // build 765: pause the follow-cam recenter while you orbit with the mouse
 });
+/* ---- build 1444: one press chain, so a finger and a mouse cannot disagree -----------------------------
+   The editor audit reported that "single-finger drag does nothing on touch". Half of that was already
+   false and checking cost nothing: the #tLook pad has called tryGizmoGrab on press and gizmoDragMove on
+   move for a long time, so DRAGGING A GIZMO HANDLE and TAP-TO-SELECT both work on a tablet today. What was
+   genuinely unreachable is everything else a press can start — the TERRAIN BRUSH and the MARQUEE — because
+   the pad's editor branch knew about the gizmo and nothing else.
+
+   So the fix is not a second copy of the priority order on the touch path. Two implementations of one
+   behaviour is the defect this file records more than any other (1162, 1252, 1266, 1280, 1400), and a
+   priority chain is exactly the shape that drifts: the day somebody adds a fifth thing a press can claim,
+   one input gets it. `_edPress*` is the chain; the mouse and the pad each ask it first and then do their
+   own input-specific thing with what is left over (a look-drag, a pan, an orbit).
+
+   MEASURED rather than assumed, because the first draft of this comment was wrong: `#tLook` is `left:42%`
+   IN PLAY, but `body.editing #tLook { left:0; right:330px; }` widens it to everything except the editor
+   panel, and `#tStick` is later in the DOM with no z-index, so it takes its own 132 px circle back. So on a
+   tablet a press starts an edit anywhere except that one circle at the bottom-left — which stays the
+   movement stick because it is a touch creator's only way to fly the camera (build 165, which build 1312
+   confirmed by trying to remove it). */
+function _edPressDown(e){
+  if(terrainBrush.on && terrainPointUnderPointer(e)){ pushUndoSnapshot(); _brushStroke(e); _brushing = true; editorDragMoved = true; return 'brush'; }   // sculpt instead of select/look
+  if(tryGizmoGrab(e)){ editorDragMoved = true; return 'gizmo'; }   // grabbing an axis handle (suppresses select)
+  /* altKey is false on every touch event, so this branch is simply never taken there — no gesture has to
+     be invented for it, and nothing about the mouse's behaviour changes. */
+  if(e.altKey){ const o=_pickPropAt(e); if(o){ e.preventDefault(); pushUndoSnapshot(); _dupPropForDrag(o); _altDupActive = true; editorDragMoved = true; return 'altdup'; } }   // Alt+drag = duplicate the prop under the cursor and drag the copy
+  if(editorTopView){ _marqueeStart(e); return 'marquee'; }   // build 563: top-view left-drag = marquee select (pan moved to right/middle-drag)
+  return '';
+}
+function _edPressMove(e){
+  if(typeof _updateBrushRing==='function') _updateBrushRing(e);   // build 877: live brush cursor
+  if(_brushing){ _brushStroke(e); editorDragMoved = true; return true; }    // painting the terrain
+  if(gizmoDrag){ gizmoDragMove(e); editorDragMoved = true; return true; }   // dragging an axis handle
+  if(_altDupActive){ if(_altDup){ const gp = groundPointUnderPointer(e); if(gp){ _altDup.position.x = gp.x; _altDup.position.z = gp.z; } } editorDragMoved = true; return true; }   // Alt-drag: move the fresh duplicate under the cursor
+  if(_marqueeOn){ _marqueeMove(e); editorDragMoved = true; return true; }   // build 563: drawing the selection box
+  return false;
+}
+function _edPressUp(e){
+  if(_marqueeOn){ _marqueeFinish(e); }
+  if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); }
+  if(_brushing){ _brushing = false; editorDragMoved = true; if(terrainBrush.mode==='paint' && typeof _paintCommit==='function') _paintCommit(); if(typeof _scatLast!=='undefined') _scatLast=null; }
+  const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); }
+}
 renderer.domElement.addEventListener('mousedown', e=>{
   if(!editorOpen || e.button!==0) return;
   editorDragMoved = false;
-  if(terrainBrush.on && terrainPointUnderPointer(e)){ pushUndoSnapshot(); _brushStroke(e); _brushing = true; editorDragMoved = true; return; }   // sculpt instead of select/look
-  if(tryGizmoGrab(e)){ editorDragMoved = true; return; }   // grabbing an axis handle (suppresses select)
-  if(e.altKey){ const o=_pickPropAt(e); if(o){ e.preventDefault(); pushUndoSnapshot(); _dupPropForDrag(o); _altDupActive = true; editorDragMoved = true; return; } }   // Alt+drag = duplicate the prop under the cursor and drag the copy
-  if(editorTopView) _marqueeStart(e); else if(!(e.altKey && editorFreeFly && _edOrbitStart(e))) editorDragLook = true;   // build 563: top-view left-drag = marquee select (pan moved to right/middle-drag) · build 1377: Alt+LMB starting on empty space orbits; Alt over a prop stayed the drag-duplicate, claimed above
+  if(_edPressDown(e)) return;
+  if(!(e.altKey && editorFreeFly && _edOrbitStart(e))) editorDragLook = true;   // build 1377: Alt+LMB starting on empty space orbits; Alt over a prop stayed the drag-duplicate, claimed above
 });
-addEventListener('mouseup', e=>{ if(e.button===0){ if(_marqueeOn){ _marqueeFinish(e); } if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); } if(_brushing){ _brushing = false; editorDragMoved = true; if(terrainBrush.mode==='paint' && typeof _paintCommit==='function') _paintCommit(); if(typeof _scatLast!=='undefined') _scatLast=null; } editorDragLook = false; editorDragPan = false; _edOrbit = null; const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } });
+addEventListener('mouseup', e=>{ if(e.button===0){ _edPressUp(e); editorDragLook = false; editorDragPan = false; _edOrbit = null; } });   /* build 1444: the shared chain, then the three drags only a mouse has */
 
 // ---------- build 1377 (editor audit #5, the cheap half): ORBIT in the fly camera ----------
 // Fly-mode drag was a first-person LOOK, so turning to inspect something swung it off screen — every
@@ -34436,7 +34472,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1443 · 2026-08-09';
+const BUILD_VERSION = 'build 1444 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34956,18 +34992,26 @@ addEventListener('contextmenu', e=>{
   let lookId=null, lx=0, ly=0;
   look.addEventListener('pointerdown', e=>{ if(_ctrlPref!=='desktop') isTouch=true; lookId=e.pointerId; lx=e.clientX; ly=e.clientY; try{look.setPointerCapture(e.pointerId);}catch(_){}
     // In the editor a press first tries to grab a gizmo axis handle; otherwise it's a look-drag (or, if it ends without moving, a tap-to-select).
-    if(editorOpen){ editorDragMoved=false; if(typeof tryGizmoGrab==='function' && tryGizmoGrab(e)){ editorDragMoved=true; } else { gizmoDrag=null; } }
+    /* build 1444: the SAME chain the mouse runs, so a press means the same thing under a finger — the
+       terrain brush and the marquee were unreachable on touch until this line, because this branch knew
+       about the gizmo and nothing else. */
+    if(editorOpen){ editorDragMoved=false; if(typeof _edPressDown==='function'){ if(!_edPressDown(e)) gizmoDrag=null; } }
     e.preventDefault(); });
   look.addEventListener('pointermove', e=>{ if(e.pointerId!==lookId) return; const dx=e.clientX-lx, dy=e.clientY-ly;
     if(editorOpen){
-      if(gizmoDrag){ gizmoDragMove(e); editorDragMoved=true; }                 // drag the grabbed handle (move/rotate/scale)
-      else { touchLookDX+=dx; touchLookDY+=dy; if(Math.abs(dx)+Math.abs(dy)>3) editorDragMoved=true; }   // otherwise orbit the fly-cam
+      /* build 1444: brush stroke / gizmo handle / marquee box, in the mouse's own order; anything the
+         chain does not claim is still a look-drag, which is what this pad is for. */
+      if(!(typeof _edPressMove==='function' && _edPressMove(e))){ touchLookDX+=dx; touchLookDY+=dy; if(Math.abs(dx)+Math.abs(dy)>3) editorDragMoved=true; }
       lx=e.clientX; ly=e.clientY; e.preventDefault(); return;
     }
     touchLookDX+=dx; touchLookDY+=dy; lx=e.clientX; ly=e.clientY; e.preventDefault(); });
   const lookEnd=e=>{ if(e.pointerId!==lookId) return; lookId=null;
-    if(editorOpen){ if(!editorDragMoved){ renderer.domElement.dispatchEvent(new MouseEvent('click', { clientX:e.clientX, clientY:e.clientY, bubbles:true })); }   // a clean tap selects the prop/light/spawn under it
-      const _wg=gizmoDrag; gizmoDrag=null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } };
+    if(editorOpen){
+      /* the chain finishes first — a marquee that has just selected thirty props must not then be read as
+         a clean tap that selects the one under the finger */
+      if(typeof _edPressUp==='function') _edPressUp(e);
+      if(!editorDragMoved){ renderer.domElement.dispatchEvent(new MouseEvent('click', { clientX:e.clientX, clientY:e.clientY, bubbles:true })); }   // a clean tap selects the prop/light/spawn under it
+    } };
   look.addEventListener('pointerup', lookEnd); look.addEventListener('pointercancel', lookEnd);
   // helpers for buttons
   const hold=(id,on,off)=>{ const b=document.getElementById(id); if(!b) return;

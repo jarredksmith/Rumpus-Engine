@@ -8,9 +8,14 @@ assert(/let _marqueeOn=false, _marqueeX0=0, _marqueeY0=0, _marqueeEl=null;/.test
 assert(/function _marqueeStart\(e\)\{/.test(src) && /function _marqueeMove\(e\)\{/.test(src) && /function _marqueeFinish\(e\)\{/.test(src), 'marquee start/move/finish helpers');
 
 // wiring: top-view left-drag starts the marquee (not pan); fly still looks
-assert(/if\(editorTopView\) _marqueeStart\(e\); else if\(!\(e\.altKey && editorFreeFly && _edOrbitStart\(e\)\)\) editorDragLook = true;/.test(src), 'top-view left-drag starts the marquee (build 1377: fly-mode Alt+LMB on empty space claims the orbit first)');
+// build 1444 moved the marquee into the shared press chain, so a FINGER starts one too — the same claim,
+// now reached by both inputs. The look/orbit fallback stayed in the mouse handler, where it belongs.
+assert(/if\(editorTopView\)\{ _marqueeStart\(e\); return 'marquee'; \}/.test(src),
+  'top-view left-drag starts the marquee, from the chain both inputs run');
+assert(/if\(_edPressDown\(e\)\) return;\s*\n\s*if\(!\(e\.altKey && editorFreeFly && _edOrbitStart\(e\)\)\) editorDragLook = true;/.test(src),
+  '...and anything the chain does not claim still looks (build 1377: fly-mode Alt+LMB on empty space claims the orbit first)');
 // mousemove updates the box; mouseup finishes it
-assert(/if\(_marqueeOn\)\{ _marqueeMove\(e\); editorDragMoved = true; return; \}/.test(src), 'drag updates the marquee box');
+assert(/if\(_marqueeOn\)\{ _marqueeMove\(e\); editorDragMoved = true; return true; \}/.test(src), 'drag updates the marquee box');
 assert(/if\(_marqueeOn\)\{ _marqueeFinish\(e\); \}/.test(src), 'mouseup finalizes the marquee');
 // pan moved to middle/right drag in top view + context menu suppressed
 assert(/e\.button!==1 && e\.button!==2\)\) return; if\(editorTopView\)\{ editorDragPan=true;/.test(src), 'middle/right-drag pans in top view');
