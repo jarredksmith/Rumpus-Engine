@@ -7,12 +7,15 @@
 // still paying for bloom, fog and the grade. Now `_geoWant` runs the prepass across the top three rungs
 // (soft particles ride it). build 1364: `_aoWant` now rides the SAME rungs at a reduced tap count —
 // the decoupling this test pins became "the sample outlives rung 0"; only rung 3 sheds both.
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- the two gates, evaluated
 {
-  const MAX = +src.match(/const _AO_GEO_MAXSTEP = (\d+);/)[1];
+  // build 1442 made the budget a device-class question rather than a number. This test's whole subject is
+  // the DESKTOP ladder (its rungs are named 100/85/72/66%, which is the fine _PR_STEPS), so it evaluates
+  // the fine branch — and that branch is unchanged, which is the property 1442 had to preserve.
+  const MAX = Function('const IS_COARSE=false; return ' + extractConst('_AO_GEO_MAXSTEP', src) + ';')();
   eq(MAX, 2, 'the prepass survives the top 3 rungs (0/1/2 = 100/85/72% resolution)');
   const geo = (ssao, step) => ssao > 0.001 && step <= MAX && true /* rt + perspective */;
   const ao = (ssao, step) => geo(ssao, step) && ssao > 0.001;   // build 1364: no rung-0 term any more

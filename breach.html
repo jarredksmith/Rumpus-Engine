@@ -8214,7 +8214,29 @@ let _bloomMips=[], _matBloomDown=null, _matBloomUp=null;
 // build 1126: screen-space ambient occlusion + FXAA. _aoRT holds the raw AO term at half
 // resolution, _aoRT2 the horizontally blurred one; the vertical blur lands back in _aoRT.
 let _aoGeoRT=null, _aoRT=null, _aoRT2=null, _matAOGeo=null, _matAO=null, _matAOBlur=null, _matFXAA=null;
-const _AO_GEO_MAXSTEP = 2;   /* build 1218: the G-buffer prepass survives the top 3 quality rungs (100/85/72%) so soft particles/shorelines outlast the common downshift; build 1364: the AO sample rides the same rungs (6 taps below rung 0) — only SSR stays rung-0-only */
+/* Build 1218: the G-buffer prepass survives the top 3 quality rungs (100/85/72%) so soft particles and
+   shorelines outlast the common downshift; build 1364: the AO sample rides the same rungs (6 taps below
+   rung 0) — only SSR stays rung-0-only.
+
+   Build 1441 makes it a DEVICE-CLASS decision, which it never was. The prepass is an extra SCENE RENDER
+   (plus build 1140's viewmodel pass into the same buffer), and it is not a rounding error: measured on the
+   stock level at a pinned rung, the trio costs 58 draw calls on a frame that is 71 without it — it very
+   nearly DOUBLES the frame's draw calls, identically at every rung it survives.
+
+   Every other expensive thing here already asks what device it is on: point shadows are 0 on a coarse
+   pointer (1414), the sun's shadow map is 1024 against 4096 (1346), the environment probe stays sky-only
+   (1186), and the resolution ladder even carries two EXTRA rungs there. This one never did, so a phone paid
+   the largest single item in the post chain across THREE of its five rungs before any relief arrived.
+
+   This is deliberately in tension with 1364, and worth saying so rather than hiding: that build kept AO
+   through the downshift because "the median player sits on rung 1" and losing the grounding cue there was
+   the defect. That argument is about a desktop machine which is coping. A phone that has left rung 0 has
+   already failed to hold its frame rate at full resolution, and an extra scene render is the biggest thing
+   there is to give back. So on a coarse pointer the prepass is rung-0-only: you get the grounding cue while
+   the device can afford it, and it is the FIRST thing to go when it cannot.
+   Soft particles and shorelines fall back to hard edges there, which is build 1183's own designed
+   degradation (AO off = hard edges, never stale depth) rather than a new failure mode. */
+const _AO_GEO_MAXSTEP = IS_COARSE ? 0 : 2;
 // build 1183: SOFT PARTICLES. A flipbook quad slicing through world geometry drew a hard line across the
 // intersection — the classic billboard artifact. The AO G-buffer (build 1126) already holds the scene's
 // view distance at half res, swept clean of everything that doesn't write depth (1152/1158) — including
@@ -34414,7 +34436,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1441 · 2026-08-08';
+const BUILD_VERSION = 'build 1442 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

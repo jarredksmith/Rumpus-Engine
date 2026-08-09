@@ -2215,6 +2215,57 @@ better than being in a batch.
 draw calls and triangles are the only trustworthy instruments; a creator's own machine is the only place
 the wall clock means anything, which is what the perf HUD's `other` / `idle` split (1426) is for.
 
+## The biggest thing in the post chain never asked what device it was on (build 1442)
+
+`_AO_GEO_MAXSTEP` was a plain `2`, so the half-res G-buffer prepass — an extra **scene render**, plus build
+1140's viewmodel pass into the same buffer — survived the top three quality rungs on every device. And
+`_prStepI` starts at 0 everywhere, so a phone **opens at the most expensive configuration the engine has**
+and only relaxes once the adaptive ladder has measured a bad window (1141).
+
+It is not a rounding error. Measured on the stock level with the ladder **pinned**, ssao/ssr being the two
+terms `_geoWant` is built from:
+
+```
+rung 0    prepass on 185 calls   off 126   extra 59
+rung 1               on 129      off  71   extra 58     <- it very nearly DOUBLES the draw calls
+rung 2               on 129      off  71   extra 58
+rung 3               shed already
+```
+
+Every other expensive thing here already takes a device-class decision — point shadows 0 on a coarse
+pointer (1414), the sun's shadow map 1024 against 4096 (1346), the environment probe sky-only (1186), and
+the resolution ladder even carries two EXTRA rungs there. This one never did, so a phone paid the largest
+single item in the post chain across **three of its five rungs** before any relief arrived.
+
+**This is deliberately in tension with build 1364, and that is worth stating rather than hiding.** That
+build kept AO through the downshift because *"the median player sits on rung 1"* and losing the grounding
+cue there was the defect. That argument is about a desktop machine which is coping. A phone that has left
+rung 0 has already failed to hold its frame rate at full resolution, and an extra scene render is the
+biggest thing there is to give back. So on a coarse pointer the prepass is rung-0-only: the grounding cue
+while the device can afford it, and the first thing to go when it cannot. Soft particles and shorelines
+fall back to hard edges there, which is build 1183's own designed degradation (AO off = hard edges, never
+stale depth) rather than a new failure mode. A fine pointer is byte-identical to 1218 and 1364.
+
+**Starting a phone below full resolution was considered and declined**, with the reason recorded rather
+than left to be rediscovered: `_PR_STEPS` already gives a coarse device two extra rungs, and the ladder
+exists precisely to tell a capable phone from an incapable one. Opening every phone at reduced resolution
+penalises the first to help the second, on evidence nobody has measured.
+
+### The rung walked out from under the first measurement
+
+`renderScene` runs `_adaptResTick`, and under SwiftShader **every** frame is a slow frame — so the ladder
+moved the rung between the warm-up and the read. Rungs 0 and 1 reported identical numbers, and rung 2
+reported the prepass costing **zero** while a gate readout printed beside it said the prepass was running.
+
+Two rows disagreeing is the instrument, not the engine. `_adaptOn = false` pins it, and the gate is now
+read out of the **same render** as the cost — reporting it from a separate loop is how the first run came
+to describe two different frames. That is build 1383's rule (*a probe that echoes its own input tells you
+nothing*) with the twist that here the probe was echoing a different frame's truth.
+
+One pin moved (1218), and its subject is unchanged: that test names its rungs 100/85/72/66%, which is the
+FINE ladder, so it evaluates the fine branch — and the fine branch is exactly what this build had to
+preserve.
+
 ## A canvas is an image, and an image of a colour has to say so (build 1441)
 
 From the four-critic audit. Every texture this engine **loads from a file** is tagged sRGB, because that is
