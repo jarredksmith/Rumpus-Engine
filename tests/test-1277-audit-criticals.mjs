@@ -104,7 +104,7 @@ const src = gameSource();
   for (const v of offered)
     assert(new RegExp("'" + v + "'").test(dispatch) || /win|cutscene/.test(v),
       'every verb the Do node offers is named somewhere in the dispatcher: ' + v);
-  eq(offered.length, 30, 'all 30 verbs accounted for (1391 added resetprop, 1404 view, 1412 marker)');
+  eq(offered.length, 31, 'all 31 verbs accounted for (1391 added resetprop, 1404 view, 1412 marker, 1461 setpropvar)');
 }
 
 done('build 1277: the audit’s three client-side CRITICALs — level text can no longer reach the DOM as markup (the quote that closed href="$1" is escaped, proven with the real payload), build 1166’s safe credits renderer is no longer dead code behind a duplicate element id, and the six prop verbs that three builds shipped unreachable now actually reach their handler — tested by WALKING the node-to-handler path rather than pinning both ends and assuming');

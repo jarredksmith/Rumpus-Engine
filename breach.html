@@ -13310,6 +13310,7 @@ function _lgEmit(name){
 }
 function logicStart(){       // a match begins: fresh state, seed the repeating timers, fire 'start'
   logicVars={}; logicLists={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;   /* build 1269 */
+  if(typeof _lgPropVarClear==='function') _lgPropVarClear();   /* build 1461: per-prop values are MATCH state, like logicVars */
   if(typeof _persistSeed==='function') _persistSeed();       // build 1075: carried values come back before anything runs
   if(typeof _trigState!=='undefined') _trigState.length=0;   // build 1072: trigger volumes re-arm with the match (once-only fires again on a retry)
   if(typeof _lgResetStats==='function') _lgResetStats();     // build 1074: a bent stat springs back to what the level authored
@@ -13450,6 +13451,15 @@ function _lgPulse(id, pin){
           // place field has always used, which is why it needs no new autocomplete list.
           // Values are METRES, rounded to two decimals: a graph compares numbers, and an unrounded
           // float compared with `==` never matches anything.
+          /* build 1461: the other half of per-instance state. `#self` reads the prop whose signal is
+             firing; a tag reads the FIRST prop carrying it, which is build 1394/1412's rule that a READ
+             is one place while a WRITE is the whole set. A prop that has never been written reads 0,
+             the same as an unset logicVar. */
+          case 'propvar': {
+            const _nm = String(p.pvn||'').trim().slice(0, LG_PV_MAX);
+            const _ps = _lgVarProps(p.item);
+            v = (_nm && _ps.length) ? _lgPropVarGet(_ps[0], _nm) : 0;
+            break; }
           case 'propx': case 'propy': case 'propz': case 'propdist': {
             const _tg=String(p.item||'').trim();
             const _pl=(typeof _lgPlaceAt==='function') ? _lgPlaceAt(_tg) : null;
@@ -13912,13 +13922,14 @@ const LG_DEFS = {
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
   expr:     { t:'Expression',      cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'expr',l:'',w:210}] },
   list:     { t:'List',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'list',w:62,listId:'lgListList'},{k:'op',l:'',w:96,sel:[['push','Add value'],['fill','Fill 1..N'],['draw','Draw first \u2192'],['drawrand','Draw random \u2192'],['shuffle','Shuffle'],['remove','Remove value'],['clear','Clear'],['len','Length \u2192'],['has','Contains? \u2192'],['at','Value at \u2192'],['matches','Same order as? \u2192']]},{k:'value',l:'value',w:50,listId:'lgVarList',ifv:['op',['push','fill','remove','has']]},{k:'idx',l:'index',w:44,listId:'lgVarList',ifv:['op','at']},{k:'other',l:'other list',w:66,listId:'lgListList',ifv:['op','matches']},{k:'var',l:'\u2192 var',w:60,listId:'lgVarList',ifv:['op',['draw','drawrand','len','has','at','matches']]}] },
-  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held'],['propx','Prop X position'],['propy','Prop Y position'],['propz','Prop Z position'],['propdist','Distance to prop']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},
+  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held'],['propx','Prop X position'],['propy','Prop Y position'],['propz','Prop Z position'],['propdist','Distance to prop'],['propvar','Prop value']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},
     /* build 1352: the spatial reads reuse the SAME `item` field as a tag box — one more param would sit
        unused for every other stat, and `ifv` already switches its label per stat. It offers the place
        vocabulary (tags, `me`, `start`), which is exactly what _lgPlaceAt accepts. */
-    {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist']],listId:'lgPlaceList'},
+    {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist','propvar']],listId:'lgPlaceList'},
+    {k:'pvn',l:'of',w:72,ifv:['stat','propvar']},
     {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['marker','Objective marker'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb',['objective','marker']]},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'vdwell',l:'cut every (s)',w:44,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'mkmode',l:'',w:112,ifv:['verb','marker'],sel:[['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']]},{k:'mcol',l:'colour',w:70,ifv:['verb','marker']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view','marker']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill','marker']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['marker','Objective marker'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab'],['setpropvar','Set prop value']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop','setpropvar']]},{k:'pvop',l:'',w:56,ifv:['verb','setpropvar'],sel:[['add','Add'],['set','Set']]},{k:'pvn',l:'name',w:72,ifv:['verb','setpropvar']},{k:'pvv',l:'by',w:52,ifv:['verb','setpropvar']},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb',['objective','marker']]},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'vdwell',l:'cut every (s)',w:44,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'mkmode',l:'',w:112,ifv:['verb','marker'],sel:[['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']]},{k:'mcol',l:'colour',w:70,ifv:['verb','marker']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view','marker']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill','marker']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -14481,6 +14492,11 @@ function _renderPersistUI(host){
 // nothing and reports it (build 1214). No level can be relying on that.
 function _lgPropEvent(o, when, ctx){
   const _pv = _lgCtx; _lgCtx = ctx || {};
+  /* build 1461: the prop ITSELF, which is what `#self` resolves. It survives an `emit` because
+     `logicEvent` does not reset the context (build 1397), so a signal -> emit -> On event -> Do chain
+     still knows which door it was about. Unwound in the same `finally` as the payload, or a later
+     `#self` in an unrelated chain would silently act on a stale prop. */
+  _lgCtx.prop = o;
   try{ fireSignals(o, when); } finally { _lgCtx = _pv; }
 }
 // The payload for a prop, from the prop. Rounded to 2 dp because a graph COMPARES these and an unrounded
@@ -14531,7 +14547,7 @@ function _applySignalAction(s, src){
     // HANDLER's source and the DROPDOWN's source and never that a node reaches the handler. test-1277
     // walks the path instead.
     if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'
-       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'||s.do==='view'||s.do==='marker'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
+       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'||s.do==='view'||s.do==='marker'||s.do==='setpropvar'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
       if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
       return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
@@ -14693,6 +14709,48 @@ function _lgSpawnPrefab(name, at){
   const inst=(typeof _pfNewInst==='function')?_pfNewInst():('i'+Math.floor(Math.random()*1e6)), gid=(typeof _newGroupId==='function')?_newGroupId():0;
   def.props.forEach((p,slot)=>{ try{ _pfSpawnEntry(p, at, { id:name, inst, slot }, gid, (obj)=>{ obj.userData._lgSpawned=true; }); }catch(e){} });
 }
+/* build 1461 (feature audit CRITICAL): the graph had no PER-INSTANCE state. Every variable was one
+   number under one global name, so eight doors each needing their own three-hit counter meant eight
+   variables and eight branch chains inside a 200-node budget — and a tycoon's per-building upgrade level,
+   a tower-defence's per-tower rank or a shop's twelve items were simply unsayable.
+
+   The value lives on the prop (`userData._lv`) and is MATCH state, not level data: it is never
+   serialized and `logicStart` clears it, exactly like `logicVars`. A runtime verb must not edit the
+   level (build 1170's rule).
+
+   `#self` is what makes it per-INSTANCE rather than per-tag. A tag names a SET here (build 1299), so
+   `setpropvar` on a tag writes every prop carrying it — right for "reset all the plates", useless for a
+   counter. `#self` resolves to the prop whose own signal is firing, which survives an `emit` because
+   `logicEvent` does not reset `_lgCtx` (build 1397). So eight doors share ONE tag, ONE graph and ONE
+   node pair, and each keeps its own count. */
+const LG_PV_MAX = 40;   /* a name is level-authored text, and this one indexes an object */
+function _lgVarProps(tag){
+  const out = [];
+  const t = String(tag == null ? '' : tag).trim();
+  if(!t || t === '#self'){
+    const p = (typeof _lgCtx !== 'undefined' && _lgCtx) ? _lgCtx.prop : null;
+    if(p) out.push(p);
+    return out;
+  }
+  if(typeof propModels === 'undefined') return out;
+  for(const o of propModels) if(o && o.userData && o.userData.tag === t) out.push(o);
+  return out;
+}
+function _lgPropVarGet(o, name){
+  const lv = o && o.userData && o.userData._lv;
+  if(!lv || !Object.prototype.hasOwnProperty.call(lv, name)) return 0;   /* build 1271: a plain object inherits `constructor` */
+  const v = +lv[name];
+  return isFinite(v) ? v : 0;
+}
+function _lgPropVarSet(o, name, v){
+  if(!o || !o.userData || !name) return;
+  const lv = o.userData._lv || (o.userData._lv = {});
+  lv[name] = isFinite(v) ? v : 0;   /* build 1169: one NaN poisons every later compare */
+}
+function _lgPropVarClear(){
+  if(typeof propModels === 'undefined') return;
+  for(const o of propModels) if(o && o.userData && o.userData._lv) delete o.userData._lv;
+}
 function _lgPropVerb(act, tag, at){
   if(!tag || typeof propModels==='undefined') return;
   /* build 1391: every other verb skips a shattered prop; `reset` is the one that must SEE them, because
@@ -14745,6 +14803,20 @@ function _isWorldVerb(v){ return v==='spawn'||v==='pickup'||v==='damage'||v==='h
 // a commanded enemy behaves like an authored one from the next frame — no parallel "scripted" mode to diverge.
 const LG_CMDS = { hunt:'Hunt the player', patrol:'Patrol', hold:'Hold position', alert:'Alert them to', calm:'Lose the player', post:'Move their post to' };
 function _applyWorldAction(s){
+  if(s.do==='setpropvar'){   /* build 1461 */
+    const nm = String(s.pvn||'').trim().slice(0, LG_PV_MAX); if(!nm) return;
+    const list = _lgVarProps(s.target);
+    if(!list.length){
+      if(typeof _noteLogicFailure==='function')
+        _noteLogicFailure('A "setpropvar" targets ' + (String(s.target||'').trim()==='#self' || !String(s.target||'').trim()
+          ? 'the event\'s own prop, but this event carries none — use a tag, or fire it from a prop signal.'
+          : 'the tag `' + String(s.target).trim() + '`, but no placed prop has that tag.'));
+      return;
+    }
+    const v = +s.pvv || 0;
+    for(const o of list) _lgPropVarSet(o, nm, (s.pvop==='set') ? v : _lgPropVarGet(o, nm) + v);
+    return;
+  }
   const who=(s.who==='enemies'||s.who==='nearest'||s.who==='actor'||s.who==='near')?s.who:'player';   /* build 1232: 'actor' = the event's player (trigger tripper, killer) · build 1288: 'near' = within R of a place */
   const amt=Math.max(0, Math.min(99999, Math.round(+s.amt||0)));
   if(s.do==='give' || s.do==='take'){
@@ -20866,7 +20938,8 @@ const SIG_KEYS = {
   ewho:'ew', cmd:'cm',                                                  // command
   vmode:'vm', vtag:'vt', vtrack:'vk', vdwell:'vd',                      // view (build 1404); the bank's dwell (1410)
   mkmode:'mk', mcol:'mo',                                               // marker (build 1412); `at` and `text` are shared
-  prefab:'pb', escope:'es', er:'er'                                     // build 1408: the command's own scope
+  prefab:'pb', escope:'es', er:'er',                                    // build 1408: the command's own scope
+  pvn:'pn', pvv:'pw', pvop:'po'                                         // build 1461: per-prop variables
 };
 const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
 const SIG_STR_MAX = 300;   // a signal can carry a sound URL; the consumers keep their own tighter caps
@@ -34835,7 +34908,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1460 · 2026-08-09';
+const BUILD_VERSION = 'build 1461 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -47474,6 +47547,16 @@ function _sigWorldRow(s, rerender){
       lab('s \u2014 tag several props to cut between them');
     }
     sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
+  } else if(s.do==='setpropvar'){
+    /* build 1461: per-prop values. The tag box defaults to blank, which means `#self` — the prop whose
+       own signal is firing — because that is the case this verb exists for: eight doors sharing one tag
+       and one graph, each keeping its own count. A real tag writes EVERY prop carrying it, which is the
+       "reset all the plates" case and is what a tag has meant here since build 1299. */
+    sel([['add','Add'],['set','Set']], s.pvop||'add', v=>{ s.pvop=v; });
+    txt('name', s.pvn, v=>{ if(v) s.pvn=v; else delete s.pvn; }, 80);
+    txt('by', s.pvv, v=>{ if(v!=='') s.pvv=v; else delete s.pvv; }, 52);
+    lab('on');
+    txt('blank = this prop', s.target, v=>{ if(v) s.target=v; else delete s.target; }, 110, 'lgTagList');
   } else if(s.do==='marker'){
     /* build 1412: the arrow. `at` takes the same place vocabulary every other verb does, so a tag, `me`,
        `start` or `#here` all work — and it INTERPOLATES (1402), so `booth{n}` points at the live one. */

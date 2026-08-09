@@ -1,3 +1,5 @@
+// build 1461: a pin that quotes a WHOLE LIST is a pin against the list, not against what it says
+// (builds 519, 928, 1412). `setpropvar` legitimately joined it. Assert MEMBERSHIP.
 // build 1391: `resetprop` — a range target that comes back.
 //
 // Build 1390 made a static prop shootable; a booth full of plates you can destroy exactly once is not a
@@ -17,7 +19,7 @@ const src = gameSource();
   const node = src.match(/do:\s*\{ t:'Do action'[\s\S]*?\n/);
   assert(node, 'the Do node is readable');
   assert(/\['resetprop','Reset props'\]/.test(node[0]), '1. the dropdown offers it');
-  assert(/ifv:\['verb',\['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop'\]\]/.test(node[0]),
+  assert(/ifv:\['verb',\[[^\]]*'resetprop'[^\]]*\]\]/.test(node[0]),
     '2. ...and the TAG field is shown for it, or the creator has no way to say which props');
 
   const sig = extractFunction('_applySignalAction');

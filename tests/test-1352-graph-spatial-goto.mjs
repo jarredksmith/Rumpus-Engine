@@ -1,3 +1,5 @@
+// build 1461: a pin that quotes a WHOLE LIST is a pin against the list, not against what it says
+// (builds 519, 928, 1412). `setpropvar` legitimately joined it. Assert MEMBERSHIP.
 // (build 1352) THE GRAPH CAN ASK WHERE SOMETHING IS, AND MOVE BETWEEN LEVELS.
 //
 // 1. WHERE. The graph could MOVE a prop (1170), SHOVE one (1258) and be told when one entered a zone
@@ -42,7 +44,7 @@ const pulse = extractFunction('_lgPulse', src);
 {
   for (const k of ['propx', 'propy', 'propz', 'propdist'])
     assert(new RegExp("\\['" + k + "',").test(src), k + ' is offered in the stat dropdown');
-  assert(/\{k:'item',l:'tag',w:88,ifv:\['stat',\['propx','propy','propz','propdist'\]\],listId:'lgPlaceList'\}/.test(src),
+  assert(/\{k:'item',l:'tag',w:88,ifv:\['stat',\[[^\]]*'propdist'[^\]]*\]\],listId:'lgPlaceList'\}/.test(src),
     'the tag box reuses the `item` param keyed by stat, and offers lgPlaceList — the same vocabulary ' +
     '_lgPlaceAt actually accepts');
 }
