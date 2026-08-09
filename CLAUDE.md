@@ -2215,6 +2215,85 @@ better than being in a batch.
 draw calls and triangles are the only trustworthy instruments; a creator's own machine is the only place
 the wall clock means anything, which is what the perf HUD's `other` / `idle` split (1426) is for.
 
+## Delete and Duplicate act on the same things (build 1445)
+
+From the editor audit. They were **three** hand-kept lists, and no two of them agreed:
+
+| | covered |
+|---|---|
+| `duplicateSelected` | props · lights · spawns · turrets |
+| the Delete **key** | props · lights · spawns |
+| the panel's Delete **button** | keyed on `tgt.isSpawns` / `isLights` / `isTurret`, falling back to deleting a **prop** for anything else |
+
+So a turret could be duplicated and not deleted by key — though `deleteSelectedTurret` had existed all along
+and was simply never called — and **none** of the three knew about the eight zone types or the pickup spots.
+A creator selected a trigger volume they had just tuned, pressed Delete, and nothing happened; the only way
+to remove one was to find its row in the panel and click the small cross.
+
+Both verbs now end in the same table-driven tail, and the panel button asks the same function its Duplicate
+neighbour always did. That fallback is gone too: an unrecognised target now does nothing rather than
+deleting a prop.
+
+### It is build 1326's own lesson, one verb along
+
+That build made `ZONE_EDIT` the one place a zone type is declared, after finding a type listed in three
+places and missing from a fourth. This build gives that table `remove` and `add`, so a zone type declares
+its list, its selection, its markers, its panel, its remover and its adder **once** — and the ninth kind
+cannot reach one verb and not the other.
+
+**Two things turned out to have no name at all, and both were the audio zone.** Its remover lived inline in
+its panel button — which is why it was the one type the Delete key could not have reached even by asking —
+and its ADD was inlined in *two* places, the panel button and the `+` menu, as two copies of one object
+literal, so a retuned default radius would have moved in one of them.
+
+**And build 1320's `ZONE_ADDERS` was function-local.** That build created the table because the add list had
+drifted by exactly one entry, then left it inside the `+` menu builder where nothing else could use it —
+including the probe that wants to add one of every zone type the way a creator does. Folded in.
+
+### Measured live, driven off the engine's own table
+
+```
+every zone type   add 1 -> duplicate 2 (offset +2) -> delete 1 -> delete 0
+pickup spots      the same
+turrets           add, duplicate to 2, and BOTH delete — the key reaches them now
+CONTROL           a zone target leaves all 59 props alone
+CONTROL           an unknown target changes nothing at all
+audio zone        removed, and stopAudioZones called — a deleted zone stops making noise
+```
+
+The per-type row iterates `ZONE_EDIT` and calls each type's own `add`, so a ninth kind is covered without
+editing the probe. **The first run threw** — it pushed a hand-made `{x, z, r}` and `renderFxZonesPanel`
+wanted a field that shape does not have. Build 1429's rule: *call the engine's own constructor rather than
+rebuilding its argument object.*
+
+### The probe found a real inconsistency nobody reported
+
+`removePickupSpot` **cleared** the selection, so two Delete presses removed one spot while the same two on a
+zone, a prop or a light removed two. It clamps to a neighbour now, like every zone remover already did.
+
+### A pin whose message and regex described opposite things
+
+`test-176` asserted `/pickupSpots\.splice\(i,1\); selPickup=-1;/` under the message *"removing a pickup does
+NOT clear selPickup"* — and that line clears it. Neither satisfied by prose nor defeated by it: the message
+and the regex had simply drifted apart, which is the third kind build 1419 records. Its two neighbours read
+the same way (*"tab change does not release pickup"* asserting `selPickup=-1`), so it looks like a stale
+convention rather than one slip.
+
+**A test regex built by string concatenation double-escaped its parens** — `new RegExp('...add:\\(\\)=>')`
+is a literal backslash followed by a group, so it matched nothing. It reported ONE key failing rather than
+all eight, which is what made it look like a data problem instead of an escaping one. Slice the row and test
+it directly; there is no escaping to get wrong.
+
+Seven pins moved (176, 241 ×3, 396, 505, 1193, 1320), every intent unchanged.
+
+### Recorded rather than built: zones in PREFABS
+
+The audit also asked for zones and pickups to join prefabs. They cannot, and the reason is structural rather
+than an oversight: `_pfCapture` takes a **selection with a pivot**, and the editor's selection is ONE TYPE AT
+A TIME — `activeSel()` returns `selProps` or `selLights`, which is exactly what build 1275 recorded when the
+marquee had to choose a type rather than mix them. A prefab containing a zone needs a mixed selection first,
+and that is a gizmo, group-op and inspector change, not a side effect of this build.
+
 ## A finger and a mouse run the same press chain (build 1444)
 
 The editor audit reported that *"single-finger drag does nothing on touch"*. **Half of that was already

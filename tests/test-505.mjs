@@ -42,7 +42,10 @@ assert(/addPickupSpot\(kind\)\{ pushUndoSnapshot\(\); const _dp=\(typeof editorD
 for(const z of ['addFireZone','addJumpPad','addLadder','addDeathZone'])
   assert(new RegExp(z+'\\(\\)\\{ pushUndoSnapshot\\(\\); const _dp=\\(typeof editorDropPoint').test(src), z+' uses the drop point');
 /* build 1320: the + menu's if/else chain of zone adders became ZONE_ADDERS, keyed by type. Same claim. */
-assert(/audiozones: \(\)=>\{ pushUndoSnapshot\(\); const _dp=editorDropPoint\(0\); audioZones\.push/.test(src), 'the + menu audio zone uses the drop point');
+// build 1445 folded ZONE_ADDERS into ZONE_EDIT — build 1320 created that table because the add list
+// had drifted by one entry, then left it FUNCTION-LOCAL inside the + menu builder where nothing else
+// could reach it. Same claim, asserted against the one table a zone type is declared in.
+assert(/audiozones:[^\n]*add:\(\)=>\{ const _dp=\(typeof editorDropPoint==='function'\)\?editorDropPoint\(0\):\{x:0,z:0\}; addAudioZone\(_dp\.x, _dp\.z\); \}/.test(src), 'the + menu audio zone uses the drop point');
 /* ...and the LABELS on the eight add buttons stopped claiming the drop point is where the player stands. */
 assert(!/Add [a-z ]+ \(at me\)/.test(src), 'no button says "(at me)" — measured 116.9 m out with the fly camera');
 assert((src.match(/addB\.title=DROP_HINT;/g)||[]).length === 8, 'all eight carry the one shared tooltip');

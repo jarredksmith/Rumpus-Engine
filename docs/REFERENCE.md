@@ -476,6 +476,8 @@ See World & Scene Settings for the eight zone tools and the terrain sculpt/paint
 | **F** | Frame selection; nothing selected = toggle free-fly |
 | **Shift+F** | Toggle free-fly camera |
 | **T** | Toggle top-down view |
+| **Delete / Backspace** | Delete the selection — props, lights, spawn markers, turrets, any of the eight zone types, or a pickup spot (build 1445) |
+| **Shift+D** | Duplicate the same set |
 | **B** | Toggle the terrain brush |
 | **O** | Toggle the outliner |
 | **Shift+A** | Quick-add (+) menu |

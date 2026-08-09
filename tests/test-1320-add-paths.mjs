@@ -82,8 +82,13 @@ const fx    = (new Function('return (' + (src.match(/const FX_SHAPES = (\[[\s\S]
   assert(!/const ZONE_ADD=\[/.test(src), 'the + menu’s SECOND copy of that list is gone…');
   assert(/for\(const \[type,icon,label\] of ZONE_TYPES\)\{ menuItem/.test(src), '…it iterates the picker’s own list');
   // and the dispatch is keyed by the same string, so a type cannot be listed but unwired
-  for (const [key] of zt) assert(new RegExp('\\n        ' + key + ': *\\(\\)=>').test(src), 'ZONE_ADDERS wires ' + key);
-  assert(/const _f=ZONE_ADDERS\[type\]; if\(_f\) _f\(\);/.test(src), 'one dispatch, not an if/else chain that can drift');
+  // build 1445 folded ZONE_ADDERS into ZONE_EDIT. This build's whole subject — that the add list is a
+  // TABLE keyed by the same type string, not an if/else chain that drifts — is unchanged and now holds
+  // against the one table a zone type is declared in, rather than one that was local to this menu builder.
+  const zoneTable = src.match(/const ZONE_EDIT = \{[\s\S]*?\n\};/)[0];
+  const zoneRow = (key) => (zoneTable.split('\n').find(l => l.trim().startsWith(key + ':')) || '');
+  for (const [key] of zt) assert(/add:\(\)=>/.test(zoneRow(key)), 'the table wires ' + key);
+  assert(/const _d=ZONE_EDIT\[type\]; if\(_d && _d\.add\) _d\.add\(\);/.test(src), 'one dispatch, not an if/else chain that can drift');
 }
 
 // ---------------------------------------------------------------- what the + menu could never reach

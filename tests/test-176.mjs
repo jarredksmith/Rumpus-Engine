@@ -18,5 +18,11 @@ assert(/if\(selPickup>=0\) mode='translate';/.test(src), 'pickup gizmo not force
 // tab change + place/remove keep selPickup coherent
 assert(/b\.onclick = \(\)=>\{ selPickup=-1; editorActive = key;/.test(src), 'tab change does not release pickup');
 assert(/selPickup = pickupSpots\.length-1; refreshPickupMarkers\(\); renderEditorFields\(\); \}/.test(src), 'placing a pickup does not auto-select it');
-assert(/pickupSpots\.splice\(i,1\); selPickup=-1;/.test(src), 'removing a pickup does not clear selPickup');
+// build 1445 CLAMPED this instead of clearing it, so two Delete presses remove two spots — as they do for
+// a zone, a prop or a light. Worth noting what this pin was: its MESSAGE said "does not clear selPickup"
+// while its regex asserted `selPickup=-1`, which clears it. The two described opposite things, which is the
+// third kind of pin trap build 1419 records — not satisfied by prose, not defeated by it, just drifted
+// apart from its own message. The message now says what the regex checks.
+assert(/pickupSpots\.splice\(i,1\); selPickup = pickupSpots\.length \? Math\.min\(i, pickupSpots\.length-1\) : -1;/.test(src),
+  'removing a pickup keeps a neighbour selected, and clears the selection only when the list is empty');
 done();

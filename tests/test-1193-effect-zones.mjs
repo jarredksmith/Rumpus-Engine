@@ -64,7 +64,7 @@ const src = gameSource();
      string as ZONE_TYPES — the chain had drifted (triggers were missing from the menu entirely). Same
      assertion: the chip, the host and a reachable add-button. */
   assert(/\['fxzones','\\u2728','Effect'\]/.test(src) && /fxzones:'edFxZones'/.test(src) &&
-    /fxzones:    \(\)=>\{ if\(typeof addFxZone==='function'\) addFxZone\(\); \},/.test(src),
+    /fxzones:[^\n]*add:\(\)=>\{ if\(typeof addFxZone==='function'\) addFxZone\(\); \}/.test(src),
     'the zones tab gains the Effect chip, host and add-button');
   assert(/if\(typeof updateFxZones==='function'\) updateFxZones\(dt\);/.test(src), 'the frame loop drives it');
   assert(/grp\.visible=!!\(typeof editorOpen!=='undefined' && editorOpen\)/.test(src), 'markers are editor-only cues, like death zones');

@@ -22321,9 +22321,7 @@ addEventListener('keydown', e=>{
     return;
   }
   if(editorOpen && (e.code==='Delete' || e.code==='Backspace')){
-    if(editorActive==='props') deleteSelectedProp();
-    else if(editorActive==='lights') deleteSelectedLight();
-    else if(editorActive==='spawns') deleteSelectedSpawn();
+    deleteSelected();   /* build 1445: the same set Shift+D duplicates — turrets, all eight zone types and pickup spots included */
     e.preventDefault();
     return;
   }
@@ -26386,6 +26384,12 @@ function refreshSpawnRegionMarker(){
 }
 function setSpawnRegionMarkerVisible(v){ if(spawnRegionMarker) spawnRegionMarker.visible=v; }
 function addDeathZone(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)}; deathZones.push({ x:_dp.x, z:_dp.z, r:6, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity?surfaceTopAt(_dp.x,_dp.z):(typeof terrainHeightAt==='function'?terrainHeightAt(_dp.x,_dp.z):0)), h:3 }); selDeathZone=deathZones.length-1; editorActive='deathzones'; refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel(); }
+/* build 1445: every other zone type had a named remover; the audio zone's lived INLINE in its panel's
+   button, which is why it was the one type the Delete key could not have reached even by asking. */
+/* build 1445: and the ADD had no name either, inlined in both the panel button and the + menu — two copies
+   of one object literal, so a retuned default radius would have moved in one place only. */
+function addAudioZone(x, z){ pushUndoSnapshot(); audioZones.push({ x:+(+x).toFixed(2), z:+(+z).toFixed(2), r:14, url:'', vol:0.8, loop:true }); selAudioZone=audioZones.length-1; editorActive='audiozones'; refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
+function removeAudioZone(i){ pushUndoSnapshot(); audioZones.splice(i,1); if(selAudioZone>=audioZones.length) selAudioZone=audioZones.length-1; stopAudioZones(); refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
 function removeDeathZone(i){ pushUndoSnapshot(); deathZones.splice(i,1); if(selDeathZone>=deathZones.length) selDeathZone=deathZones.length-1; refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel(); }
 // Per-frame: kill the player if they're inside a lethal zone.
 let _inDeathZone=false;
@@ -26411,7 +26415,10 @@ function updateDeathZones(){
 }   // rings are editor-only; hide on play without rebuilding
 function disposePickupMarkers(){ for(const m of pickupMarkers){ scene.remove(m); } pickupMarkers.length=0; }
 function addPickupSpot(kind){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(6):{x:+(player.pos.x).toFixed(2),z:+(player.pos.z).toFixed(2)}; const spot={ x:_dp.x, z:_dp.z, kind:kind||'health' }; if(spot.kind==='item'){ const ids=Object.keys(invCatalog); spot.item=ids[0]||''; } pickupSpots.push(spot); selPickup = pickupSpots.length-1; refreshPickupMarkers(); renderEditorFields(); }
-function removePickupSpot(i){ pushUndoSnapshot(); pickupSpots.splice(i,1); selPickup=-1; refreshPickupMarkers(); renderEditorFields(); }
+/* build 1445: CLAMP rather than clear, the way every zone type's remover does. This cleared the selection,
+   so pressing Delete twice removed one spot — while the same two presses on a zone, a prop or a light
+   remove two. Surfaced by the parity probe, which measured 2 deletes leaving 1. */
+function removePickupSpot(i){ pushUndoSnapshot(); pickupSpots.splice(i,1); selPickup = pickupSpots.length ? Math.min(i, pickupSpots.length-1) : -1; refreshPickupMarkers(); renderEditorFields(); }
 // ---------- Audio zones: ambient sounds that fade up as the player nears the center ----------
 function disposeAudioZoneMarkers(){ for(const m of audioZoneMarkers){ scene.remove(m); try{ m.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} } audioZoneMarkers.length=0; }
 function refreshAudioZoneMarkers(){
@@ -34472,7 +34479,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1444 · 2026-08-09';
+const BUILD_VERSION = 'build 1445 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42391,15 +42398,35 @@ function applyZoneVisibility(){
 // the same reason: three copies of "the list of zone types" is three chances to add the ninth to two of
 // them. The nine-hundredth build of this file should not still be growing if/else chains per zone.
 const ZONE_EDIT = {
-  triggers:   { list:()=>triggerZones,  sel:()=>selTrigger,   pick:(i)=>{ selTrigger=i;   }, markers:()=>triggerMarkers,   refresh:()=>refreshTriggerMarkers(),   panel:()=>renderTriggersPanel() },
-  audiozones: { list:()=>audioZones,    sel:()=>selAudioZone, pick:(i)=>{ selAudioZone=i; }, markers:()=>audioZoneMarkers, refresh:()=>refreshAudioZoneMarkers(), panel:()=>renderAudioZonesPanel() },
-  deathzones: { list:()=>deathZones,    sel:()=>selDeathZone, pick:(i)=>{ selDeathZone=i; }, markers:()=>deathZoneMarkers, refresh:()=>refreshDeathZoneMarkers(), panel:()=>renderDeathZonesPanel() },
-  jumppads:   { list:()=>jumpPads,      sel:()=>selJumpPad,   pick:(i)=>{ selJumpPad=i;   }, markers:()=>jumpPadMarkers,   refresh:()=>refreshJumpPadMarkers(),   panel:()=>renderJumpPadsPanel() },
-  ladders:    { list:()=>ladders,       sel:()=>selLadder,    pick:(i)=>{ selLadder=i;    }, markers:()=>ladderMarkers,    refresh:()=>refreshLadderMarkers(),    panel:()=>renderLaddersPanel() },
-  firezones:  { list:()=>fireZones,     sel:()=>selFireZone,  pick:(i)=>{ selFireZone=i;  }, markers:()=>fireZoneFx,       refresh:()=>refreshFireZones(),        panel:()=>renderFireZonesPanel() },
-  waterzones: { list:()=>waterZones,    sel:()=>selWaterZone, pick:(i)=>{ selWaterZone=i; }, markers:()=>waterZoneFx,      refresh:()=>refreshWaterZones(),       panel:()=>renderWaterZonesPanel() },
-  fxzones:    { list:()=>fxZones,       sel:()=>selFxZone,    pick:(i)=>{ selFxZone=i;    }, markers:()=>fxZoneFx,         refresh:()=>refreshFxZoneMarkers(),    panel:()=>renderFxZonesPanel() },
+  triggers:   { list:()=>triggerZones,  sel:()=>selTrigger,   pick:(i)=>{ selTrigger=i;   }, markers:()=>triggerMarkers,   refresh:()=>refreshTriggerMarkers(),   panel:()=>renderTriggersPanel(),   remove:(i)=>removeTriggerZone(i), add:()=>{ if(typeof addTriggerZone==='function') addTriggerZone(); } },
+  audiozones: { list:()=>audioZones,    sel:()=>selAudioZone, pick:(i)=>{ selAudioZone=i; }, markers:()=>audioZoneMarkers, refresh:()=>refreshAudioZoneMarkers(), panel:()=>renderAudioZonesPanel(), remove:(i)=>removeAudioZone(i), add:()=>{ const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:0,z:0}; addAudioZone(_dp.x, _dp.z); } },
+  deathzones: { list:()=>deathZones,    sel:()=>selDeathZone, pick:(i)=>{ selDeathZone=i; }, markers:()=>deathZoneMarkers, refresh:()=>refreshDeathZoneMarkers(), panel:()=>renderDeathZonesPanel(), remove:(i)=>removeDeathZone(i), add:()=>{ if(typeof addDeathZone==='function') addDeathZone(); } },
+  jumppads:   { list:()=>jumpPads,      sel:()=>selJumpPad,   pick:(i)=>{ selJumpPad=i;   }, markers:()=>jumpPadMarkers,   refresh:()=>refreshJumpPadMarkers(),   panel:()=>renderJumpPadsPanel(),   remove:(i)=>removeJumpPad(i), add:()=>{ if(typeof addJumpPad==='function') addJumpPad(); } },
+  ladders:    { list:()=>ladders,       sel:()=>selLadder,    pick:(i)=>{ selLadder=i;    }, markers:()=>ladderMarkers,    refresh:()=>refreshLadderMarkers(),    panel:()=>renderLaddersPanel(),    remove:(i)=>removeLadder(i), add:()=>{ if(typeof addLadder==='function') addLadder(); } },
+  firezones:  { list:()=>fireZones,     sel:()=>selFireZone,  pick:(i)=>{ selFireZone=i;  }, markers:()=>fireZoneFx,       refresh:()=>refreshFireZones(),        panel:()=>renderFireZonesPanel(),  remove:(i)=>removeFireZone(i), add:()=>{ if(typeof addFireZone==='function') addFireZone(); } },
+  waterzones: { list:()=>waterZones,    sel:()=>selWaterZone, pick:(i)=>{ selWaterZone=i; }, markers:()=>waterZoneFx,      refresh:()=>refreshWaterZones(),       panel:()=>renderWaterZonesPanel(), remove:(i)=>removeWaterZone(i), add:()=>{ if(typeof addWaterZone==='function') addWaterZone(); } },
+  fxzones:    { list:()=>fxZones,       sel:()=>selFxZone,    pick:(i)=>{ selFxZone=i;    }, markers:()=>fxZoneFx,         refresh:()=>refreshFxZoneMarkers(),    panel:()=>renderFxZonesPanel(),    remove:(i)=>removeFxZone(i), add:()=>{ if(typeof addFxZone==='function') addFxZone(); } },
 };
+/* build 1445: duplicating a zone is the same operation for all eight — a zone is a PLAIN SERIALIZABLE
+   OBJECT (it round-trips through the level file, which is what makes the deep copy safe), so there is one
+   implementation rather than eight near-copies. The copy is offset and SELECTED, so a creator can drag it
+   straight away, exactly as a duplicated prop behaves.
+   It appends rather than inserting: `_trigState[i]` is created lazily per index, so a zone added at the end
+   simply gets fresh state, while one spliced into the middle would shift every later zone's runtime. */
+function _zoneDup(type){
+  const def = ZONE_EDIT[type]; if(!def) return false;
+  const list = def.list(), i = def.sel();
+  if(!list || i == null || i < 0 || i >= list.length) return false;
+  pushUndoSnapshot();
+  const copy = JSON.parse(JSON.stringify(list[i]));
+  if(typeof copy.x === 'number') copy.x += DUP_OFFSET;
+  list.push(copy);
+  def.pick(list.length - 1);
+  def.refresh(); if(typeof def.panel === 'function') def.panel();
+  if(typeof updateGizmo === 'function') updateGizmo();
+  if(typeof _levelDirty !== 'undefined') _levelDirty = true;
+  return true;
+}
 // Which zone (if any) a clicked object belongs to. Walks up the parents because a marker is a GROUP of
 // rings and dots and the raycast hits one of those, not the group.
 function _zoneHitAt(root){
@@ -43844,11 +43871,40 @@ function changeLightType(idx, type){
   if(typeof syncSelToIdx==='function') syncSelToIdx();
   renderEditorFields();
 }
+/* build 1445: DELETE and DUPLICATE were two hand-kept lists that did not even match each other — duplicate
+   knew about turrets and delete did not (though `deleteSelectedTurret` had existed all along and was simply
+   never called), and NEITHER knew about the eight zone types or the pickup spots. So a creator selected a
+   trigger volume they had just tuned, pressed Delete, and nothing happened; the only way to remove one was
+   to find its row in the panel and click the small cross.
+
+   Both verbs now end in the same table-driven tail, so the ninth zone type cannot reach one and not the
+   other — which is build 1326's own lesson, from the build that made ZONE_EDIT the one place a zone type is
+   declared after finding it listed in three places and missing from one. */
 function duplicateSelected(){
   if(editorActive==='props') duplicateSelectedProp();
   else if(editorActive==='lights') duplicateSelectedLight();
   else if(editorActive==='spawns') duplicateSelectedSpawn();
   else if(editorActive==='turrets') duplicateSelectedTurret();
+  else if(ZONE_EDIT[editorActive]) _zoneDup(editorActive);
+  else if(typeof selPickup!=='undefined' && selPickup>=0 && pickupSpots[selPickup]) _pickupDup();
+}
+function deleteSelected(){
+  if(editorActive==='props') deleteSelectedProp();
+  else if(editorActive==='lights') deleteSelectedLight();
+  else if(editorActive==='spawns') deleteSelectedSpawn();
+  else if(editorActive==='turrets') deleteSelectedTurret();
+  else if(ZONE_EDIT[editorActive]){ const d=ZONE_EDIT[editorActive], i=d.sel(); if(i>=0 && i<d.list().length) d.remove(i); }
+  else if(typeof selPickup!=='undefined' && selPickup>=0 && pickupSpots[selPickup]) removePickupSpot(selPickup);
+}
+function _pickupDup(){
+  const src = pickupSpots[selPickup]; if(!src) return false;
+  pushUndoSnapshot();
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.x = (+copy.x || 0) + DUP_OFFSET;
+  pickupSpots.push(copy); selPickup = pickupSpots.length - 1;
+  refreshPickupMarkers(); if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof updateGizmo === 'function') updateGizmo();
+  return true;
 }
 function duplicateSelectedTurret(){
   const g = turretModels[editorTargets.turrets.idx]; if(!g) return;
@@ -44849,7 +44905,7 @@ function renderAudioZonesPanel(){
   const info=document.createElement('div'); info.className='hint'; info.style.margin='2px 0 6px';
   info.innerHTML='Ambient <b>audio zones</b>. Drop a zone, give it a sound file URL, and set its radius. The volume rises as the player nears the center (full at the middle, silent at the edge). Loops by default. The blue ring shows the radius in the editor.';
   host.appendChild(info);
-  const addB=document.createElement('button'); addB.textContent='\u2795 Add zone at me'; addB.title='Drop a new audio zone at your current position'; addB.onclick=()=>{ pushUndoSnapshot(); audioZones.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:14, url:'', vol:0.8, loop:true }); selAudioZone=audioZones.length-1; editorActive='audiozones'; refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
+  const addB=document.createElement('button'); addB.textContent='\u2795 Add zone at me'; addB.title='Drop a new audio zone at your current position'; addB.onclick=()=>{ addAudioZone(player.pos.x, player.pos.z); };   /* build 1445 */
   host.appendChild(addB);
   const st=document.createElement('div'); st.className='hint'; st.style.margin='6px 0 2px'; st.textContent = audioZones.length ? (audioZones.length+' zone'+(audioZones.length>1?'s':'')+':') : 'No zones yet.';
   host.appendChild(st);
@@ -44860,7 +44916,7 @@ function renderAudioZonesPanel(){
     const lbl=document.createElement('div'); lbl.textContent='Zone '+(i+1); lbl.style.cssText='flex:1;font-size:12px;color:#9fe6cf;font-weight:600;';
     const selB=document.createElement('button'); selB.textContent=(i===selAudioZone?'selected':'select'); selB.title='Select this zone to drag its handle in the scene'; selB.style.cssText='padding:1px 7px;font-size:10px;'; selB.onclick=()=>{ selAudioZone=i; editorActive='audiozones'; refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
     const moveB=document.createElement('button'); moveB.textContent='Move here'; moveB.title='Recenter this zone on your current position'; moveB.style.cssText='padding:1px 7px;font-size:11px;'; moveB.onclick=()=>{ pushUndoSnapshot(); z.x=+player.pos.x.toFixed(2); z.z=+player.pos.z.toFixed(2); selAudioZone=i; refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
-    const delB=document.createElement('button'); delB.textContent='\u2715'; delB.title='Remove this zone'; delB.style.cssText='padding:1px 7px;font-size:11px;'; delB.onclick=()=>{ pushUndoSnapshot(); audioZones.splice(i,1); if(selAudioZone>=audioZones.length) selAudioZone=audioZones.length-1; stopAudioZones(); refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
+    const delB=document.createElement('button'); delB.textContent='\u2715'; delB.title='Remove this zone'; delB.style.cssText='padding:1px 7px;font-size:11px;'; delB.onclick=()=>{ removeAudioZone(i); };   /* build 1445: through the named remover, so the panel button and the Delete key cannot drift */
     top.appendChild(lbl); top.appendChild(selB); top.appendChild(moveB); top.appendChild(delB); card.appendChild(top);
     card.appendChild(_sndRow('Sound', ()=>z.url||'', v=>{ z.url=(v||'').trim(); }));   // same input/test/status widget as the other sounds
     const fsBtn=document.createElement('button'); fsBtn.textContent='Search Freesound'; fsBtn.title='Find a free CC sound and assign it to this zone'; fsBtn.style.cssText='padding:2px 9px;font-size:11px;margin:1px 0 2px;'; let fsBox=null;
@@ -46056,19 +46112,14 @@ function buildEditorPanel(){
          be added from the menu build 650 calls "the ONE place to add anything placeable". Both the list and
          the dispatch are keyed by the same type string now, so a new zone type reaches the picker and this
          menu together or neither. */
-      const ZONE_ADDERS = {
-        triggers:   ()=>{ if(typeof addTriggerZone==='function') addTriggerZone(); },
-        audiozones: ()=>{ pushUndoSnapshot(); const _dp=editorDropPoint(0); audioZones.push({ x:_dp.x, z:_dp.z, r:14, url:'', vol:0.8, loop:true }); editorActive='audiozones'; refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); },
-        deathzones: ()=>{ if(typeof addDeathZone==='function') addDeathZone(); },
-        jumppads:   ()=>{ if(typeof addJumpPad==='function') addJumpPad(); },
-        ladders:    ()=>{ if(typeof addLadder==='function') addLadder(); },
-        firezones:  ()=>{ if(typeof addFireZone==='function') addFireZone(); },
-        waterzones: ()=>{ if(typeof addWaterZone==='function') addWaterZone(); },
-        fxzones:    ()=>{ if(typeof addFxZone==='function') addFxZone(); },
-      };
+      /* build 1445: this table lived HERE, function-local, so nothing outside this menu builder could use
+         it — including the probe that wants to add one of every zone type the way a creator does. It is
+         folded into ZONE_EDIT, which is already the one place a zone type declares its list, its selection,
+         its markers, its panel and (this build) its remover. One table, one type string, one place to add
+         the ninth kind. */
       const addZone=(type)=>{ jump('scene');
         activeZoneType=type; if(typeof applyZoneVisibility==='function') applyZoneVisibility(); if(typeof renderZonePicker==='function') renderZonePicker();
-        const _f=ZONE_ADDERS[type]; if(_f) _f();
+        const _d=ZONE_EDIT[type]; if(_d && _d.add) _d.add();
       };
       /* The shapes come from PRIM_SHAPES, so the four the engine can build that this menu never offered
          (pillar, dome, tube, ring) are reachable, and a Model entry and the six emitters join them — the
@@ -50517,7 +50568,11 @@ function renderEditorFields(){
     dup.onclick = ()=>{ duplicateSelected(); };
     const del = document.createElement('button'); del.textContent='Delete selected';
     del.style.background='rgba(245,80,94,0.18)'; del.style.borderColor='rgba(245,80,94,0.45)';
-    del.onclick = ()=>{ if(tgt.isSpawns) deleteSelectedSpawn(); else if(tgt.isLights) deleteSelectedLight(); else if(tgt.isTurret) deleteSelectedTurret(); else deleteSelectedProp(); };
+    /* build 1445: a THIRD hand-kept list lived here, dispatching on tgt.isSpawns/isLights/isTurret rather
+       than on editorActive, and ending in a fallback that deleted a PROP for anything it did not recognise.
+       The Duplicate button beside it has always called the shared dispatcher, so this is the pair finally
+       agreeing — and an unrecognised target now does nothing instead of deleting the wrong kind of thing. */
+    del.onclick = ()=>{ deleteSelected(); };
     row2.appendChild(dup); row2.appendChild(del);
     urlHost.appendChild(row2);
   }
