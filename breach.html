@@ -9978,6 +9978,9 @@ function _procSurface(){
       nimg.data[i+3] = 255;
     }
     nctx.putImageData(nimg, 0, 0);
+    /* build 1441: NOT sRGB, and this is the one place that must never change. These two carry NUMBERS —
+       a packed normal and a roughness — which is exactly what build 1429 had to drag back to linear after
+       an encoder had marked them as colour. */
     const normalMap = new THREE.CanvasTexture(nc);
     // roughness: the same field. A single roughness value makes every highlight sweep the surface as
     // one shape, which is the other half of the plastic look.
@@ -10962,6 +10965,7 @@ const _paintCtx = _paintCanvas.getContext('2d');
 const _paintData = new Uint8ClampedArray(_PAINT_N*_PAINT_N*4);
 for(let i=3;i<_paintData.length;i+=4) _paintData[i]=255;   // opaque alpha; RGB weights start at 0
 const _paintImg = new ImageData(_paintData, _PAINT_N, _PAINT_N);   // shares _paintData's buffer
+/* build 1441: NOT sRGB — its RGB channels are splat WEIGHTS, not a colour, as the line above says. */
 const _paintTex = new THREE.CanvasTexture(_paintCanvas);
 _paintTex.flipY = false;   // canvas row 0 == uv v 0, so painting and the dataURL round-trip stay aligned
 _paintTex.minFilter = THREE.LinearFilter; _paintTex.magFilter = THREE.LinearFilter; _paintTex.generateMipmaps = false;
@@ -15106,6 +15110,22 @@ function _bvhPackPos(pa){
   for(let i = 0; i < n; i++){ out[i*3] = pa.getX(i); out[i*3+1] = pa.getY(i); out[i*3+2] = pa.getZ(i); }
   return out;
 }
+/* build 1441: A CANVAS IS AN IMAGE, and an image of a colour has to say so. Every texture this engine
+   LOADS FROM A FILE is tagged sRGB (seven sites), because that is what an 8-bit colour image is; every
+   texture it DRAWS ITSELF was not, so three treated the bytes as linear and every one of them rendered
+   too bright. The two that matter most are the two a creator sees closest:
+
+     a bullet decal's core is rgba(8,6,4,.95) -> 0.031 read as linear where 0.0024 was meant, ~13x
+     an authored sign at #808080             -> 0.5 read as linear where 0.214 was meant, ~2.3x
+
+   This is build 1429's defect in the mirror: that build found DATA maps being decoded as colour, and this
+   one is colour NOT being decoded at all. So the same care applies in reverse — the list below is only
+   the textures that carry a COLOUR, and three deliberate omissions are recorded at their own sites. */
+function _srgbTex(t){
+  if(!t) return t;
+  if('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace; else if('encoding' in t) t.encoding = 3001;   // sRGBEncoding
+  return t;
+}
 function _buildTriBVH(geo){
   const posA = _bvhPackPos(geo.attributes.position), idx = geo.index, ia = idx ? idx.array : null;
   const triCount = ((idx ? idx.count : geo.attributes.position.count) / 3) | 0;
@@ -15779,7 +15799,7 @@ function _signRender(o){
   const lh = fs * 1.18, y0 = H / 2 - (lines.length - 1) * lh / 2;
   for(let i = 0; i < lines.length; i++) x.fillText(lines[i], px, y0 + i * lh);
   if(!o.material.map){
-    const t = new THREE.CanvasTexture(cv);
+    const t = _srgbTex(new THREE.CanvasTexture(cv));   /* build 1441: a sign is UNLIT, so its board colour reaches the frame directly — untagged, #808080 arrived 2.3x too bright */
     t.minFilter = THREE.LinearFilter; t.anisotropy = (typeof MAX_ANISO === 'number') ? MAX_ANISO : 1;
     o.material.map = t; o.material.needsUpdate = true;   // first map on this material -> compile USE_MAP once
   } else o.material.map.needsUpdate = true;
@@ -16352,11 +16372,11 @@ function _trackMats(){
   const kerb=mk(0xd8402f,0.85), chk=mk(0xffffff,0.8);
   try{ const c=document.createElement('canvas'); c.width=64; c.height=8; const g=c.getContext('2d');
     g.fillStyle='#d8402f'; g.fillRect(0,0,64,8); g.fillStyle='#eef0f2'; g.fillRect(32,0,32,8);
-    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; kerb.map=t; kerb.color.setHex(0xffffff);
+    const t=_srgbTex(new THREE.CanvasTexture(c)); t.wrapS=t.wrapT=THREE.RepeatWrapping; kerb.map=t; kerb.color.setHex(0xffffff);
   }catch(e){}
   try{ const c=document.createElement('canvas'); c.width=64; c.height=64; const g=c.getContext('2d');
     for(let r=0;r<8;r++) for(let q=0;q<8;q++){ g.fillStyle=((r+q)&1)?'#101317':'#eef0f2'; g.fillRect(q*8,r*8,8,8); }
-    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; chk.map=t;
+    const t=_srgbTex(new THREE.CanvasTexture(c)); t.wrapS=t.wrapT=THREE.RepeatWrapping; chk.map=t;
   }catch(e){}
   const barrier=mk(0xb9bdc2,0.9);                                                        // concrete barrier base
   const screen=mk(0x9fd8ff,0.4); screen.transparent=true; screen.opacity=0.16; screen.depthWrite=false;   // clear catch-screen above it
@@ -16388,7 +16408,7 @@ function _applyTrackCfg(){
     const c=document.createElement('canvas'); c.width=64; c.height=8; const g=c.getContext('2d');
     const hx=(n)=>'#'+('000000'+(n>>>0).toString(16)).slice(-6);
     g.fillStyle=hx(ka); g.fillRect(0,0,64,8); g.fillStyle=hx(kb); g.fillRect(32,0,32,8);
-    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping;
+    const t=_srgbTex(new THREE.CanvasTexture(c)); t.wrapS=t.wrapT=THREE.RepeatWrapping;
     if(M.kerb.map && M.kerb.map.dispose) M.kerb.map.dispose();
     M.kerb.map=t; M.kerb.needsUpdate=true;
   }catch(e){}
@@ -19298,7 +19318,7 @@ function _arRingTex(color){
   const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
   x.strokeStyle=color; x.lineWidth=7; x.beginPath(); x.arc(32,32,22,0,Math.PI*2); x.stroke();
   x.fillStyle=color; x.beginPath(); x.arc(32,32,5,0,Math.PI*2); x.fill();
-  const t=new THREE.CanvasTexture(c); _arTexes[color]=t; return t;
+  const t=_srgbTex(new THREE.CanvasTexture(c)); _arTexes[color]=t; return t;
 }
 function _arStepFor(mkKey){ const base=mkKey.replace(/[LR]$/,''); return AR_STEPS.find(q=>q.key===base); }
 function _arDoneStep(st){ return st.sym ? !!(_arMarkers[st.key+'L'] && _arMarkers[st.key+'R']) : !!_arMarkers[st.key]; }
@@ -21759,7 +21779,7 @@ function _ensureDefaultEnv(){
     const sun = g.createRadialGradient(64, 30, 2, 64, 30, 30);
     sun.addColorStop(0, 'rgba(255,240,214,0.95)'); sun.addColorStop(0.3, 'rgba(255,226,178,0.35)'); sun.addColorStop(1, 'rgba(255,226,178,0)');
     g.fillStyle = sun; g.fillRect(0, 0, 256, 128);
-    const tex = new THREE.CanvasTexture(cv); tex.mapping = THREE.EquirectangularReflectionMapping;
+    const tex = _srgbTex(new THREE.CanvasTexture(cv)); tex.mapping = THREE.EquirectangularReflectionMapping;
     const pg = new THREE.PMREMGenerator(renderer); pg.compileEquirectangularShader();
     _envDefaultRT = pg.fromEquirectangular(tex); pg.dispose(); tex.dispose();
   }catch(e){}
@@ -21799,15 +21819,19 @@ function _orientEquirect(srcTex, deg, isHdr){
     const out = _shiftEquirectColumns(img.data, w, h, comp, dx);
     const t = new THREE.DataTexture(out, w, h, srcTex.format, srcTex.type);
     t.mapping = THREE.EquirectangularReflectionMapping; t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter;
-    t.generateMipmaps = false; t.flipY = srcTex.flipY; if('colorSpace' in t) t.colorSpace = srcTex.colorSpace; t.needsUpdate = true;
+    t.generateMipmaps = false; t.flipY = srcTex.flipY;
+    /* build 1441: copy BOTH spellings. On r149 only .encoding exists, so the colorSpace copy alone carried
+       nothing across — harmless here only because an HDR is linear and 3000 is the default it would have
+       fallen back to. Completed so that no test of 'colorSpace' in this file stands without its companion. */
+    if('colorSpace' in t) t.colorSpace = srcTex.colorSpace; if('encoding' in t) t.encoding = srcTex.encoding;
+    t.needsUpdate = true;
     return t;
   }
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, w, h);
   const id = cx.getImageData(0, 0, w, h);
   id.data.set(_shiftEquirectColumns(id.data, w, h, 4, dx)); cx.putImageData(id, 0, 0);
-  const t = new THREE.CanvasTexture(cv); t.mapping = THREE.EquirectangularReflectionMapping;
-  if('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace; else if('encoding' in t) t.encoding = 3001; t.needsUpdate = true;
+  const t = _srgbTex(new THREE.CanvasTexture(cv)); t.mapping = THREE.EquirectangularReflectionMapping; t.needsUpdate = true;
   return t;
 }
 function _applyOrientedSky(statusFn){
@@ -22899,7 +22923,7 @@ function _ensureVmEnv(){
     const c=document.createElement('canvas'); c.width=16; c.height=64; const g=c.getContext('2d');
     const grad=g.createLinearGradient(0,0,0,64); grad.addColorStop(0,'#a6c2d2'); grad.addColorStop(0.5,'#5d6e79'); grad.addColorStop(1,'#161d23');
     g.fillStyle=grad; g.fillRect(0,0,16,64);
-    const tex=new THREE.CanvasTexture(c); tex.mapping=THREE.EquirectangularReflectionMapping;
+    const tex=_srgbTex(new THREE.CanvasTexture(c)); tex.mapping=THREE.EquirectangularReflectionMapping;
     const pm=new THREE.PMREMGenerator(renderer); pm.compileEquirectangularShader();
     _vmEnvFallback = pm.fromEquirectangular(tex).texture; tex.dispose(); pm.dispose();
   }catch(e){ _vmEnvFallback=null; }
@@ -24442,7 +24466,11 @@ function fireSoftTex(){
   const g=x.createRadialGradient(32,32,0, 32,32,32);
   g.addColorStop(0,'rgba(255,255,255,0.9)'); g.addColorStop(0.22,'rgba(255,255,255,0.45)'); g.addColorStop(0.55,'rgba(255,255,255,0.12)'); g.addColorStop(1,'rgba(255,255,255,0)');
   x.fillStyle=g; x.fillRect(0,0,64,64);
-  const t=new THREE.CanvasTexture(c); t.needsUpdate=true; _fireSoftTex=t; return t;
+  /* build 1441: every stop here is pure white, and 0 and 1 are FIXED POINTS of the sRGB transfer, so the
+     tag cannot move a pixel of this sheet today. It goes through the shared writer anyway so that the rule
+     is "a canvas that carries a COLOUR says so" with no per-file exceptions to remember — the day somebody
+     gives this gradient a warm stop, it is already right. */
+  const t=_srgbTex(new THREE.CanvasTexture(c)); t.needsUpdate=true; _fireSoftTex=t; return t;
 }
 // One shared shader material for ALL fire (zones + props). Per-particle size/colour/alpha come from buffer
 // attributes, so we can have hundreds of small, size-varied particles that overlap into a continuous flame
@@ -25269,7 +25297,7 @@ function _weatherSprite(){
   const g=cv.getContext('2d'), gr=g.createRadialGradient(32,32,2,32,32,30);
   gr.addColorStop(0,'rgba(255,255,255,1)'); gr.addColorStop(0.55,'rgba(255,255,255,0.7)'); gr.addColorStop(1,'rgba(255,255,255,0)');
   g.fillStyle=gr; g.fillRect(0,0,64,64);
-  _weatherSpriteTex=new THREE.CanvasTexture(cv);
+  _weatherSpriteTex=_srgbTex(new THREE.CanvasTexture(cv));   /* build 1441: white-only, so the tag is a no-op today — see fireSoftTex for why it is applied anyway */
   return _weatherSpriteTex;
 }
 function _weatherWindVec(){
@@ -28142,7 +28170,7 @@ function makeNameSprite(text, team){
   x.font='bold 30px sans-serif'; x.textAlign='center'; x.textBaseline='middle';
   x.fillStyle='rgba(0,0,0,0.45)'; x.fillRect(0,0,256,64);
   x.fillStyle = team===0 ? '#ff8a93' : (team===1 ? '#9fd0ff' : '#9fd8ff'); x.fillText(String(text).slice(0,14),128,34);
-  const spr=new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(c), depthTest:true, depthWrite:false, transparent:true }));   // depthTest so walls/props hide the tag (no see-through wallhack); depthWrite off so it doesn't occlude other transparents
+  const spr=new THREE.Sprite(new THREE.SpriteMaterial({ map:_srgbTex(new THREE.CanvasTexture(c)), depthTest:true, depthWrite:false, transparent:true }));   // depthTest so walls/props hide the tag (no see-through wallhack); depthWrite off so it doesn't occlude other transparents
   spr.scale.set(2.4,0.6,1);
   return spr;
 }
@@ -31225,9 +31253,16 @@ function _procVfxSheet(kind){
     try{ draw(cx, cell, p, rnd); }catch(e){}
     cx.restore();
   }
-  const tex=new THREE.CanvasTexture(cv);
+  /* build 1441: this line used to be its own tag, written as a bare "if colorSpace is in tex". On r149 a
+     Texture carries .encoding and has NO .colorSpace at all, so that test is FALSE and the assignment never
+     ran — the muzzle flash and the explosion sheets, the two most-drawn textures in the game and both
+     ADDITIVE (so an over-bright decode goes straight into the frame), believed they were tagged for as long
+     as they have existed. A tag written against a three version you are not running is not a tag; the shared
+     writer tries both spellings, which is the whole reason it has two branches. Proven against the vendored
+     build in test-1441 rather than asserted. */
+  const tex=_srgbTex(new THREE.CanvasTexture(cv));
   tex.minFilter=THREE.LinearFilter; tex.magFilter=THREE.LinearFilter; tex.wrapS=tex.wrapT=THREE.ClampToEdgeWrapping;
-  if('colorSpace' in tex) tex.colorSpace=THREE.SRGBColorSpace; tex.generateMipmaps=false; tex.repeat.set(1/cfg.cols, 1/cfg.rows);
+  tex.generateMipmaps=false; tex.repeat.set(1/cfg.cols, 1/cfg.rows);
   try{ if(typeof renderer!=='undefined' && renderer && renderer.initTexture) renderer.initTexture(tex); }catch(e){}
   return tex;
 }
@@ -31238,7 +31273,7 @@ function loadVfxTexture(kind){
   if(!cfg.url || _vfxPng[kind]) return;                          // no hosted override to try (or already tried)
   _vfxPng[kind]=1;
   new THREE.TextureLoader().load(cfg.url,
-    (t)=>{ t.minFilter=THREE.LinearFilter; t.magFilter=THREE.LinearFilter; t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; if('colorSpace' in t) t.colorSpace=THREE.SRGBColorSpace; t.generateMipmaps=false; t.repeat.set(1/cfg.cols, 1/cfg.rows); try{ if(typeof renderer!=='undefined' && renderer && renderer.initTexture) renderer.initTexture(t); }catch(e){} const _old=_vfxTex[kind]; _vfxTex[kind]={tex:t}; console.info('[VFX] loaded '+kind+' ✓ '+cfg.url); warmFlipbookShaders(); if(_old && _old.proc && _old.tex && _old.tex.dispose) _old.tex.dispose(); },
+    (t)=>{ _srgbTex(t); t.minFilter=THREE.LinearFilter; t.magFilter=THREE.LinearFilter; t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.generateMipmaps=false;   /* build 1441: this carried the same never-firing tag as the procedural sheet beside it, so a creator's OWN flipbook url was untagged too */ t.repeat.set(1/cfg.cols, 1/cfg.rows); try{ if(typeof renderer!=='undefined' && renderer && renderer.initTexture) renderer.initTexture(t); }catch(e){} const _old=_vfxTex[kind]; _vfxTex[kind]={tex:t}; console.info('[VFX] loaded '+kind+' ✓ '+cfg.url); warmFlipbookShaders(); if(_old && _old.proc && _old.tex && _old.tex.dispose) _old.tex.dispose(); },
     undefined,
     ()=>{ console.warn('[VFX] no '+kind+' sheet at '+cfg.url+' — using the built-in procedural one'); });   // keep the procedural sheet
 }
@@ -32348,7 +32383,7 @@ function _getPuffTex(){
     const grd=g.createRadialGradient(32,32,0,32,32,32);
     grd.addColorStop(0,'rgba(255,255,255,0.85)'); grd.addColorStop(0.45,'rgba(255,255,255,0.32)'); grd.addColorStop(1,'rgba(255,255,255,0)');
     g.fillStyle=grd; g.beginPath(); g.arc(32,32,32,0,Math.PI*2); g.fill();
-    _puffTex=new THREE.CanvasTexture(c); _puffTex.anisotropy=1;
+    _puffTex=_srgbTex(new THREE.CanvasTexture(c)); _puffTex.anisotropy=1;   /* build 1441: white-only, no-op today */
   }catch(e){ _puffTex=false; }
   return _puffTex||undefined;
 }
@@ -32359,7 +32394,7 @@ function _getSkidTex(){
     grd.addColorStop(0,'rgba(0,0,0,0)'); grd.addColorStop(0.5,'rgba(0,0,0,0.9)'); grd.addColorStop(1,'rgba(0,0,0,0)');
     g.fillStyle=grd; g.fillRect(0,0,32,64);
     for(let i=0;i<140;i++){ g.fillStyle='rgba(0,0,0,'+(Math.random()*0.25)+')'; g.fillRect(6+Math.random()*20, Math.random()*64, 1.5, 1.5); }   // a little grain
-    _skidTex=new THREE.CanvasTexture(c);
+    _skidTex=_srgbTex(new THREE.CanvasTexture(c));   /* build 1441: black-only, no-op today */
   }catch(e){ _skidTex=false; }
   return _skidTex||undefined;
 }
@@ -33966,13 +34001,16 @@ function _makeDefaultDecalTex(){
   x.fillStyle = g; x.fillRect(0,0,64,64);
   x.globalCompositeOperation = 'destination-out';   // ragged edge so repeated holes don't read as clones
   for(let i=0;i<7;i++){ const a=Math.random()*Math.PI*2, r=24+Math.random()*7; x.beginPath(); x.arc(32+Math.cos(a)*r, 32+Math.sin(a)*r, 5+Math.random()*6, 0, Math.PI*2); x.fill(); }
-  return new THREE.CanvasTexture(c);
+  /* build 1441: the hole's core is rgba(8,6,4,.95). Read as linear that is 0.031 against the 0.0024 it
+     means — thirteen times too bright, which is why a bullet hole read as a pale smudge and was at its
+     worst in a dark interior, where the "hole" was brighter than the wall it was in. */
+  return _srgbTex(new THREE.CanvasTexture(c));
 }
 function _getDecalTex(){
   const url = (decalCfg && decalCfg.url) || '';
   if(_decalTex && _decalTexUrl === url) return _decalTex;
   _decalTexUrl = url;
-  if(url){ try{ _decalTex = new THREE.TextureLoader().load(url); }catch(e){ _decalTex = _makeDefaultDecalTex(); } }
+  if(url){ try{ _decalTex = _srgbTex(new THREE.TextureLoader().load(url)); }catch(e){ _decalTex = _makeDefaultDecalTex(); } }   /* build 1441: a creator's own decal image is a colour image too — this was the one loader in the file that did not say so */
   else _decalTex = _makeDefaultDecalTex();
   return _decalTex;
 }
@@ -34376,7 +34414,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1440 · 2026-08-08';
+const BUILD_VERSION = 'build 1441 · 2026-08-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37879,7 +37917,7 @@ function _dmgTex(txt, color, fs){
   cx.font = 'bold '+fs+'px system-ui, sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
   cx.lineWidth = Math.max(3, fs*0.14); cx.strokeStyle = 'rgba(0,0,0,0.85)'; cx.fillStyle = color;
   cx.strokeText(txt, cv.width/2, cv.height/2); cx.fillText(txt, cv.width/2, cv.height/2);
-  tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter;
+  tex = _srgbTex(new THREE.CanvasTexture(cv)); tex.minFilter = THREE.LinearFilter;
   _dmgTexCache.set(key, tex);
   if(_dmgTexCache.size > _DMG_TEX_MAX){ const old = _dmgTexCache.keys().next().value; const ot = _dmgTexCache.get(old); _dmgTexCache.delete(old); if(ot && ot.dispose) ot.dispose(); }   // evict the least-recently-used (long dead)
   return tex;

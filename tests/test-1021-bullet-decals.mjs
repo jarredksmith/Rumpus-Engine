@@ -24,7 +24,8 @@ const doc = { createElement:()=>({ width:0, height:0, getContext:()=>ctx2d }) };
 const removed = [];
 const scn = { add(m){ if(m.parent && m.parent.remove) m.parent.remove(m); m.parent = scn; }, remove(m){ removed.push(m); m.parent = null; } };   // build 1237: removals now detach from WHATEVER parent the decal rides, so the stub must track parentage for the eviction pins to see them
 const cfg = { on:true, url:'', size:1, life:1 };
-const env = new Function('THREE', 'decalCfg', 'scene', 'document', mod +
+const env = new Function('THREE', 'decalCfg', 'scene', 'document',
+  extractFunction('_srgbTex') + '\n' + mod +
   '\nreturn { decals, _decalPool, DECAL_MAX, DECAL_LIFE, spawnBulletDecal, updateDecals, _getDecalTex };')(THREE, cfg, scn, doc);
 
 // a shot into a wall facing +z: the decal sits a hair OFF the wall, facing back along the normal

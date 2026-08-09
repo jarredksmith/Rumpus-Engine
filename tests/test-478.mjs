@@ -20,6 +20,7 @@ const deps = `
   const document={ createElement:()=>({ width:0, height:0, getContext:()=>({ font:'', textAlign:'', textBaseline:'', lineWidth:0, strokeStyle:'', fillStyle:'', strokeText(){}, fillText(){} }) }) };
   const THREE={ LinearFilter:1, CanvasTexture:function(cv){ this.cv=cv; this.id=_made++; this.minFilter=0; this.disposed=false; this.dispose=()=>{ this.disposed=true; }; } };
   const _dmgTexCache = new Map();
+` + extractFunction('_srgbTex') + `
   const _DMG_TEX_MAX = 3;
 `;
 const api = new Function(deps + '\n' + extractFunction('_dmgTex') + '\n return { _dmgTex, cache:_dmgTexCache };')();

@@ -2215,6 +2215,94 @@ better than being in a batch.
 draw calls and triangles are the only trustworthy instruments; a creator's own machine is the only place
 the wall clock means anything, which is what the perf HUD's `other` / `idle` split (1426) is for.
 
+## A canvas is an image, and an image of a colour has to say so (build 1441)
+
+From the four-critic audit. Every texture this engine **loads from a file** is tagged sRGB, because that is
+what an 8-bit colour image is. Every texture it **draws itself** was not — so three decoded the bytes as
+linear and each of them rendered too bright:
+
+```
+a bullet decal core, rgba(8,6,4,.95)   0.031 read as linear where 0.0024 was meant    ~13x
+an authored sign at #808080            0.5   read as linear where 0.214 was meant     ~2.3x
+```
+
+This is **build 1429's defect in the mirror**: that build found DATA maps being decoded as colour, and this
+one is colour not being decoded at all. So the same care applies in reverse, and the three canvases that
+carry NUMBERS — `_procSurface`'s normal and roughness maps, and `_paintTex`, whose RGB channels are splat
+weights — are named as such at their own sites and must never be tagged. The test asserts both directions.
+
+### A tag written against a three version you are not running is not a tag
+
+Two sites already carried what read as a tag:
+
+```js
+if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+```
+
+with no `encoding` companion. **On r149 a Texture has `.encoding` and no `.colorSpace` at all**, so that test
+is FALSE and the assignment never ran. `WebGLTextures` reads `texture.encoding` 18 times and
+`texture.colorSpace` zero times — both pinned against the vendored build, because an upgrade would
+invalidate this whole build silently.
+
+So the muzzle flash and the explosion sheets — the two most-drawn textures in the game, and both
+**additive**, where an over-bright decode goes straight into the frame — believed they were tagged for as
+long as they have existed, as did a creator's own flipbook url. That is why `_srgbTex` tries both spellings
+rather than picking one, and why the test asserts that **no sRGB tag anywhere in the file tests `colorSpace`
+without its companion**.
+
+### The alpha-only sheets go through it too, and that is deliberate
+
+`fireSoftTex`, the weather sprite, the dust puff and the skid are pure white or pure black with an alpha
+ramp — and **0 and 1 are fixed points of the sRGB transfer**, so the tag cannot move a pixel of them today.
+They are routed anyway so the rule is *a canvas that carries a colour says so*, with no per-file exceptions
+to remember: the day somebody gives one of those gradients a warm stop, it is already right.
+
+### Measured live, with a control that returns byte-exactly
+
+An unlit sign is the cleanest surface in the engine to read a decode off — its board colour reaches the
+frame with nothing in between. World paused, grain and auto-exposure off, only `encoding` changed:
+
+```
+untagged, linear (3000)   214.6, 215.6, 216.7      <- a MID GREY board rendering as near-white
+tagged,   sRGB   (3001)   159.2, 160.3, 161.6
+control, back to 3001     159.2, 160.3, 161.6      <- EXACTLY
+```
+
+**55 code values.** The 2.34x in linear presents as 1.34x on screen because ACES and the OETF compress it —
+worth stating both ways, because quoting the screen ratio alone understates the correction and quoting the
+linear ratio alone overstates what a player sees. The arithmetic predicts 216 and 169 through the same
+chain, so the frame and the model agree to a few code values.
+
+### The window was half sky, and the state readouts were all correct
+
+The first run measured **1.16x against a predicted 2.3x** while every readout beside it — the decal at 3001,
+all three sheets at 3001, the data maps still at 3000 — was right. A sign is a `PlaneGeometry` translated so
+its base sits at y=0 (build 871), so a board scaled `[4,2,1]` spans y 0..2 and the probe's `lookAt(y=2)` was
+aimed at its **top edge**.
+
+Build 1151's rule for the fifth time — and the cheap settling instrument is build 1387's, not a raycast:
+**paint the surface and see whether the window follows.** Red took the window's green from 160.3 to 20.4, a
+0.127 collapse, with the control returning at 0 drift. A `__drawnAt` check run first reported `sky` at all
+five sample points and was simply wrong — a sign ships `noCol`, which neutralises its raycast, so the ray
+answered a different question from the renderer. *When a raycast and the pixels disagree, the pixels are the
+frame.*
+
+An earlier verdict line also called that real positive a failure, by demanding the control come back
+byte-identical and getting 2 code values of settling. **A control returns within the noise floor, and the
+noise floor has to be measured rather than assumed to be zero.**
+
+### And the prose trap, for the seventh time
+
+`!/colorSpace/` on the flipbook function failed against correct code — it matched the comment I had just
+written at that site explaining the removal. Pin the STATEMENT (`/\.colorSpace\s*=/`), never the bare
+identifier. Builds 164, 1393, 1395, 1411, 1421 and 1439 all record this in one direction or the other.
+
+Six pins moved. Four are executing rigs that genuinely lacked the new module-level helper in an isolated
+scope (1021, 478, 484, 866) — each is handed `_srgbTex` **lifted from source**, never restated, because a
+rig that restates a helper keeps passing against a stale copy. Two are content pins in 555 quoting the
+constructor line the tag now wraps, intents unchanged; and 484 gained the assertion its stub was already
+shaped for — the sheet comes out tagged.
+
 ## Geometric LOD — the fifth kind, and the one a heavy import hits (build 1431)
 
 Asked from use: *"What is LOD? Do we do that?"* Four kinds were already here and worth naming, because the
