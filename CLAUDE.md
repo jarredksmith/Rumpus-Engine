@@ -13107,6 +13107,67 @@ One pin moved (256), and its intent is unchanged: this build put the far cadence
 statements, so it asserts them separately — the countdown drains one frame at a time, and a spent
 countdown leaves the map frozen.
 
+## Two per-frame costs removed, and the third declined with a number (build 1460)
+
+The performance audit named three. Two were real; the third is arithmetic and is deliberately left, which
+`test-1460` asserts so nobody "finishes the sweep" later on the audit's word.
+
+**`_lodGeoTick` made every prop pay for one model's level.** It ran a full-subtree traverse **and
+allocated a closure** for each of the 128 props it examines per frame, whether or not that prop had a
+level to swap — `_lodGeoN` gates the whole tick and says nothing about the individual prop. So a single
+simplified model taxed the entire level. A `_hasGeoLod` flag on the root, raised **in the same act** as
+the mesh's own `_lodHi` so the two cannot disagree, skips it before the traverse and before the closure.
+
+```
+one levelled model, 559-prop level:   125 traverses/frame -> 1     (control returns to 1)
+```
+
+**A joiner re-pinned sleeping bodies forever.** `stepClientPlayerPhys` wrote
+`setTranslation + setRotation + setLinvel + setAngvel` for every dynamic prop every frame — **800
+JS-to-WASM crossings a frame at 200 props** — for bodies pinned to the host's poses and never simulated.
+Now skipped when the body is **asleep** and already at the pose it would be pinned to. The sleep test is
+what makes this safe rather than merely cheaper: a sleeping body does not integrate, so re-stating where
+it is buys nothing, while an **awake** one is pinned exactly as before, because that is the case the pin
+exists for.
+
+```
+200 sleeping props   frame 1: 800 crossings   frame 2: 0   host moves one: 4
+200 awake props      800 every frame
+no isSleeping API    4 every frame — the skip fails CLOSED
+```
+
+### `_vehicleMeshes` — measured and declined
+
+The audit listed it beside the other two. Measured on a 559-prop level: **0.028 ms/frame**. It is a
+property test and a push over an array the frame already walks several times for other reasons, with no
+allocation and no traverse — arithmetic, not a hotspot.
+
+Every way of removing it trades that non-cost for a correctness hazard. Maintaining the list at
+spawn/despawn requires every site that WRITES `userData.vehicle` to remember — the editor checkbox,
+`setPropDynamic`, `_applyPropEntry` — which is the hand-kept-list defect this file records more than any
+other. Rebuilding only when `propModels.length` changes misses a flag toggled in place. So it stays, and
+the test asserts that it stays.
+
+### Container rollback #27, and the same blind guard
+
+The tree reverted to **build 1431** again, mid-build, and I applied 1460's edits to that stale base before
+the `BUILD_VERSION` assert caught it — suite reading **1170** harnesses against 1196. Identical to #26 two
+builds ago, including the reason build 1414's staging guard cannot see it: `probe-out` and the repo were
+**both** the rolled-back tree, so the content hashes agreed. *The guard detects disagreement, not
+recency.*
+
+Recovery was the documented sequence and cost one probe run. The re-measurement on the correct base gave
+**identical** LOD figures (125 → 1) — nothing between 1432 and 1459 touches that tick — and the vehicle
+walk moved 0.054 → 0.028 ms, which is run-to-run noise on a timing figure under SwiftShader and is exactly
+why the decision rests on the ORDER of magnitude rather than the digits.
+
+**One probe-writing note.** My control asserted 1 traverse and measured 0, and the engine was right:
+`_lodGeoTick`'s cursor ROLLS 128 props a frame, so the second call examines a different window that does
+not contain the flagged prop. The control resets `_lodGeoCursor` now. *A control has to be pointed at the
+same thing the measurement was.*
+
+Zero pins moved.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

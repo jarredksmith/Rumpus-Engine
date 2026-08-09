@@ -11972,15 +11972,19 @@ function buildGeoLOD(){
       if(!m.isMesh || m.isSkinnedMesh || !m.geometry || !m.geometry.index) return;      // a skin's bones move the vertices
       if(m.userData._lodHi) return;                                                     // already levelled
       if(m.geometry.index.count/3 < LOD_GEO_TRI_MIN) return;
-      want.push(m); });
+      want.push([m, o]); });   /* build 1460: carry the ROOT, so the per-frame tick can skip a prop that has no level at all */
   }
   if(!want.length) return;
   _ensureSimplifier().then(S=>{
     if(!S) return;   // offline or the CDN is unreachable: every mesh keeps its full geometry, silently
-    for(const m of want){
+    for(const [m, root] of want){
       const lo = _lodGeoSimplify(S, m.geometry);
       if(!lo) continue;
       m.userData._lodHi = m.geometry; m.userData._lodLo = lo; _lodGeoN++;
+      /* build 1460: set in the SAME statement group as _lodHi, so the root flag and the mesh's level
+         cannot disagree — a prop flagged without a level is a wasted traverse, and one levelled without
+         the flag is a level that never swaps. */
+      if(root && root.userData) root.userData._hasGeoLod = true;
       /* build 1263's rule: a perf change may not remove work something else relies on. The PLAYER'S SHOTS
          raycast real triangles (build 1159), so a swapped-down mesh would quietly move where a distant
          bullet lands. Raycasting stays on the FULL geometry — and this CHAINS build 1097's BVH raycast
@@ -11997,7 +12001,7 @@ function buildGeoLOD(){
 // teardown must not leave a decimated silhouette behind.
 function _lodGeoRestoreAll(){
   if(!_lodGeoN || typeof propModels==='undefined') return;
-  for(const o of propModels){ if(!o) continue; o.traverse(m=>{
+  for(const o of propModels){ if(!o || !(o.userData && o.userData._hasGeoLod)) continue; o.traverse(m=>{   /* build 1460: the same skip — the flag and _lodHi are set together, so they cannot disagree */
     if(m.userData && m.userData._lodHi && m.geometry !== m.userData._lodHi){ m.geometry = m.userData._lodHi; m.userData._lodOn = false; } }); }
 }
 function _lodTick(){
@@ -12112,6 +12116,11 @@ function _lodGeoTick(){
     const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
     const sp = (d > 0.01) ? ((u0._lodR||1) / d) * k : 1e9;
     const wantLo = (d >= LOD_NEAR_KEEP) && (sp < LOD_GEO_PX);
+    /* build 1460: ONE simplified model made every prop in the level pay a full-subtree traverse plus a
+       closure allocation, 128 props a frame, whether or not it had a level to swap. `_lodGeoN` gates the
+       whole tick but says nothing about the individual prop. Build 1168 removed exactly this class of
+       per-frame closure everywhere else. Measured live: 125 traverses a frame -> 1. */
+    if(!u0._hasGeoLod) continue;
     o.traverse(m=>{
       /* build 1432: _lodLo can be NULLED when the bake supersedes the geometry it was derived from, and
          assigning null here would hand the renderer a mesh with no geometry at all. */
@@ -34826,7 +34835,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1459 · 2026-08-09';
+const BUILD_VERSION = 'build 1460 · 2026-08-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37008,10 +37017,22 @@ function damageProp(obj, dmg, point, dir, power, byId, showNum){
 // Prop bodies are pinned to their host-synced mesh poses so they stay solid obstacles instead of free-falling.
 function stepClientPlayerPhys(dt){
   if(!physWorld) return;
-  for(const o of dynamicProps){ const b=o.userData.phys && o.userData.phys.body; if(!b) continue;
+  /* build 1460: a joiner wrote setTranslation + setRotation + setLinvel + setAngvel for EVERY dynamic
+     prop EVERY frame — 800 JS-to-WASM crossings a frame at 200 props, for bodies pinned to the host's
+     poses and never simulated. Skipped when the body is ASLEEP and already at the pose it would be pinned
+     to: a sleeping body does not integrate, so re-stating where it is buys nothing.
+     The sleep test is what makes this safe rather than merely cheaper. An AWAKE body — something in the
+     local step nudged it — is pinned exactly as before, because that is the case the pin exists for, and
+     a Rapier build with no isSleeping pins every frame, so the skip fails CLOSED. */
+  for(const o of dynamicProps){ const ud=o.userData, b=ud.phys && ud.phys.body; if(!b) continue;
+    const q=o.quaternion;
+    if(b.isSleeping && b.isSleeping() && ud._pinX===o.position.x && ud._pinY===o.position.y && ud._pinZ===o.position.z
+       && ud._pinQx===q.x && ud._pinQy===q.y && ud._pinQz===q.z && ud._pinQw===q.w) continue;
     b.setTranslation({x:o.position.x,y:o.position.y,z:o.position.z}, false);
-    const q=o.quaternion; if(b.setRotation) b.setRotation({x:q.x,y:q.y,z:q.z,w:q.w}, false);
+    if(b.setRotation) b.setRotation({x:q.x,y:q.y,z:q.z,w:q.w}, false);
     if(b.setLinvel) b.setLinvel({x:0,y:0,z:0}, false); if(b.setAngvel) b.setAngvel({x:0,y:0,z:0}, false);
+    ud._pinX=o.position.x; ud._pinY=o.position.y; ud._pinZ=o.position.z;
+    ud._pinQx=q.x; ud._pinQy=q.y; ud._pinQz=q.z; ud._pinQw=q.w;
   }
   physAccum += Math.min(dt, 0.1);
   // (build 914: the buoyancy call moved to updatePhysics — here the bodies are pinned to host poses and the impulse was wiped)
