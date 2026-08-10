@@ -670,6 +670,12 @@
   /* On-screen touch controls (shown on touch devices during play) */
   canvas { touch-action: none; }
   #touchUI { position:absolute; inset:0; z-index:40; display:none; pointer-events:none; -webkit-user-select:none; user-select:none; }
+  /* build 1473: a MODAL is a menu, and the touch control layer sits at z-index 40 — ten times the modal's
+     own backdrop and widgets. On a phone the fire button, both sticks and every action button were live
+     and fully visible ON TOP of the dimmed menu, so a tap meant to buy something fired a round instead.
+     Build 1468's mousedown gate is a MOUSE gate and never covered this. Same shape as the cinematic rule
+     below, which stands the same layer down for the same reason. */
+  body.modalUp #touchUI { display: none !important; }
   #touchUI > * { pointer-events:auto; }
   #tLook { position:absolute; right:0; top:0; bottom:0; left:42%; touch-action:none; }
   #tStick { position:absolute; left:26px; bottom:26px; width:132px; height:132px; border-radius:50%;
@@ -13754,7 +13760,7 @@ const _hwCd = {}; let _hwCursorFree = false;   /* build 1255: per-button cooldow
 //
 // So `modal` is one more field on a widget and one more world verb. A widget with no modal name is
 // byte-identical to build 1255's — which is every widget in every level ever saved.
-let _modalOpen = '', _modalBack = null;
+let _modalOpen = '', _modalBack = null, _modalX = null;
 function _modalWidgets(id){   // how many widgets belong to a modal — used by the verb's refusal and the editor's list
   const nm=String(id==null?'':id).trim(); if(!nm) return 0;
   let n=0; if(typeof hudWidgets!=='undefined') for(const w of hudWidgets){ if(w && w.modal===nm) n++; }
@@ -13770,17 +13776,39 @@ function _modalSet(id){
   _modalSyncBack();
   if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}
 }
+/* build 1473: build 1471 gave the player Escape. A PHONE HAS NO ESCAPE KEY — so on touch the only way out
+   of a modal was one the creator remembered to build, which is the lock-in 1471 exists to make impossible,
+   surviving on the one device that could not fall back to the keyboard.
+   It is a real close BUTTON rather than a tap on the backdrop: a modal's widgets sit in a pointer-events:none
+   host, so a backdrop tap would fire on the panel art, the title and every non-button pixel of the menu —
+   dismissing the shop because the player touched its own background is worse than not being able to leave. */
+function _modalCloseBtn(){
+  const b=document.createElement('button'); b.id='modalX'; b.type='button';
+  b.textContent='\u2715'; b.setAttribute('aria-label','Close'); b.dataset.close='1';   /* build 940: the pad navigator backs out via [data-close] */
+  b.style.cssText='position:absolute;top:14px;right:16px;width:38px;height:38px;z-index:5;pointer-events:auto;'
+    +'display:grid;place-items:center;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;padding:0;'
+    +'border:1px solid rgba(var(--accent-rgb),0.5);background:rgba(6,12,15,0.72);color:var(--accent);';
+  b.onclick=(ev)=>{ ev.preventDefault(); ev.stopPropagation(); _modalSet(''); };
+  return b;
+}
 function _modalSyncBack(){
   /* The backdrop is the modal-ness: it dims the world behind the panel and it is what the eye reads as
      "this is a menu". It sits BELOW the widget host (z-index 3 against 4) so the widgets draw on top of it.
      It is a property of PLAY, so the editor and the pause menu never show one. */
   const want = !!_modalOpen && !(typeof editorOpen!=='undefined' && editorOpen) && !(typeof paused!=='undefined' && paused);
-  if(!want){ if(_modalBack){ _modalBack.remove(); _modalBack=null; } return; }
+  /* build 1473: the body class is what stands the touch control layer down, and it follows `want` rather
+     than `_modalOpen` — so opening the editor or pausing hands the sticks straight back. */
+  try{ if(document.body) document.body.classList.toggle('modalUp', want); }catch(e){}
+  if(!want){ if(_modalBack){ _modalBack.remove(); _modalBack=null; } if(_modalX){ _modalX.remove(); _modalX=null; } return; }
   if(_modalBack && _modalBack.parentNode) return;
   const hud=document.getElementById('hud'); if(!hud) return;
   _modalBack=document.createElement('div'); _modalBack.id='modalBack';
   _modalBack.style.cssText='position:absolute;inset:0;z-index:3;background:rgba(3,7,10,0.62);backdrop-filter:blur(2px);pointer-events:auto;';
   hud.appendChild(_modalBack);
+  /* a SIBLING of the backdrop, not a child: the backdrop carries z-index 3 and therefore its own stacking
+     context, so anything inside it paints below the widget host at 4 and a full-bleed panel image would
+     bury the only way out. */
+  _modalX=_modalCloseBtn(); hud.appendChild(_modalX);
 }
 // ---------- ACTION BINDINGS (build 1071) ----------
 // Seven authored animation slots (parry, dodge, block, holster, knockdown, getup, idleToCombat)
@@ -35183,7 +35211,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1472 · 2026-08-10';
+const BUILD_VERSION = 'build 1473 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

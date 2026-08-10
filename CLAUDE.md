@@ -490,6 +490,52 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A modal is usable on a phone (build 1473)
+
+Two defects in a feature two builds old, **both invisible on a desktop**.
+
+**1. The touch layer sat ten times higher than the menu.** `#touchUI` is `z-index: 40`, against the modal's
+backdrop at 3 and its widget host at 4. So on a phone the fire button, both sticks and every action button
+were live and fully visible **on top of** the dimmed menu — a tap meant to buy something fired a round
+instead. Build 1468's `_modalOpen` gate is a **mousedown** gate and never covered this.
+
+**2. A phone has no Escape key.** Build 1471 gave the player a way out and it was a keyboard one, so on
+touch the only exit was one the creator remembered to build — *exactly the lock-in 1471 exists to make
+impossible, surviving on the one device that could not fall back to the keyboard.*
+
+### Two decisions worth keeping
+
+**The touch layer stands down the same way a cinematic already stands it down** — a body class and one CSS
+rule, rather than a second mechanism. The class follows the backdrop's own `want`, so opening the editor or
+pausing hands the sticks straight back with the modal still armed.
+
+**The way out is a real BUTTON, deliberately not a tap on the backdrop.** A modal's widgets live in a
+`pointer-events:none` host, so every non-button pixel of the menu — the panel art, the title, the price list
+— *is* backdrop. Dismissing the shop because the player touched its own background is worse than not being
+able to leave. And it is a **sibling** of the backdrop rather than a child: the backdrop carries `z-index: 3`
+and therefore its own stacking context, so anything inside it paints below the widgets and a full-bleed
+panel image would bury the only way out.
+
+### Measured with `elementFromPoint` at the fire button's own centre
+
+That question — *what is under a finger there* — is the defect in one word, and no Node harness can answer it.
+
+```
+                          body class  #touchUI   under the fire button   close btn   under the close btn
+no modal                    false      block          tFire                 no             —
+modal open                  TRUE       none           (no box at all)      yes           modalX
+after the close button      false      block          tFire                 no             —      <- control returns
+modal armed, PAUSED         false      block          (sticks handed back, modal still armed)
+```
+
+The middle row reads `(no box at all)` rather than "something else is on top": with the layer hidden the
+button has no rect, which is a stronger result than occlusion.
+
+**One pin-writing note:** the assertion that `#touchUI` is z-index 40 first parsed *the first* `#touchUI {`
+rule in the file — and there are two, the earlier being the uiScale zoom rule with no z-index in it at all.
+Build 1392's recorded hazard: *an indexOf or first-match that misses is not an error, it is a wrong answer.*
+It asserts the literal now.
+
 ## The Level Check knows about modals (build 1472)
 
 Build 1468 refuses a modal that opens onto nothing and reports it through build 1214's run-time channel —
