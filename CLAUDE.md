@@ -490,6 +490,59 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The interaction booth survives the file (probe pass, after build 1486)
+
+`tools/probe/interaction-booth-level.mjs` runs this repo's most productive shape — author it, SAVE it, reload
+through the real loader, then PLAY what came out — over everything builds 1468-1486 added. That shape has
+found a real bug **every previous time it has been run**: 1398 (a shootable target that saved and was never
+read back), 1400 (five game settings written and never loaded), 1401 (thirteen sections a joiner never
+received), 1406 (fourteen of seventeen signal verbs losing every parameter), 1427 (the fuse).
+
+**34/34, and no engine change was needed.** That is the result, and it is worth having: those nineteen builds
+put state on three different roads — the HUD widget sanitizer, `SIG_KEYS`' short-key table (the road 1406
+found broken), and `gameCfg`/`worldCfg` scalars (the road 1400 found broken) — and it would not otherwise
+have been obvious which of them had left something behind.
+
+```
+written    {"w":"clicked","d":"modal","md":"show","mj":"shop","mz":1} · {"w":"clicked","d":"emit","tx":"ticket"}
+the reset  widgets 0 · AIR_JUMPS 0 · WALL_JUMP 0 · clickMove false     <- distinct-wrong before the load
+reloaded   2 props with their names · 5 widgets · clickMove · AIR_JUMPS 2 · WALL_JUMP 14 · jumpCut 0.35
+widgets    button+event+modal binding, colour, plate-off, size, art box, anchor/offset, timer format sec2,
+           the image kind, and a plain widget keeping its show-when and staying OUT of the modal
+stability  byte-identical across three save cycles
+PLAY       the reloaded prop is clickable, clicking it opens the modal it saved, and the FREEZE it saved freezes
+           a reloaded air jump is really spendable: rise 3.24, one spent
+```
+
+**The reset row is what makes the rest mean anything** (build 1401's rule): restoring the same live state
+proves nothing, because nothing cleared it. Every value is driven to a distinct wrong one first.
+
+### My own fixture broke the probe's own rule, twice
+
+- **An invented identifier.** The readout named `_jumpCutNow`, which does not exist, and the probe died on
+  its first run. The recorded trap, in the instrument.
+- **A column that round-tripped a DEFAULT.** I authored `anchor:'cc'`, which is not in `HW_ANCHORS`, so the
+  sanitizer correctly reset it to `'tc'` — and the row then compared a default to a default and tested
+  nothing. That is this probe's own stated rule (*a field that happens to equal its default cannot tell a
+  working loader from a missing one*) turned on the fixture that stated it. With a real anchor the row
+  carries `br / -40 / 60`.
+
+### Two premises that died on verification, recorded so they are not re-derived
+
+Both were candidate builds, and checking cost minutes:
+
+- **"The reticle can claim a click the click would refuse."** False by construction: the cue and the click
+  both go through `_clkResolve`, which is build 1480's whole point. There is no range at which they disagree.
+- **"A clickable prop can be clicked through terrain."** True, and **not a defect** — `terrainHeightAt`'s
+  terrain is in neither `colliders` nor `propModels`, so it occludes nothing for `segmentBlocked` either, and
+  the AI's own sightline sees through hills exactly the same way. Making clicks stricter than sight would
+  make them the odd one out. Prop-on-prop occlusion IS handled: the nearest solid hit wins, and a wall prop
+  with no `clicked` signal resolves to null.
+
+Also checked and already correct: the mousedown gate refuses a click while a modal, the shop, the map, the
+inventory, the editor or a pause is up — `_propClick` sits **below** that return, so the hover cue and the
+click agree about all seven states, which is what `test-1480` asserts in both directions.
+
 ## The hovered thing had no name (build 1486)
 
 Builds 1480 and 1485 answer *is this clickable* — a cursor, then a reticle ring. Neither answers **what it
