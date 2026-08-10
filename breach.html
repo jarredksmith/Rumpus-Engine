@@ -454,6 +454,10 @@
      too, because the fire handler is on `document` rather than on the canvas. */
   body.freeCursor #hud { cursor: default; }
   body.freeCursor canvas { cursor: crosshair; }
+  /* build 1480: ...and a POINTER over something the world will answer. After the crosshair rule so it wins,
+     and not scoped to .freeCursor: a modal frees the mouse on its own (build 1468), and the cue is correct
+     wherever there is a real pointer. */
+  body.clickHot canvas { cursor: pointer; }
   body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair,
   /* build 1465: the reload bar was welded to the CROSSHAIR's toggle, so "keep the crosshair, lose the bar"
      — the thing that was actually asked for — could not be said at all. It is its own toggle now, and the
@@ -14801,32 +14805,86 @@ function _propCtx(o){
 const CLICK_RANGE = 60;
 const _clkRay = new THREE.Raycaster();
 const _clkV2 = new THREE.Vector2();
-function _propClick(e){
-  if(typeof propModels==='undefined' || !propModels.length) return false;
-  const cv = renderer && renderer.domElement; if(!cv) return false;
+/* build 1480: ONE resolver, asked by the click and by the hover cue. Two implementations of "which prop is
+   under the cursor" is the defect this file records more than any other, and here it would surface as the
+   worst possible version of it — a cursor that says a thing is clickable and a click that disagrees. */
+function _clkResolve(x, y){
+  if(typeof propModels==='undefined' || !propModels.length) return null;
+  const cv = renderer && renderer.domElement; if(!cv) return null;
   /* Pointer-locked means the crosshair IS the cursor, so the ray goes through screen centre; free (build
-     1467) means the event's own coordinates are the truth. */
+     1467) means the pointer's own coordinates are the truth. */
   let nx = 0, ny = 0;
   if(!document.pointerLockElement){
-    const r = cv.getBoundingClientRect(); if(!r.width || !r.height) return false;
-    nx = ((e.clientX - r.left) / r.width) * 2 - 1;
-    ny = -((e.clientY - r.top) / r.height) * 2 + 1;
+    const r = cv.getBoundingClientRect(); if(!r.width || !r.height) return null;
+    nx = ((x - r.left) / r.width) * 2 - 1;
+    ny = -((y - r.top) / r.height) * 2 + 1;
   }
   _clkV2.set(nx, ny);
   _clkRay.setFromCamera(_clkV2, camera);
   _clkRay.far = CLICK_RANGE;
   let hits;
-  try{ hits = _clkRay.intersectObjects(propModels.filter(Boolean), true); }catch(err){ return false; }
+  try{ hits = _clkRay.intersectObjects(propModels.filter(Boolean), true); }catch(err){ return null; }
   /* build 1236's rule: nothing the renderer does not draw may answer a click either — an invisible
      collision volume inside a GLB is not a thing the player can see to click. */
-  const hit = _firstSolidHit(hits); if(!hit) return false;
+  const hit = _firstSolidHit(hits); if(!hit) return null;
   let o = hit.object;
   while(o && propModels.indexOf(o) < 0) o = o.parent;
-  if(!o) return false;
+  if(!o) return null;
   const sg = o.userData && o.userData.signals;
-  if(!Array.isArray(sg) || !sg.some(x => x && x.when === 'clicked')) return false;
+  if(!Array.isArray(sg) || !sg.some(x2 => x2 && x2.when === 'clicked')) return null;
+  return o;
+}
+function _propClick(e){
+  const o = _clkResolve(e.clientX, e.clientY); if(!o) return false;
   try{ _lgPropEvent(o, 'clicked', _propCtx(o)); }catch(err){}
   return true;
+}
+/* build 1480: NOTHING TOLD THE PLAYER A PROP WAS CLICKABLE. Build 1479 gave the world an On-click trigger
+   and left the affordance out — and in a point-and-click level the cursor changing over a live object is
+   not decoration, it IS how the player finds the game. Every adventure, tycoon and RTS has it.
+
+   The cue is the CURSOR, not an outline: it costs nothing to render, needs no new UI, and is the shape
+   every player already knows. An outline or a highlight is a bigger visual decision and is deliberately
+   not taken here. */
+const CLK_HOVER_EVERY = 4;    // frames between hover raycasts — 15 Hz is imperceptible from 60 for a cursor
+const CLK_SCAN_EVERY  = 30;   // frames between "does this level have anything clickable at all"
+let _clkAny = false, _clkTick = 0, _clkHot = false, _clkMx = -1, _clkMy = -1;
+/* The same seven states the mousedown gate names. They are two expressions rather than one because that
+   gate also governs the grab, ADS and the action binds, and is not purely about clicks — `test-1480`
+   asserts they name the same set, so they cannot drift into a cursor that lies. */
+function _clkBlocked(){
+  return !!((typeof shopOpen!=='undefined' && shopOpen) || (typeof editorOpen!=='undefined' && editorOpen)
+    || (typeof paused!=='undefined' && paused) || (typeof mapOpen!=='undefined' && mapOpen)
+    || (typeof duelDead!=='undefined' && duelDead) || (typeof invOpen!=='undefined' && invOpen)
+    || (typeof _modalOpen!=='undefined' && _modalOpen));
+}
+function _clkSetHot(v){
+  if(v === _clkHot) return;   // a class write only on a CHANGE — this runs every frame of every session
+  _clkHot = v;
+  try{ if(document.body) document.body.classList.toggle('clickHot', v); }catch(err){}
+}
+function _clkAnyClickable(){
+  if(typeof propModels==='undefined') return false;
+  for(const o of propModels){
+    const sg = o && o.userData && o.userData.signals;
+    /* early exit on the FIRST one, so the levels that use this feature pay almost nothing and only a level
+       with none pays the bounded walk — once every CLK_SCAN_EVERY frames. */
+    if(Array.isArray(sg) && sg.some(x => x && x.when === 'clicked')) return true;
+  }
+  return false;
+}
+function _clkHoverTick(){
+  /* Captured pointer = no cursor to change. The crosshair is already the aim, and a click cue for a view
+     that has no cursor is a different feature with a different answer (a crosshair state, or the interact
+     prompt), deliberately not invented here. */
+  if(typeof document==='undefined' || document.pointerLockElement || _clkBlocked()
+     || !(typeof gameOn!=='undefined' && gameOn)){ _clkSetHot(false); return; }
+  _clkTick++;
+  if(_clkTick % CLK_SCAN_EVERY === 1) _clkAny = _clkAnyClickable();   // re-asked, so a prop spawned at run
+  if(!_clkAny){ _clkSetHot(false); return; }                          // time gets its cue within half a second
+  if(_clkTick % CLK_HOVER_EVERY) return;
+  if(_clkMx < 0){ _clkSetHot(false); return; }   // the pointer has not been seen yet
+  _clkSetHot(!!_clkResolve(_clkMx, _clkMy));
 }
 function fireSignals(o, when){
   const sigs = o && o.userData && o.userData.signals; if(!sigs || !sigs.length) return;
@@ -35371,7 +35429,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1479 · 2026-08-10';
+const BUILD_VERSION = 'build 1480 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35861,6 +35919,9 @@ function _mouseSensNow(ads){
 }
 const SCOPE_SENS = 0.00045;                   // much slower under the scope's hard zoom
 addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ _bmSpin(e.deltaY, e.deltaMode); return; } if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
+/* build 1480: where the pointer is, for the hover cue. Separate from the look handler, which reads
+   movementX/Y — a locked pointer has no meaningful clientX/clientY and this is only ever read when free. */
+addEventListener('mousemove', e=>{ _clkMx = e.clientX; _clkMy = e.clientY; }, { passive:true });
 addEventListener('mousedown', e=>{
   if(radialOpen){ if(e.button===0) closeRadial(true); return; }
   if(typeof buildMode!=='undefined' && buildMode){ if(e.button===0){ placeBuild(); } else if(e.button===1){ _bmDeleteAimed(); } else if(e.button===2){ buildSnap=!buildSnap; try{ localStorage.setItem('breach_buildsnap', buildSnap?'1':'0'); }catch(_e){} _bmHint(); } e.preventDefault(); return; }
@@ -42108,6 +42169,7 @@ function loop(){
   updateDecals(dt);     // bullet holes fade + expire (pooled, hard-capped)
   updateLogic(dt);      // logic graph timers/delays/repeats (host/solo)
   updateHudWidgets();   // build 1058: custom HUD widgets mirror the logic variables (all modes)
+  _clkHoverTick();      // build 1480: the cursor says what is clickable — throttled, and free entirely on a level with none
   updateTriggerZones(dt);   // build 1072: trigger volumes -> logic events (host/solo)
   updateChests(dt);
   checkProximity();   // runs in all modes; in duel it only considers trigger-animation props

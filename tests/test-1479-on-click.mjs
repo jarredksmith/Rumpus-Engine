@@ -10,7 +10,10 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- 1. the resolver, EXECUTED
 {
-  const fn = extractFunction('_propClick', src);
+  // build 1480 lifted the resolution into `_clkResolve` so the hover cue and the click cannot disagree
+  // about what is clickable. Both are lifted from source, never restated — this rig's subject is the
+  // resolution, and it followed the function.
+  const fn = extractFunction('_clkResolve', src) + '\n' + extractFunction('_propClick', src);
   const RANGE = +extractConst('CLICK_RANGE', src);
   eq(RANGE, 60, 'the reach is a named constant');
 
@@ -113,7 +116,7 @@ const src = gameSource();
     eq(threw, true, 'a throwing filter is NOT swallowed here — only the raycast is guarded');
   }
 
-  assert(/propModels\.filter\(Boolean\)/.test(fn),
+  assert(/propModels\.filter\(Boolean\)/.test(extractFunction('_clkResolve', src)),
     'the null holes build 1167 leaves in propModels are skipped, or a failed model url takes the click ' +
     'handler down with it');
 }
@@ -149,7 +152,7 @@ const src = gameSource();
   // and now `clicked` are local player actions and fire wherever the player is.
   assert(/if\(typeof NET==='undefined' \|\| NET\.mode!=='client'\)\{ try\{ _lgPropEvent\(obj, 'destroyed'/.test(src),
     'destroyed is still host-gated');
-  const fn = extractFunction('_propClick', src);
+  const fn = extractFunction('_clkResolve', src) + extractFunction('_propClick', src);
   assert(!/NET/.test(fn),
     'clicked is NOT — it inherits On E’s locality, and _applySignalAction’s own routing rather than a ' +
     'second one beside it');

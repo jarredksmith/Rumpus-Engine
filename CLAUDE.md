@@ -490,6 +490,60 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The cursor says what is clickable (build 1480)
+
+Build 1479 gave the world an On-click trigger and **left the affordance out**, stating it as not done. In a
+point-and-click level the cursor changing over a live object is not decoration — it is how the player finds
+the game at all. Every adventure, tycoon and RTS has it.
+
+**The cue is the CURSOR, not an outline.** It costs nothing to render, needs no new UI, and is the shape
+every player already knows. An outline or a highlight is a bigger visual decision and is deliberately not
+taken here.
+
+### One resolver, because the alternative is a cursor that lies
+
+The resolution moved into `_clkResolve`, asked by **both** the click and the hover. Two implementations of
+*"which prop is under the cursor"* is the defect this file records more than any other, and here it would
+surface as its worst version: a cursor that says a thing is clickable and a click that disagrees.
+
+The two GATES are still two expressions — the mousedown gate also governs the grab, ADS and the action
+binds, so it is not purely about clicks — and `test-1480` asserts they name the same seven states **in both
+directions**, so they cannot drift into that same lie by the other door.
+
+### It is free on the levels that do not use it
+
+A bounded, early-exiting scan every 30 frames answers *"is there anything clickable at all"*, and a level
+with none casts **zero** rays — measured over 120 frames. Where there is something, 40 frames cost **10**
+raycasts rather than 40, the body class is written only on a CHANGE, and a prop that becomes clickable at
+run time gets its cue within half a second **without a deploy** — so `spawnprop` needs no hook.
+
+**A captured pointer is deliberately out of scope.** There is no cursor to change; the crosshair is already
+the aim, and a click cue for a view with no pointer is a different feature with a different answer (a
+crosshair state, or the interact prompt). Not invented here.
+
+### Measured on the PAINTED cursor, not the flag that drives it
+
+```
+             any    hot   body class   getComputedStyle(canvas).cursor
+clicky      true   true      true              pointer
+plain       true   false     false             auto        <- the control
+clicky      true   true      true              pointer     <- returns
++ a modal   true   false     false             auto        <- the cue stands down
+modal shut  true   true      true              pointer     <- returns
+no clickable
+props       FALSE  false     false             auto        · 0 raycasts in 120 frames
+```
+
+The modal row is the one worth reading: a click there does not reach the world, so a cursor claiming it
+would be the exact lie this build exists not to tell.
+
+**`auto` rather than `crosshair` is the probe's own state, not a finding** — it released the pointer lock by
+hand rather than setting `gameCfg.freeCursor`, so `body.freeCursor` is absent. What the row establishes is
+pointer against not-pointer, which is the whole claim.
+
+One pin moved: `test-1479`'s executing rig, whose subject IS the resolution and which followed it — both
+functions lifted from source rather than restated.
+
 ## Nothing in the world answered a click (build 1479)
 
 Asked for from play, one message after asking how to build a modal and how to test point-and-click: *"There
