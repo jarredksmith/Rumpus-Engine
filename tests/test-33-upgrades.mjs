@@ -51,7 +51,14 @@ assert(/upgrades: \(savedLevel && savedLevel\.game && savedLevel\.game\.upgrades
 assert(/ugCb\.onchange=\(\)=>\{ pushUndoSnapshot\(\); gameCfg\.upgrades=ugCb\.checked; \}/.test(src), 'editor checkbox toggles it');
 assert(!/!NET\.mode\)\{ beginUpgradeChoice/.test(src), 'no broken !NET.mode gate (off is a truthy string)');
 assert(/else \{ wave\+\+; SFX\.wave\(\); startWave\(\); \}/.test(src), 'co-op advances waves with no picker (run stays neutral)');
-assert(/shopOpen \|\| choosingUpgrade \|\| \(paused && NET\.mode==='off'\) \|\| \(mapOpen && NET\.mode==='off'\) \|\| \(invOpen && NET\.mode==='off'\)\) && !\(duelDead && pvpMode\(\)\)\) \{ pollGamepad/.test(src), 'world freezes while picking');
+  // build 1478 added a sixth term to the frame loop's freeze gate and broke five harnesses at once, every
+  // one of their assertions still TRUE — they had each quoted the WHOLE condition to assert one thing about
+  // it. That is build 1468's own recorded trap one line over: a pin that quotes a whole condition is a pin
+  // against the condition's NEIGHBOURS. They assert MEMBERSHIP now.
+{ const gate = src.match(/if\(\(shopOpen \|\| choosingUpgrade[^\n]*?\) \{ pollGamepad/);
+  assert(gate, 'the frame loop has a freeze gate');
+  assert(/\bchoosingUpgrade\b/.test(gate[0]), 'world freezes while picking an upgrade');
+  assert(/!\(duelDead && pvpMode\(\)\)/.test(gate[0]), '...but never while waiting to respawn'); }
 assert(/run = \{ \.\.\.RUN0 \};/.test(src) && /player\.maxHp=100;/.test(src), 'new game resets modifiers + max HP');
 const aw = extractFunction('advanceWave');
 assert(/run\.regen>0\) player\.hp = Math\.min/.test(aw) && /run\.grenadePerWave>0\) grenadeCount/.test(aw), 'per-wave perks applied on advance');

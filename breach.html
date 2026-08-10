@@ -13835,15 +13835,25 @@ let _modalOpen = '', _modalBack = null, _modalX = null;
    longer see whether build 1476's layering is right. A workaround the product instructs you to perform is a
    missing feature. */
 let _hwPrevModal = '';
+/* build 1478: build 1468 shipped modals and recorded this as the half it could not do — "a modal does not
+   PAUSE the world... `paused` early-returns the frame loop, so `updateHudWidgets` would stop running and
+   `_hwFire` returns on it — a paused modal is a frozen, unclickable one. Pausing properly needs a freeze
+   that is not `paused`, which is its own build." This is that build. A shop you browse while a wave keeps
+   shooting you is not a shop. */
+let _modalFreeze = false;
 function _modalWidgets(id){   // how many widgets belong to a modal — used by the verb's refusal and the editor's list
   const nm=String(id==null?'':id).trim(); if(!nm) return 0;
   let n=0; if(typeof hudWidgets!=='undefined') for(const w of hudWidgets){ if(w && w.modal===nm) n++; }
   return n;
 }
-function _modalSet(id){
+function _modalSet(id, freeze){
   const v=String(id==null?'':id).slice(0,24).trim();
-  if(v===_modalOpen) return;
-  _modalOpen=v;
+  /* An empty name can never freeze, so every close path in the engine — Escape, the close button, the verb,
+     a deploy, opening the editor — releases the world by calling the function it already called. ONE writer,
+     and no unwind list to keep in step. */
+  const f=!!v && !!freeze;
+  if(v===_modalOpen && f===_modalFreeze) return;
+  _modalOpen=v; _modalFreeze=f;
   /* A held trigger must not carry through the moment a menu opens over it — the mousedown gate below stops
      a NEW shot, and this stops the one already in flight. */
   if(v){ if(typeof firing!=='undefined') firing=false; if(typeof firingLatch!=='undefined') firingLatch=false; }
@@ -14188,7 +14198,7 @@ const LG_DEFS = {
     {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist','propvar']],listId:'lgPlaceList'},
     {k:'pvn',l:'of',w:72,ifv:['stat','propvar']},
     {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['marker','Objective marker'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab'],['setpropvar','Set prop value'],['modal','Open/close a modal']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop','setpropvar']]},{k:'pvop',l:'',w:56,ifv:['verb','setpropvar'],sel:[['add','Add'],['set','Set']]},{k:'pvn',l:'name',w:72,ifv:['verb','setpropvar']},{k:'pvv',l:'by',w:52,ifv:['verb','setpropvar']},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb',['objective','marker']]},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'vdwell',l:'cut every (s)',w:44,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'mmode',l:'',w:96,ifv:['verb','modal'],sel:[['show','Open\u2026'],['hide','Close']]},{k:'mid',l:'modal',w:96,ifv:['verb','modal'],ifv2:['mmode','show'],listId:'lgModalList'},{k:'mkmode',l:'',w:112,ifv:['verb','marker'],sel:[['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']]},{k:'mcol',l:'colour',w:70,ifv:['verb','marker']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view','marker','modal']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill','marker']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['marker','Objective marker'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab'],['setpropvar','Set prop value'],['modal','Open/close a modal']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop','setpropvar']]},{k:'pvop',l:'',w:56,ifv:['verb','setpropvar'],sel:[['add','Add'],['set','Set']]},{k:'pvn',l:'name',w:72,ifv:['verb','setpropvar']},{k:'pvv',l:'by',w:52,ifv:['verb','setpropvar']},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb',['objective','marker']]},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'vdwell',l:'cut every (s)',w:44,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'mmode',l:'',w:96,ifv:['verb','modal'],sel:[['show','Open\u2026'],['hide','Close']]},{k:'mid',l:'modal',w:96,ifv:['verb','modal'],ifv2:['mmode','show'],listId:'lgModalList'},{k:'mfrz',l:'freeze the world',chk:1,ifv:['verb','modal'],ifv2:['mmode','show']},{k:'mkmode',l:'',w:112,ifv:['verb','marker'],sel:[['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']]},{k:'mcol',l:'colour',w:70,ifv:['verb','marker']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view','marker','modal']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill','marker']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -15192,7 +15202,9 @@ function _applyWorldAction(s){
     }
     const mpay={ md:mid };
     if(who==='actor'){ if(_wactToActor(mpay)) return; }
-    _modalSet(mid); _wactSend(mpay); return; }
+    /* the freeze is deliberately NOT on the wire: it can only ever apply in a solo session, so sending it
+       would be a field every modal message carries for a case that cannot arise. */
+    _modalSet(mid, mm==='show' && !!s.mfrz); _wactSend(mpay); return; }
   if(s.do==='command'){
     /* build 1408: an order can be given to the enemies at ONE PLACE. This resolved to all of them or to the
        single nearest one to the PLAYER, so in a level with more than one room "hold position" froze every
@@ -21228,7 +21240,7 @@ const SIG_KEYS = {
   mkmode:'mk', mcol:'mo',                                               // marker (build 1412); `at` and `text` are shared
   prefab:'pb', escope:'es', er:'er',                                    // build 1408: the command's own scope
   pvn:'pn', pvv:'pw', pvop:'po',                                        // build 1461: per-prop variables
-  mmode:'md', mid:'mj'                                                  // build 1468: custom modals
+  mmode:'md', mid:'mj', mfrz:'mz'                                       // build 1468: custom modals (1478: the freeze)
 };
 const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
 const SIG_STR_MAX = 300;   // a signal can carry a sound URL; the consumers keep their own tighter caps
@@ -35315,7 +35327,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1477 · 2026-08-10';
+const BUILD_VERSION = 'build 1478 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -41302,7 +41314,13 @@ function loop(){
   if(_cineActive){ updateCinematic(rawDt); if(mixers.length){ for(const m of mixers) m.update(rawDt); } if(typeof updateXAnim==='function') updateXAnim(rawDt); renderScene(scene,camera); return; }   // keep GLB clips AND mechanism/waypoint motion (doors, platforms, elevators) alive on camera   // keep prop/GLB animations alive on camera (raw time — no hitstop during a cutscene)   // intro/preview flythrough owns the camera; freeze the sim
   if(_interActive){ pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }   // campaign transition card owns the screen; hold the won level frozen behind it
   if(!gameOn) { if(drivingCar && typeof exitCar==='function') exitCar(); pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }   // build 879: a stranded drive state (win/death mid-drive) self-heals at the menu
-  if((shopOpen || choosingUpgrade || (paused && NET.mode==='off') || (mapOpen && NET.mode==='off') || (invOpen && NET.mode==='off')) && !(duelDead && pvpMode())) { pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); if(mapOpen) drawBigMap(); return; }  // freeze world while shopping / picking an upgrade / paused / inventory open (solo) — but never while waiting to respawn
+  /* build 1478: a frozen modal joins this gate, SOLO ONLY — exactly the shape `paused`, `mapOpen` and
+     `invOpen` already carry here, because nothing can stop the world for one player in a shared session.
+     `updateHudWidgets` is called INSIDE the freeze so the menu keeps drawing and its `show when` rows keep
+     answering; `_hwFire` gates on `paused` and not on this, so the buttons still work — which is the whole
+     reason the freeze is its own flag. Escape (1471) and the close button (1473) are DOM handlers, so
+     neither needs the loop and a frozen modal can never be a lock-in. */
+  if((shopOpen || choosingUpgrade || (paused && NET.mode==='off') || (mapOpen && NET.mode==='off') || (invOpen && NET.mode==='off') || (_modalFreeze && NET.mode==='off')) && !(duelDead && pvpMode())) { pollGamepad(dt); updateHudWidgets(); renderScene(scene,camera); renderViewmodel(); if(mapOpen) drawBigMap(); return; }  // freeze world while shopping / picking an upgrade / paused / inventory open / in a freezing modal (solo) — but never while waiting to respawn
 
   /* build 1316: scan BEFORE either look path, so the pad and the touch pad read one derivation. It is one
      frame stale by construction — the alternative is scanning twice — and at 8 degrees of cone that is
@@ -48147,6 +48165,7 @@ function _sigWorldRow(s, rerender){
        have a row that configures it, or it is offered and unreachable. */
     sel([['show','Open\u2026'],['hide','Close']], s.mmode||'show', v=>{ s.mmode=v; });
     if(s.mmode!=='hide') txt('modal name', s.mid, v=>{ if(v) s.mid=v; else delete s.mid; }, 120, 'lgModalList');
+    if(s.mmode!=='hide') chk('freeze the world', s.mfrz, v=>{ if(v) s.mfrz=1; else delete s.mfrz; });
     sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
   } else if(s.do==='setpropvar'){
     /* build 1461: per-prop values. The tag box defaults to blank, which means `#self` — the prop whose

@@ -28,5 +28,11 @@ assert(/showMainMenu\(\);/.test(ex), 'solo exit returns to the main menu');
   for(const g of ['chatOpen', 'mapOpen', 'invOpen', '_hwCursorFree', '_cursorFreeNow'])
     assert(h.includes(g), '...unless ' + g + ' released it on purpose (build 1255, build 1467)');
 }
-assert(/\(paused && NET\.mode==='off'\) \|\| \(mapOpen && NET\.mode==='off'\) \|\| \(invOpen && NET\.mode==='off'\)\) && !\(duelDead && pvpMode\(\)\)\) \{ pollGamepad/.test(src), 'solo play freezes while paused');
+  // build 1478 added a sixth term to the frame loop's freeze gate and broke five harnesses at once, every
+  // one of their assertions still TRUE — they had each quoted the WHOLE condition to assert one thing about
+  // it. That is build 1468's own recorded trap one line over: a pin that quotes a whole condition is a pin
+  // against the condition's NEIGHBOURS. They assert MEMBERSHIP now.
+{ const gate = src.match(/if\(\(shopOpen \|\| choosingUpgrade[^\n]*?\) \{ pollGamepad/);
+  assert(gate, 'the frame loop has a freeze gate');
+  assert(/\(paused && NET\.mode==='off'\)/.test(gate[0]), 'solo play freezes while paused \u2014 and only solo'); }
 done('pause menu + exit to main menu');

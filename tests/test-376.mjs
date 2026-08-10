@@ -31,7 +31,13 @@ assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\|
 }
 
 // ---- loop: solo freezes (and still paints the map); multiplayer keeps the world live ----
-assert(/\|\| \(mapOpen && NET\.mode==='off'\) \|\| \(invOpen && NET\.mode==='off'\)\) && !\(duelDead/.test(src), 'solo freeze includes the map');
+  // build 1478 added a sixth term to the frame loop's freeze gate and broke five harnesses at once, every
+  // one of their assertions still TRUE — they had each quoted the WHOLE condition to assert one thing about
+  // it. That is build 1468's own recorded trap one line over: a pin that quotes a whole condition is a pin
+  // against the condition's NEIGHBOURS. They assert MEMBERSHIP now.
+{ const gate = src.match(/if\(\(shopOpen \|\| choosingUpgrade[^\n]*?\) \{ pollGamepad/);
+  assert(gate, 'the frame loop has a freeze gate');
+  assert(/\(mapOpen && NET\.mode==='off'\)/.test(gate[0]), 'solo freeze includes the map \u2014 and only solo'); }
 assert(/renderViewmodel\(\); if\(mapOpen\) drawBigMap\(\); return; \}/.test(src), 'the map is painted while the world is frozen in solo');
 assert(/drawMinimap\(\); if\(perfOn\)_prof\.mini\+=_pnow\(\)-_a; \}\n  if\(mapOpen\) drawBigMap\(\);/.test(src), 'multiplayer keeps simulating and draws the map each frame');
 

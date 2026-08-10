@@ -124,7 +124,12 @@ const src = gameSource();
   const branch = (() => {
     const a = src.indexOf("  if(s.do==='modal'){");
     assert(a > 0, 'the modal branch is in _applyWorldAction');
-    return src.slice(a, src.indexOf('_modalSet(mid); _wactSend(mpay); return; }', a) + 42);
+    // build 1478 gave `_modalSet` a second argument, so the old needle stopped matching — and an indexOf
+    // that misses returns -1 and slices GARBAGE rather than failing (build 1392). It ends on the call now,
+    // whatever its arity, and asserts the anchor was found.
+    const end = src.indexOf('_wactSend(mpay); return; }', a);
+    assert(end > a, 'the modal verb block ends where it is expected to');
+    return src.slice(a, end + 26);
   })();
   assert(/_wactToActor/.test(branch), 'and it is beside the other per-player world verbs');
 
