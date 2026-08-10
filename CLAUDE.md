@@ -490,6 +490,69 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The double jump (build 1482)
+
+Build 1301 named four verbs it deliberately left — *"double jump, wall jump, dash, air-dash — each is its
+own verb with its own tuning and its own compatibility question"* — and 1463 took the air dash. This is the
+most standard of the rest, and it takes 1463's shape for 1463's reason.
+
+**OFF BY DEFAULT is the compatibility question answered.** Every gap, ledge and jump puzzle in every level
+ever authored was measured against a player with ONE jump; a second that existed by default would make a
+fraction of them trivial and would let a player leave arenas their author had sealed. `airJumps` is the
+COUNT, so 0 means off and one field both enables and tunes it — exactly `jumpCut`'s and `airDash`'s shape.
+
+**It is the JUMP KEY**, so there is no new bind, nothing to teach, and a creator who rebinds jump moves both
+together.
+
+### It needed no arm window, and that is the interesting part
+
+The dash needed `AIR_DASH_ARM` because `onGround` flickers false mid-stride (926/1160/1222) and an airborne
+dash could steal a buffered ground slide on those frames. This verb needs nothing: **build 1160's coyote is
+refreshed on every grounded frame**, so a flicker still satisfies the ground branch and the air branch's
+`_coyoteT <= 0` cannot fire there. The guard was already in the engine — this verb just had to ask for it,
+and the flicker case is executed rather than argued.
+
+Three more decisions: it is an **`else if`** of the ground jump, so a grounded press is always the ordinary
+jump and that branch is byte-identical; it **SETS** `vel.y` rather than adding, so a 40 u/s fall is arrested
+to a real recovery jump instead of nudged; and `!_onLadder` is the one guard the ground branch does not
+carry — jumping OFF a ladder is a ground-class jump and stays, while an extra mid-air jump while still
+attached to one is a hover.
+
+It inherits `JUMP_CD` (0.5 s), so it cannot be spammed, and build 1301's `jumpCut` covers it for free — that
+cut applies to a RISE and does not care which jump caused it.
+
+### Measured live, with TWO controls
+
+```
+                        rise    air jumps spent
+one press,  airJumps 0  2.71          0
+TWO presses, airJumps 0 2.71          0      <- the extra press alone does nothing
+one press,  airJumps 1  2.71          0      <- the setting alone does nothing
+TWO presses, airJumps 1 5.29          1      <- only the combination moves
+one press,  airJumps 0  2.71          0      <- returns
+
+refund   spent 1 mid-air · still 1 at touchdown · 0 three frames later
+held key 240 frames with jump HELD spends ZERO — one press is one jump, not a hover
+```
+
+**Two flat controls is what makes the fourth row a finding.** Either alone changes nothing.
+
+### The probe measured a fixture measuring itself, twice
+
+- **Every row read 2.71/0 first** — because a 2-frame tap is cut by `jumpCut` to a 0.93 m hop that is over
+  in ~13 frames, so the "mid-air" second press landed on the GROUND in all four rows. Identical rows are not
+  a null; they are a fixture with nothing in it.
+- **The refund read INVERTED** (0 mid-air, 1 after landing). The clear runs earlier in the frame than the
+  ground test, so on the touchdown frame it still sees last frame's airborne state and lands one frame
+  later. Harmless — nothing can press jump between them — but the readout has to wait for it.
+- And `afterOne` read 0 three frames after the press, which looked like a failure and was **`JUMP_CD`**: the
+  ground jump spent it, so a press at 0.4 s buffers and fires when the 0.5 s cooldown clears. That is the
+  air jump inheriting the ordinary jump's rate limit, which is the behaviour you want.
+
+One pin moved: `test-1463` sliced the dash block on the refund line this build extended. Its anchor is the
+statement the line opens now rather than its exact contents — **a slice whose anchor quotes a whole line is
+a slice against that line's neighbours.**
+
 ## Click to move (build 1481)
 
 Build 1467's request, quoted in its own entry, was *"point-click type **navigation**"*. That build delivered

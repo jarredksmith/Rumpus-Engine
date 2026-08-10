@@ -22461,7 +22461,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
 // the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
 // crushed red channel survives the restaging.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, airDash:0, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'img/tex/floor-concrete-n.png', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'img/tex/wall-panels-n.png', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, airDash:0, airJumps:0, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'img/tex/floor-concrete-n.png', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'img/tex/wall-panels-n.png', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -22733,6 +22733,28 @@ const JUMP_CUT_MIN = 0.1;   // build 1301: the shortest tap hop, so the setting 
    rebinding conflict: the slide already requires `player.onGround`, so the airborne press has been dead
    input since build 910. Slide on the ground, dash in the air is one verb expressed by state — the
    Titanfall/Apex idiom — and a creator who rebinds slide moves both together, which is what they mean. */
+/* ---- build 1482: THE DOUBLE JUMP (build 1301's remaining verb) ------------------------------------
+   Build 1301 named four it deliberately left — double jump, wall jump, dash, air-dash — and 1463 took the
+   air dash. This is the most standard of the rest, and it takes 1463's shape for 1463's reason.
+
+   OFF BY DEFAULT, and that IS the compatibility question answered: every gap, ledge and jump puzzle in
+   every level ever authored was measured against a player with ONE jump. A second that existed by default
+   would make a fraction of them trivial and would let a player leave arenas their author had sealed.
+   `airJumps` is the COUNT of extra mid-air jumps, so 0 means off and one field both enables and tunes it —
+   exactly `jumpCut`'s and `airDash`'s shape, and exactly their argument.
+
+   IT IS THE JUMP KEY. No new bind, no key to teach, no rebinding conflict, and a creator who rebinds jump
+   moves both together — which is what they mean.
+
+   IT NEEDS NO ARM WINDOW, unlike the dash. `onGround` flickers false mid-stride (builds 926/1160/1222), and
+   the dash had to guard against stealing a buffered ground slide on those frames — but build 1160's COYOTE
+   is refreshed on every grounded frame, so a flicker still satisfies the ground branch and the air branch's
+   `_coyoteT <= 0` cannot fire there. The guard was already in the engine; this verb just had to ask for it.
+
+   `jumpCut` (build 1301) applies for free: it cuts a RISE, and does not care which jump caused it. */
+const AIR_JUMP_MAX = 3;         // past this it is a novelty rather than a verb, and a level file is untrusted
+let AIR_JUMPS = 0;              // live value derived from worldCfg; 0 = the pre-1482 engine, byte for byte
+let _airJumpsUsed = 0;
 const AIR_DASH_T = 0.16;        // how long gravity is suspended: the difference between a dash and a nudge
 const AIR_DASH_MIN = 4;         // an authored speed below this is a tap, not a dash — clamped up so the verb always reads
 let AIR_DASH = 0;               // live value derived from worldCfg; 0 = the pre-1463 engine, byte for byte
@@ -22832,6 +22854,10 @@ function applyWorldCfg(){
      the player presses and cannot feel, which is worse than no verb. */
   { const _ad = +(worldCfg.airDash == null ? DEFAULT_WORLD.airDash : worldCfg.airDash);
     AIR_DASH = (isFinite(_ad) && _ad > 0) ? Math.max(AIR_DASH_MIN, Math.min(60, _ad)) : 0; }
+  /* build 1482: same shape and the same 1329 trap — 0 is OFF and must survive `||`-style defaulting, so it
+     is tested against null explicitly. Floored to a whole number, because half an extra jump is nothing. */
+  { const _aj = +(worldCfg.airJumps == null ? DEFAULT_WORLD.airJumps : worldCfg.airJumps);
+    AIR_JUMPS = (isFinite(_aj) && _aj > 0) ? Math.max(1, Math.min(AIR_JUMP_MAX, Math.floor(_aj))) : 0; }
   // arena size — rebuild floor/grid/walls only when it changes; coalesce rapid changes (slider drag)
   // into one rebuild per frame so dragging stays smooth.
   worldCfg.arena = Math.max(15, Math.min(2000, worldCfg.arena == null ? DEFAULT_WORLD.arena : +worldCfg.arena));   // build 827: up to 2000 (a 4 km course) for racing-scale worlds; the flat floor/walls scale free and the nav grid stays bounded
@@ -35515,7 +35541,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1481 · 2026-08-10';
+const BUILD_VERSION = 'build 1482 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -41732,7 +41758,12 @@ function loop(){
      `_dashUsed` is CLEARED on the ground rather than set on landing, because `onGround` flickers
      mid-stride (builds 926/1160/1222) — a landing EDGE would miss the refund on the frames it blinks.
      It is also why no run-reset is needed: the first grounded frame of a fresh deploy refunds it. */
-  if(player.onGround || _ledge){ _dashUsed = false; _airT = 0; } else _airT += dt;
+  /* build 1482 rides this line for build 1463's reason, restated because it is the whole of why it is a
+     CLEAR rather than a landing edge: `onGround` flickers mid-stride, so an edge would miss the refund on
+     the frames it blinks. A ledge grab refunds both, because a hang IS ground contact by every other rule
+     in this file — and it is also why no run-reset is needed, since the first grounded frame of a fresh
+     deploy refunds them. */
+  if(player.onGround || _ledge){ _dashUsed = false; _airJumpsUsed = 0; _airT = 0; } else _airT += dt;
   if(_dashT > 0) _dashT -= dt;
   if(AIR_DASH > 0 && _slideBufT > 0 && !_dashUsed && _airT >= AIR_DASH_ARM && !player.onGround && !_ledge && !sliding
      && !drivingCar && !mountedTurret && !_onLadder && !duelDead && gameOn && !editorOpen && !shopOpen
@@ -41813,6 +41844,17 @@ function loop(){
   if(player.onGround) _coyoteT = COYOTE_T; else if(_coyoteT>0) _coyoteT -= dt;
   if(_jPressed) _jumpBufT = JUMP_BUF; else if(_jumpBufT>0) _jumpBufT -= dt;
   if(!_ledge && _jumpBufT>0 && (player.onGround || _coyoteT>0) && (player.jumpCd||0)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret){ player.vel.y = JUMP; player.onGround=false; _coyoteT=0; _jumpBufT=0; sliding=false; player.jumpCd=JUMP_CD; SFX.jump(); }
+  /* build 1482: the air jump, as an `else if` so a grounded press is ALWAYS the ordinary jump and that
+     branch stays byte-identical. `_coyoteT<=0` is what makes it genuinely airborne (see the note at
+     AIR_JUMP_MAX). `!_onLadder` is the one guard the ground branch does not carry, and the asymmetry is
+     deliberate: jumping OFF a ladder is a ground-class jump and stays, while an extra mid-air jump while
+     still attached to one is a hover, not a verb. It SETS vel.y rather than adding, so a falling player
+     gets a real recovery jump instead of a nudge — which is what a double jump is for. */
+  else if(AIR_JUMPS > 0 && !_ledge && _jumpBufT>0 && !player.onGround && _coyoteT<=0 && _airJumpsUsed < AIR_JUMPS
+     && (player.jumpCd||0)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret && !_onLadder
+     && !drivingCar && !duelDead && gameOn && !editorOpen && !shopOpen){
+    player.vel.y = JUMP; _airJumpsUsed++; _jumpBufT=0; sliding=false; player.jumpCd=JUMP_CD; SFX.jump();
+  }
   // ---- build 1301: VARIABLE JUMP HEIGHT (gameplay audit F6) --------------------------------------------
   // "The jump is one assignment with no release handling. Every jump is exactly 2.82 m. Rumpus advertises a
   // side-scroll mode with a lane lock — a 2.5D platformer where you cannot tap for a short hop is missing
@@ -48752,7 +48794,7 @@ function renderEditorFields(){
     };
     { const b=subSec('Movement','move',false);
       slider(b,'Walk speed','walk',4,60,1); slider(b,'Run speed','run',4,100,1); slider(b,'Crouch speed','crouch',1,40,1);
-      slider(b,'Jump','jump',0,30,0.5); slider(b,'Tap hop','jumpCut',0.1,1,0.05); slider(b,'Air dash','airDash',0,40,1);   /* build 1463: the dash SPEED — 0 is OFF, which is every level authored before it. Pressed on the slide key while airborne, once per jump. */ slider(b,'Launch power','launchPower',0.25,4,0.25); slider(b,'Gravity','grav',5,80,1);   /* build 1301: Tap hop — how much of the jump a TAP keeps (height goes as the square, so 0.5 is a quarter-height hop). 1 = every jump is full height, the pre-1301 engine. */
+      slider(b,'Jump','jump',0,30,0.5); slider(b,'Tap hop','jumpCut',0.1,1,0.05); slider(b,'Air jumps','airJumps',0,3,1); slider(b,'Air dash','airDash',0,40,1);   /* build 1463: the dash SPEED — 0 is OFF, which is every level authored before it. Pressed on the slide key while airborne, once per jump. */ slider(b,'Launch power','launchPower',0.25,4,0.25); slider(b,'Gravity','grav',5,80,1);   /* build 1301: Tap hop — how much of the jump a TAP keeps (height goes as the square, so 0.5 is a quarter-height hop). 1 = every jump is full height, the pre-1301 engine. */
       slider(b,'Eye height','eyeHeight',0.4,20,0.05);   // build 702/703: first-person camera height (up to 20m)
       hint(b,'','1px 0 2px').textContent='Crouch: hold Ctrl (R3 on a controller). Eye height sets the first-person camera level (1.7 = default; up to 20m for a tall/overhead view). View only — collision is unchanged. Gravity change affects props on next Deploy.'; }
     { const b=subSec('Lighting','light',true);
