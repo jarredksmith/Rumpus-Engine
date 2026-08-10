@@ -15043,6 +15043,7 @@ function _cmMarkTick(dt){
 const CLK_HOVER_EVERY = 4;    // frames between hover raycasts — 15 Hz is imperceptible from 60 for a cursor
 const CLK_SCAN_EVERY  = 30;   // frames between "does this level have anything clickable at all"
 let _clkAny = false, _clkTick = 0, _clkHot = false, _clkHotAim = false, _clkMx = -1, _clkMy = -1;
+let _clkTarget = null;   // build 1486: WHICH prop is hot, so the label can name it
 /* The same seven states the mousedown gate names. They are two expressions rather than one because that
    gate also governs the grab, ADS and the action binds, and is not purely about clicks — `test-1480`
    asserts they name the same set, so they cannot drift into a cursor that lies. */
@@ -15055,6 +15056,31 @@ function _clkBlocked(){
 /* build 1485: `aim` says the hit was resolved through SCREEN CENTRE (a locked pointer), which is the only
    case in which a cue drawn at screen centre points at the thing that answered. One writer of both classes,
    so the cursor cue and the reticle cue can never come to different conclusions. */
+/* ---- build 1486: THE HOVERED THING HAS A NAME ------------------------------------------------------
+   Builds 1480 and 1485 answer "is this clickable" — a cursor, then a reticle ring. Neither answers WHAT it
+   is, and in a point-and-click level that is the other half of the affordance: every adventure ever shipped
+   names the object under the pointer. The proximity prompt has named things since build 696 ("E Talk to
+   Bob"), and a clickable prop, which can be answered from up to CLICK_RANGE away, had nothing.
+
+   THE PROMPT IS ONE ELEMENT WITH ONE WRITER. `checkProximity` owns `#prompt` — it sets the text and it is
+   the thing that hides it — so this label is produced THERE, as the branch that runs when proximity has
+   nothing of its own. A second writer would be this file's most-repeated defect, and on an element that
+   blinks between two answers it would be visible on the first frame.
+
+   PROXIMITY WINS, and that ordering is the decision rather than a fallback: standing at a lever whose E
+   prompt is live, the actionable verb is the one at arm's reach. The hover label is what fills the gap when
+   there is no such verb.
+
+   It names the CLICK, never the interact key, because they are different verbs on different devices — and a
+   prop can be both, in which case walking up to it correctly swaps the label to the E prompt. */
+function _clkHoverLabel(){
+  if(!_clkHot || !_clkTarget) return '';
+  const u = _clkTarget.userData || {};
+  /* the prop's own authored name, which the outliner already shows — a level that named its props gets a
+     real label for free, and one that did not gets an honest generic rather than "undefined" */
+  const nm = (typeof u.name === 'string') ? u.name.trim() : '';
+  return nm ? ('<b>CLICK</b> ' + _creditEsc(nm)) : '<b>CLICK</b>';
+}
 function _clkSetHot(v, aim){
   const a = !!v && !!aim;
   if(v === _clkHot && a === _clkHotAim) return;   // a class write only on a CHANGE — this runs every frame
@@ -15077,15 +15103,18 @@ function _clkHoverTick(){
      when locked — so the ANSWER was available the whole time and only the cue was missing, which is why this
      is a class rather than a second resolver. */
   if(typeof document==='undefined' || _clkBlocked()
-     || !(typeof gameOn!=='undefined' && gameOn)){ _clkSetHot(false); return; }
+     || !(typeof gameOn!=='undefined' && gameOn)){ _clkTarget = null; _clkSetHot(false); return; }
   const _locked = !!document.pointerLockElement;
   _clkTick++;
   if(_clkTick % CLK_SCAN_EVERY === 1) _clkAny = _clkAnyClickable();   // re-asked, so a prop spawned at run
-  if(!_clkAny){ _clkSetHot(false); return; }                          // time gets its cue within half a second
+  if(!_clkAny){ _clkTarget = null; _clkSetHot(false); return; }                          // time gets its cue within half a second
   if(_clkTick % CLK_HOVER_EVERY) return;
   /* only a FREE pointer has to have been seen — a locked one ignores the coordinates entirely */
-  if(!_locked && _clkMx < 0){ _clkSetHot(false); return; }
-  _clkSetHot(!!_clkResolve(_clkMx, _clkMy), _locked);
+  if(!_locked && _clkMx < 0){ _clkTarget = null; _clkSetHot(false); return; }
+  /* build 1486: the resolver already returns the PROP; keeping it is what lets the prompt name the thing,
+     and it comes from the same call rather than a second raycast that could disagree */
+  _clkTarget = _clkResolve(_clkMx, _clkMy);
+  _clkSetHot(!!_clkTarget, _locked);
 }
 function fireSignals(o, when){
   const sigs = o && o.userData && o.userData.signals; if(!sigs || !sigs.length) return;
@@ -34705,9 +34734,16 @@ function checkProximity(){
     } else {
       prompt.innerHTML = `SUPPLY CACHE — <b>${_uk}</b> Open`;
     }
-    prompt.style.display='block';
+    prompt.style.display='block'; prompt.dataset.hover = '';
   } else {
-    prompt.style.display='none';
+    /* build 1486: with nothing at arm's reach, the prompt names whatever the player is POINTING at. Same
+       element, same writer, and proximity has already had its say by the time we get here.
+       The `hover` flag is not decoration: on touch this element is TAPPABLE and its tap calls `interact()`,
+       which is the wrong verb for a click target and would be a dead tap — the exact "nothing happened" this
+       run of builds exists to remove. It says which kind of prompt is on screen so the tap can decline. */
+    const _hl = _clkHoverLabel();
+    if(_hl){ prompt.innerHTML = _hl; prompt.style.display='block'; prompt.dataset.hover = '1'; }
+    else { prompt.style.display='none'; prompt.dataset.hover = ''; }
   }
 }
 
@@ -35702,7 +35738,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1485 · 2026-08-10';
+const BUILD_VERSION = 'build 1486 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36263,7 +36299,7 @@ addEventListener('contextmenu', e=>{
     const up=()=>{ off(); b.classList.remove('on'); };
     b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); };
   const tap=(id,fn)=>{ const b=document.getElementById(id); if(!b) return; b.addEventListener('pointerdown', e=>{ fn(); e.preventDefault(); }); };
-  { const pr=document.getElementById('prompt'); if(pr) pr.addEventListener('pointerdown', e=>{ if(isTouch){ if(typeof interact==='function') interact(); e.preventDefault(); } }); }   // tap the "E" prompt to use it
+  { const pr=document.getElementById('prompt'); if(pr) pr.addEventListener('pointerdown', e=>{ if(isTouch && pr.dataset.hover !== '1'){ if(typeof interact==='function') interact(); e.preventDefault(); } }); }   // tap the "E" prompt to use it
   // Fire button doubles as a look surface: hold to fire AND drag the same thumb to keep aiming.
   (function(){
     const fire=document.getElementById('tFire'); if(!fire) return;

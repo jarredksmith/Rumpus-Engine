@@ -21,7 +21,11 @@ const src = gameSource();   // the game script
   assert(!/intersectObjects|_firstSolidHit|when === 'clicked'/.test(pc),
     '...and holds no copy of the resolution itself');
   const ht = extractFunction('_clkHoverTick', src);
-  assert(/_clkSetHot\(!!_clkResolve\(_clkMx, _clkMy\)/.test(ht), 'and so does the hover');
+  /* build 1486 keeps the RESOLVED PROP so the prompt can name it, so the call and the cue are two statements
+     now. The property is unchanged: one resolver, asked once, and the cue derived from its answer. */
+  assert(/_clkResolve\(_clkMx, _clkMy\)/.test(ht) && /_clkSetHot\(!!_clkTarget/.test(ht),
+    'and so does the hover');
+  eq((ht.match(/_clkResolve\(/g) || []).length, 1, '...asked exactly once per tick');
   assert(!/intersectObjects|_firstSolidHit/.test(ht), '...with no second copy either');
 }
 

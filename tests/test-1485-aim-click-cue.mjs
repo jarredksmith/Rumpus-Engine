@@ -16,13 +16,13 @@ const src = gameSource();
     'a captured pointer is no longer an early return — that gate WAS the bug');
   assert(/const _locked = !!document\.pointerLockElement;/.test(tick),
     '...it is read as a fact about WHERE the hit resolves instead');
-  assert(/_clkSetHot\(!!_clkResolve\(_clkMx, _clkMy\), _locked\)/.test(tick),
+  assert(/_clkSetHot\(!!_clkTarget, _locked\)/.test(tick),
     'and passed on, so the cue knows which cue it is');
   assert(/if\(!_locked && _clkMx < 0\)/.test(tick),
     'only a FREE pointer has to have been seen first — a locked one ignores the coordinates');
   // the throttles and the whole-level gate survive: this must stay free on a level with nothing clickable
   assert(/_clkAny = _clkAnyClickable\(\)/.test(tick), 'the level-wide scan survives');
-  assert(/if\(!_clkAny\)\{ _clkSetHot\(false\); return; \}/.test(tick),
+  assert(/if\(!_clkAny\)\{ _clkTarget = null; _clkSetHot\(false\); return; \}/.test(tick),
     'a level with nothing clickable still costs one boolean and no raycast');
   assert(/CLK_HOVER_EVERY/.test(tick), 'and the hover raycast is still throttled');
   assert(/_clkBlocked\(\)/.test(tick), 'and every blocking UI still suppresses it');

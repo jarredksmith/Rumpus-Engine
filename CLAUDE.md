@@ -490,6 +490,71 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The hovered thing had no name (build 1486)
+
+Builds 1480 and 1485 answer *is this clickable* — a cursor, then a reticle ring. Neither answers **what it
+is**, and in a point-and-click level that is the other half of the affordance: every adventure ever shipped
+names the object under the pointer. The proximity prompt has named things since build 696 (*"E Talk to
+Bob"*), and a clickable prop — answerable from up to `CLICK_RANGE` away — had nothing at all.
+
+### One element, one writer
+
+`checkProximity` owns `#prompt`: it sets the text and it is the thing that hides it. So the hover label is
+produced **there**, as the branch that runs when proximity has nothing of its own. A second writer would be
+this file's most-repeated defect, and on an element that would then blink between two answers it would be
+visible on the very first frame. `test-1486` asserts the hover path never writes the element and that
+`_clkHoverLabel` **returns text and writes nothing**.
+
+**Proximity wins, and that ordering is the decision rather than a fallback.** Standing at a lever whose E
+prompt is live, the actionable verb is the one at arm's reach; the hover label fills the gap when there is no
+such verb. It is asserted structurally (the label sits in the `else` of the `nearTarget` branch) *and*
+measured with both answers available at once.
+
+The prop comes from the resolve that was **already happening** — `_clkResolve` returns the object and 1480
+threw it away — so there is no second raycast that could name a different thing from the one the ring is
+lit for. All three of the tick's giving-up exits clear it, because a remembered prop with the cue off is a
+label that will not go away; the test counts them and asserts there is no fourth.
+
+It names the **CLICK**, never the interact key: different verbs on different devices. A prop that is both
+correctly swaps to the E prompt as you walk up.
+
+### The dead tap, closed in the same build
+
+On touch, `#prompt` is `pointer-events:auto` and its tap calls `interact()` — the wrong verb for a click
+target, and a tap that does nothing is exactly the *"nothing happened"* this run of builds exists to remove.
+The prompt now carries `dataset.hover` saying **which kind of prompt is on screen**, and the tap declines a
+hover label. The proximity branch clears the flag, or one hover would disable the shortcut for every later E
+prompt.
+
+Structurally the label is nearly unreachable on touch anyway (`_clkMx` comes from mousemove), which is
+precisely why it was worth an explicit guard rather than leaving it to be incidentally true.
+
+### Measured live, through the real prompt
+
+```
+pointing AT it     <b>CLICK</b> Vault Door        hover flag 1
+pointing away      hidden                         flag cleared
+unnamed prop       <b>CLICK</b>                   never the string "undefined"
+hostile name       &lt;img src=x onerror=1&gt;    img nodes in the DOM: 0
+STANDING at it     <b>E</b> Activate              flag '' — and still pointing at it
+stepped back       <b>CLICK</b> Vault Door
+```
+
+**The fifth row is the control and `stillPointingAtIt: true` is what makes it one**: both answers were
+available on that frame and only one reached the screen. A run where the player had merely stopped pointing
+at the prop would have proved nothing about precedence.
+
+### A pin defeated by my own prose, again
+
+The first version asserted `!/prompt/.test(_clkHoverTick)` to mean *the hover never writes the element* — and
+failed against correct code, because a comment I had just written inside that function says the word
+"prompt". Builds 1411, 1412, 1421 and 1485 all record this; the rule is unconditional and I broke it anyway.
+**Pin the syntax** — `!/prompt\s*\.\s*\w+\s*=/` — never the bare word.
+
+Four pins moved across three files (116, 1480, 1485), each keeping its intent: 116's *"tapping the prompt
+calls interact"* is still exactly true of a proximity prompt and now tolerates the guard beside it, and the
+other three quoted lines this build extended by a statement.
+
 ## The affordance was gated on the view most players are not in (build 1485)
 
 Build 1479 gave the world an On-click trigger, 1480 gave it a hover cue, and that cue opened:

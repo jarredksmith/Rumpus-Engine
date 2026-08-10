@@ -17,7 +17,10 @@ assert(/if\(isTouch\)\{ if\(touchMoveZ\) flyPos\.addScaledVector\(fwd, -touchMov
 assert(/if\(isTouch\)\{ editorFreeFly=true; flyInit=false; \}/.test(src), 'editor opens in fly mode on touch');
 
 // tappable prompt
-assert(/pr\.addEventListener\('pointerdown', e=>\{ if\(isTouch\)\{ if\(typeof interact==='function'\) interact\(\);/.test(src), 'tapping the prompt calls interact');
+/* build 1486 gave the prompt a second kind of content — a HOVER label, whose verb is a click, not `interact` —
+   so the tap declines that one. What this always meant, that a touch player can tap the E prompt instead of
+   hunting for a key, is unchanged and is what is asserted. */
+assert(/pr\.addEventListener\('pointerdown', e=>\{ if\(isTouch[^)]*\)\{ if\(typeof interact==='function'\) interact\(\);/.test(src), 'tapping the prompt calls interact');
 
 // CSS: tappable prompt, hidden combat buttons + confined look while editing, lifted/shrunk HUD
 assert(/body\.touch #prompt \{ pointer-events:auto; z-index:45; cursor:pointer;/.test(html), 'prompt is tappable on touch');
