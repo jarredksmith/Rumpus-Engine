@@ -490,6 +490,57 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## Escape, when there is no pointer lock to give back (build 1471)
+
+Two defects, one key, both found by asking what Escape should do once build 1468 gave the screen something
+that can cover it.
+
+**1. A modal had no way out.** A creator had to wire a button to a logic event to a `modal hide` node —
+three steps for the single most universal action a menu has — and forgetting any one of them left the player
+standing in a dimmed screen with no way back. That is exactly the failure 1468's three refusals exist to
+prevent, **arriving through the other door**.
+
+**2. Solo play has never bound Escape to the pause menu.** It releases the pointer lock, and the
+`pointerlockchange` handler pauses on the way out. **Build 1467's free cursor never TAKES that lock** — so
+from that build until this one, a solo player in a cursor view could not pause at all. A defect I shipped
+three builds ago, closed here rather than left for a report.
+
+### Order is the whole design, because six branches want this key
+
+The modal goes **first** — above build mode, a mounted turret, a driven car and the multiplayer match menu —
+because a modal is a full-screen overlay and nothing behind it may have the key. Only the editor's own
+deselect (1310) outranks it, and the branch excludes the editor explicitly rather than relying on that.
+
+The free-cursor pause goes **last**, below the turret, the car and the match menu, because each of those is
+a more specific thing to back out of than "open the menu", and it is gated on ten states that already own
+Escape.
+
+### There is deliberately no "cannot be dismissed" option
+
+A forced choice — a mandatory class pick, a game-over screen — is a real thing to want, and it is still
+buildable by reopening the modal. **A locked-out player cannot rebuild anything.** So this takes the
+recoverable failure, the absence is asserted in both the node table and the whole engine, and the creator is
+told where they author the modal rather than finding out from a player.
+
+### Measured with real KeyboardEvents on `document`, so it is the engine's own chain
+
+```
+                          modal   backdrop  modal widget  plain HUD widget  paused
+modal open                 fair     yes        shown          shown           no
+Escape                     ''       gone       hidden         shown            no    <- and it did NOT pause behind it
+Escape again               ''       gone       hidden         shown           YES    <- the 1467 hole
+Escape, cursor CAPTURED    ''       gone       hidden         shown            no    <- the control, old route unchanged
+Escape while DRIVING       closed the modal, still driving, not paused
+enter the editor           modal cleared, backdrop gone; leaving does not bring it back
+```
+
+The plain HUD widget holding `shown` in every row is what makes the rest a finding rather than a rebuild.
+
+**One pin-writing note, for the record:** the assertion that no lock-in flag exists used a bare `mesc`,
+which matches inside **"timescaled"**. Build 1400 records exactly this — *a short variable name in a source
+pin is a substring of everything that ends with it* — and it cost one run. The pin asserts the real key
+shapes now.
+
 ## Ten builds of new state, and all of it survives the file (probe pass, after build 1470)
 
 Builds 1461-1470 each added state and not one had been through `serializeLevel -> restoreLevel`: per-prop

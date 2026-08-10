@@ -22702,6 +22702,19 @@ addEventListener('keydown', e=>{
   if(e.code==='Escape' && editorOpen && !e.repeat && typeof selProps!=='undefined' && selProps && selProps.length){
     e.preventDefault(); if(typeof deselectAllProps==='function') deselectAllProps(); return;
   }
+  /* build 1471: a MODAL is a full-screen overlay, so nothing behind it may have this key — not build mode,
+     not a turret, not a car, not the multiplayer match menu. It goes first, under only the editor's own
+     deselect, because a modal never belongs on screen while authoring (see toggleEditor below).
+
+     THERE IS DELIBERATELY NO "cannot be dismissed" OPTION. A creator authoring a menu has to wire a button
+     to a logic event to a `modal hide` node — three steps — for the single most universal action a menu
+     has, and forgetting any one of them leaves the player standing in a dimmed screen with no way back,
+     which is exactly the failure build 1468's three refusals exist to prevent, arriving through the other
+     door. A forced choice can be rebuilt by reopening the modal; a locked-out player cannot rebuild
+     anything. This engine's own rule is to prefer the recoverable failure. */
+  if(e.code==='Escape' && !e.repeat && typeof _modalOpen!=='undefined' && _modalOpen && !editorOpen){
+    e.preventDefault(); if(typeof _modalSet==='function') _modalSet(''); return;
+  }
   if(e.code==='Escape' && typeof buildMode!=='undefined' && buildMode){ e.preventDefault(); exitBuildMode(); return; }   // build 928
   if(e.code==='KeyX' && typeof buildMode!=='undefined' && buildMode && gameOn && !editorOpen){ e.preventDefault(); _bmDeleteAimed(); return; }   // build 941: delete the aimed placed block
   if(e.code==='Escape' && mountedTurret){ e.preventDefault(); dismountTurret(); return; }
@@ -22710,6 +22723,18 @@ addEventListener('keydown', e=>{
     e.preventDefault();
     if(typeof toggleMatchMenu==='function') toggleMatchMenu();
     return;
+  }
+  /* build 1471: SOLO play has never bound Escape to the pause menu — it releases the pointer lock, and the
+     pointerlockchange handler pauses on the way out. Build 1467's free cursor never TAKES that lock, so
+     from that build until this one a solo player with a cursor view had no way to pause at all. A defect
+     shipped three builds ago, found by asking what else Escape should do once a modal could eat it.
+
+     It sits BELOW the turret, car and match-menu branches on purpose: each of those already owns Escape
+     and is a more specific thing to back out of than "open the menu". */
+  if(e.code==='Escape' && !e.repeat && typeof _cursorFreeNow==='function' && _cursorFreeNow()
+     && gameOn && !gameOver && !paused && !editorOpen && !shopOpen && !invOpen && !mapOpen && !chatOpen
+     && !radialOpen && !choosingUpgrade && !(NET.mode && NET.mode!=='off')){
+    e.preventDefault(); if(typeof openPause==='function') openPause(); return;
   }
   keys[e.code]=true;
   // Claim the keys the game drives so the browser never swallows them — Space in particular gets eaten
@@ -35152,7 +35177,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1470 · 2026-08-10';
+const BUILD_VERSION = 'build 1471 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45566,7 +45591,7 @@ function renderHudPanel(){
         card.appendChild(l5);
         if(w.modal){
           const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:1px 0 0;font-size:10.5px;';
-          h.textContent='Every widget sharing this name opens and closes together, over a dimmed backdrop, with the mouse freed and the world no longer taking your clicks. Open it from the Logic graph with Do action \u2192 Open/close a modal, or from a prop signal. Like "show when", a widget in a modal is hidden while you author \u2014 blank this field to lay it out, then put the name back.';
+          h.textContent='Every widget sharing this name opens and closes together, over a dimmed backdrop, with the mouse freed and the world no longer taking your clicks. Open it from the Logic graph with Do action \u2192 Open/close a modal, or from a prop signal. Esc always closes it, so a player can never be locked in one \u2014 wire your own close button too if you want the menu to have one. Like "show when", a widget in a modal is hidden while you author \u2014 blank this field to lay it out, then put the name back.';
           card.appendChild(h);
         }
       }
@@ -53538,6 +53563,10 @@ function toggleEditor(){
   releaseHeld();
   if(!editorOpen && pvpMode()){ if(typeof flashToast==='function') flashToast('Editor is disabled in this mode'); return; }   // no mid-match settings changes / cheating
   if(!editorOpen && drivingCar && typeof exitCar==='function') exitCar();   // build 766: opening the editor forces you out of the car (no stuck speedo HUD)
+  /* build 1471: a modal is PLAY state and must never survive into authoring — the backdrop already hides
+     itself in the editor (1468), but leaving `_modalOpen` set would keep its widgets on screen and would
+     hand the creator a dimmed viewport the moment they left again. */
+  if(typeof _modalSet==='function') try{ _modalSet(''); }catch(_e){}
   editorOpen = !editorOpen; _editorOpenFlag = editorOpen;
   if(typeof grid!=='undefined' && grid) grid.visible = _gridWanted();   // build 1133: the grid follows the editor, not the level
   if(editorOpen){
