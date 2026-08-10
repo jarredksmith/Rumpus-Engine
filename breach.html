@@ -14921,7 +14921,12 @@ function _cmClickGround(e){
   let hits;
   try{ hits = _cmRay.intersectObjects(_cmTargets(), true); }catch(err){ return false; }
   const hit = _firstSolidHit(hits); if(!hit) return false;   // build 1236: an undrawn surface is not a floor
-  return _cmGoTo(hit.point.x, hit.point.z, hit.point.y);
+  /* build 1484: the cue fires at the point the player actually pointed at, in the colour that says whether
+     it worked — so a refused click stops being indistinguishable from one the game never heard. A click
+     that hit NOTHING gets no cue, because there is no point in space to put one at. */
+  const ok = _cmGoTo(hit.point.x, hit.point.z, hit.point.y);
+  _cmMarkAt(hit.point.x, hit.point.y, hit.point.z, ok);
+  return ok;
 }
 const CM_REACH = 400;   // a click-to-move destination is wherever the camera can see, unlike a click ON something
 const _cmTgt = [];
@@ -14930,6 +14935,83 @@ function _cmTargets(){
   if(typeof floor!=='undefined' && floor) _cmTgt.push(floor);
   if(typeof colliders!=='undefined') for(const c of colliders){ if(c) _cmTgt.push(c); }
   return _cmTgt;
+}
+/* ---- build 1484: THE DESTINATION SAYS SOMETHING BACK -----------------------------------------------
+   Build 1481 shipped click-to-move and left the feedback out, which makes a REFUSED click and an IGNORED
+   click identical: the player points at a wall face or a spot the nav grid has nothing walkable near, and
+   absolutely nothing happens. That is build 1147's "nothing happened", and 1310/1348's rule that a product
+   must not stay silent about its own answer.
+
+   So every click that lands on a real surface gets a cue, and the two answers LOOK DIFFERENT: a ping in the
+   level's own accent that then HOLDS at the destination while you walk, or a red ping that does not hold.
+   A refusal that looked like a success would be worse than no cue at all.
+
+   THE RING IS THE ARRIVAL RADIUS. Its held size is `CM_ARRIVE` exactly, so the marker is not a decoration
+   at the destination — it is a drawing of where "arrived" means, and it cannot drift from the number that
+   decides it.
+
+   Four things it deliberately is not:
+     * NOT A LIGHT. The scene's light count must never change during play (636/977/1153/1155).
+     * NOT ALLOCATED PER CLICK — one mesh, built lazily and reused for the life of the page (1168).
+     * NOT LIT. A destination has to read in an unlit corner, which is build 1411's argument for the sign.
+     * NOT A RAYCAST TARGET. Its own raycast is neutralised, the `nocollide` convention (1093), so it can
+       never become the thing a later click resolves to.
+   Being `transparent` it is swept out of the AO/velocity G-buffers by `_aoNoDepthMat` for free — the rule
+   builds 1126/1128/1152/1158/1285 arrived at six times, satisfied here by construction rather than by a
+   seventh naming. */
+const CM_PING_S = 0.42;        // seconds of expanding ring
+const CM_PING_FROM = 0.6;      // ...as multiples of the held size
+const CM_PING_TO = 3.0;
+const CM_MARK_UP = 0.06;       // stood off the floor by PROUD, so a flat ring cannot z-fight it (levelgen)
+const CM_DENY_COL = 0xff4d6d;  // a warning colour, never the level's accent: 1469's close-button rule
+let _cmMark = null, _cmPingT = 0, _cmPingOk = false, _cmMarkPhase = 0;
+function _cmMarkMesh(){
+  try{
+    if(!_cmMark){
+      const g = new THREE.RingGeometry(0.62, 1, 40); g.rotateX(-Math.PI/2);
+      const m = new THREE.MeshBasicMaterial({ color:CM_DENY_COL, transparent:true, opacity:0,
+                                              depthWrite:false, side:THREE.DoubleSide });
+      _cmMark = new THREE.Mesh(g, m);
+      _cmMark.frustumCulled = false; _cmMark.renderOrder = 3; _cmMark.visible = false;
+      _cmMark.raycast = function(){};
+    }
+    /* re-seated rather than assumed: a level swap tears the scene down, and a marker left parented to the
+       old one is a cue nobody will ever see again */
+    if(_cmMark.parent !== scene) scene.add(_cmMark);
+  }catch(err){ _cmMark = null; }
+  return _cmMark;
+}
+function _cmMarkCol(){
+  /* the level's own accent, so a themed level's destination is themed too (1469) */
+  try{ const h = (typeof hudCfg!=='undefined' && hudCfg && hudCfg.accent) || DEFAULT_HUD.accent;
+       return parseInt(String(h).replace('#',''), 16); }catch(err){ return 0x38f5b5; }
+}
+function _cmMarkAt(x, y, z, ok){
+  const m = _cmMarkMesh(); if(!m) return;
+  m.position.set(x, y + CM_MARK_UP, z);
+  m.material.color.setHex(ok ? _cmMarkCol() : CM_DENY_COL);
+  _cmPingT = CM_PING_S; _cmPingOk = !!ok; _cmMarkPhase = 0;
+}
+function _cmMarkTick(dt){
+  const m = _cmMark; if(!m) return;
+  /* never while authoring: the creator is placing things, not walking to them */
+  if(typeof editorOpen!=='undefined' && editorOpen){ m.visible = false; return; }
+  let vis = false;
+  if(_cmPingT > 0){
+    _cmPingT = Math.max(0, _cmPingT - dt);
+    const t = 1 - (_cmPingT / CM_PING_S);
+    m.scale.setScalar(CM_ARRIVE * (CM_PING_FROM + (CM_PING_TO - CM_PING_FROM) * t));
+    m.material.opacity = Math.max(0, 1 - t);
+    vis = true;
+  } else if(_cmPingOk && _cmOn){
+    /* the HOLD, and only for a route that is still live — arriving takes the marker with it, which is the
+       arrival cue and needs no second one */
+    _cmMarkPhase += dt * 5;
+    m.scale.setScalar(CM_ARRIVE);
+    m.material.opacity = 0.30 + 0.16 * (0.5 + 0.5 * Math.sin(_cmMarkPhase));
+    vis = true;
+  }
+  m.visible = vis;
 }
 const CLK_HOVER_EVERY = 4;    // frames between hover raycasts — 15 Hz is imperceptible from 60 for a cursor
 const CLK_SCAN_EVERY  = 30;   // frames between "does this level have anything clickable at all"
@@ -35586,7 +35668,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1483 · 2026-08-10';
+const BUILD_VERSION = 'build 1484 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42376,6 +42458,7 @@ function loop(){
   updateLogic(dt);      // logic graph timers/delays/repeats (host/solo)
   updateHudWidgets();   // build 1058: custom HUD widgets mirror the logic variables (all modes)
   _clkHoverTick();      // build 1480: the cursor says what is clickable — throttled, and free entirely on a level with none
+  _cmMarkTick(dt);      // build 1484: and the ground says whether it heard the click
   updateTriggerZones(dt);   // build 1072: trigger volumes -> logic events (host/solo)
   updateChests(dt);
   checkProximity();   // runs in all modes; in duel it only considers trigger-animation props

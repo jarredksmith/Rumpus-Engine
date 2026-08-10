@@ -490,6 +490,76 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A refused click and an unheard click looked the same (build 1484)
+
+Build 1481 shipped click-to-move and left the feedback out. So the player points at a wall face, or at a spot
+the nav grid has nothing walkable near, and **absolutely nothing happens** — indistinguishable from a click
+the game never received. That is build 1147's *"nothing happened"*, and 1310/1348's rule that a product must
+not stay silent about its own answer.
+
+Every click that lands on a real surface now gets a cue, and **the two answers look different**: a ping in the
+level's own accent that then HOLDS at the destination while you walk, or a red ping that does not hold. A
+refusal that looked like a success would be worse than no cue at all.
+
+### The ring IS the arrival radius
+
+Its held size is `CM_ARRIVE` exactly, so the marker is not a decoration near the destination — it is a drawing
+of *where "arrived" means*, and it cannot drift from the number that decides it. Measured live at 0.55.
+
+Four things it deliberately is not, each a defect the other way:
+
+- **Not a light.** The scene's light count must never change during play (636/977/1153/1155).
+- **Not allocated per click** — one mesh, built lazily on the first click and reused for the life of the page
+  (1168). A level whose player never clicks pays for nothing at all, which the test asserts by ticking
+  without clicking and finding no mesh.
+- **Not lit.** A destination has to read in an unlit corner, which is build 1411's argument for the sign.
+- **Not a raycast target.** Its own raycast is neutralised (1093's `nocollide` convention), so it can never
+  become the thing a later click resolves to.
+
+Being `transparent` it is swept out of the AO and velocity G-buffers by `_aoNoDepthMat` **for free** — the
+rule builds 1126, 1128, 1152, 1158 and 1285 arrived at six times, satisfied here by construction rather than
+by a seventh naming. `test-1484` executes the real predicate against the real material rather than asserting
+it.
+
+**The refusal red is fixed and never the accent** — build 1469's close-button rule: a warning colour is
+information, and a destination refusal painted in the level's own theme reads as *confirm*.
+
+### Measured live, with the two answers side by side
+
+```
+before any click    the marker does not exist                       <- the control
+good click          accent #38f5b5, 17.3 m away
+  6 frames on       visible, opacity 0.76, expanding
+  the HOLD          visible, scale 0.55 = CM_ARRIVE, still walking
+  on arrival        147 frames later: gone
+REFUSED click       took false, RED, at the point pointed at
+  6 frames on       visible, opacity 0.76 — the refusal is heard
+  40 frames on      gone, and never held                            <- the answers differ
+editor              hidden, and given straight back on the way out
+```
+
+**Arrival takes the marker with it, and that is the arrival cue** — a second one would be noise.
+
+### Three fixture faults, two of them rows that measured nothing
+
+- **`took:false` in every row.** `_cmClickGround`'s second line refuses a CAPTURED pointer, and the headless
+  session holds the lock — so the whole probe measured the lock. `exitPointerLock` is asynchronous (it
+  resolves through a `pointerlockchange` event, which build 1467's handler then pauses on), so the release
+  needs its own round trip and a `__gate()` behind it.
+- **The HOLD row read an empty marker.** Aimed steeply down, the destination landed **1.6 m away** and the
+  player arrived before the ping had finished — so the one row carrying the whole success-versus-refusal
+  distinction was measuring an arrival. Aiming shallow puts it 17.3 m out.
+- **The refusal was only ever sampled after its ping was spent**, so "the refusal pings" was never actually
+  observed. It is sampled at the same 6 frames the success is now.
+
+One readback note worth keeping: the refusal reads back as `#fe4d6d` rather than the authored `#ff4d6d`.
+That is one code value of `ColorManagement` round trip through `getHexString` — `setHex` linearises on the
+way in — not a wrong colour.
+
+One pin moved (1481), and its intent is unchanged: it quoted `return _cmGoTo(...)`, which this build had to
+put in a local so the same answer could drive the cue. What it always protected is the **argument order**
+(x, z, y), which it asserts directly now, beside a new assertion that the caller is still told that answer.
+
 ## The wall jump, and a test that caught the code doing the other thing (build 1483)
 
 The last of the four verbs build 1301 named and deferred — *"double jump, wall jump, dash, air-dash — each is

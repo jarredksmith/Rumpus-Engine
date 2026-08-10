@@ -146,7 +146,10 @@ const K = (n) => +extractConst(n, src);
     'a captured pointer has nothing to aim at the ground with');
   assert(/_firstSolidHit\(hits\)/.test(cg),
     'build 1236 again: an undrawn surface is not a floor you can be sent to');
-  assert(/return _cmGoTo\(hit\.point\.x, hit\.point\.z, hit\.point\.y\)/.test(cg), '...and the hit point is the goal');
+  /* the CALL, not the `return` keyword in front of it — build 1484 needed the answer in a local so it could
+     also drive the destination cue. The content this always protected is the argument ORDER (x, z, y). */
+  assert(/_cmGoTo\(hit\.point\.x, hit\.point\.z, hit\.point\.y\)/.test(cg), '...and the hit point is the goal');
+  assert(/return ok;/.test(cg), '...and that answer is what the caller is told');
   const tg = extractFunction('_cmTargets', src);
   assert(/_cmTgt\.length = 0;/.test(tg), 'the target list is reused rather than rebuilt (build 1168)');
   assert(/floor/.test(tg) && /colliders/.test(tg), '...and covers the ground plane and the level’s solids');
