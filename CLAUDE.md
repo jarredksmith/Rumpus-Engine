@@ -490,6 +490,82 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A modal can freeze the world (build 1478)
+
+Build 1468 shipped modals and wrote down the half it could not do:
+
+> *"A modal does not PAUSE the world... `paused` early-returns the frame loop, so `updateHudWidgets` would
+> stop running and `_hwFire` returns on it — a paused modal is a frozen, unclickable one. Pausing properly
+> needs a freeze that is not `paused`, which is its own build."*
+
+This is that build. **A shop you browse while a wave keeps shooting you is not a shop.**
+
+### It is its own flag for exactly the reason 1468 named
+
+`_hwFire` and `_hwSyncCursor` both gate on `paused` and **neither knows about `_modalFreeze`** — so the menu
+stays clickable and the mouse stays free while the world stops. That is the whole design, and it is asserted
+as an absence rather than assumed.
+
+It joins the frame loop's **existing** freeze gate, **solo only** — the same shape `paused`, `mapOpen` and
+`invOpen` already carry there, because nothing can stop the world for one player in a shared session. The
+gate now calls `updateHudWidgets` **inside** the freeze, or a frozen modal would be a still image and its
+`show when` rows would stop answering.
+
+### The release is structural, not a list of unwind sites
+
+An empty modal name **can never freeze** (`const f = !!v && !!freeze`), so Escape, the close button, the
+verb, a deploy and opening the editor all release the world by calling the function they already called.
+`_modalFreeze` is assigned in exactly **two** places in the whole engine — its declaration and `_modalSet`.
+And the early return tests **both** pieces of state, so re-opening the same modal with the freeze toggled is
+not swallowed.
+
+**Escape (1471) and the close button (1473) are DOM handlers**, so neither needs the loop it just stopped —
+which is what makes a frozen modal impossible to be locked into.
+
+**It is deliberately not on the wire**, asserted as an absence: it can only ever apply in a solo session, so
+a co-op peer can never be frozen by someone else's menu.
+
+### Measured live, with the same modal unfrozen as the control in every row
+
+```
+              frames   enemy moved   button fires   backdrop
+no freeze       14        4.999           yes         yes
+FREEZING        13        0.000           yes         yes
+control         12        4.649           yes         yes    <- returns
+escape        frozen -> closed, backdrop gone, freeze released
+deploy        frozen -> released
+```
+
+**Both columns are the finding, and they pull against each other** — that is why 1468 deferred it. The
+enemy stops dead while the button still fires. `frames` barely moves, which is correct: the loop is still
+running and rendering, and it is the *simulation* that stopped.
+
+### The probe was wrong three times before the engine was right
+
+| # | it reported | why |
+|---|---|---|
+| 1 | the button never fires | the widget field is **`event`**, not `ev` — an invented name (1429) |
+| 2 | still never fires | `_hwFire` fires a logic EVENT; there was no graph to receive it |
+| 3 | *still* never fires | the wire is `{a, o, b, i}`, not the `{from, fo, to, ti}` I invented |
+
+**The tell was `_hwCd` reading `{"buy": 36762}`** — the cooldown `_hwFire` sets. So the click had reached it
+all along and the fault was upstream, in my fixture. And a fourth row was non-discriminating before it was
+fixed: `bought` carried over between trials, so the frozen row could not tell a working click from a stale
+value. *Before believing a null, prove the instrument can produce a positive* — `logicEvent('bought')` driven
+directly, reading `[0, 1]`, is what separated the four.
+
+### Six pins moved, and five were one line
+
+Five harnesses (33, 376, 455, 60, 84) each quoted the **whole** freeze condition to assert one thing about
+it — that the upgrade pick freezes, that the map does, that the inventory does, that pausing does, that
+respawning never does. Every one of those statements is still true; all five broke because a sixth term
+joined the list. **That is build 1468's own recorded trap one line over**, and they assert membership now.
+
+The sixth is 1468's own rig, and it is build 1392's hazard: it sliced the verb block with
+`indexOf('_modalSet(mid); _wactSend(mpay); return; }')`, which this build's second argument made miss — and
+**an `indexOf` that misses returns −1 and slices garbage rather than failing.** It ends on the call whatever
+its arity now, and asserts the anchor was found.
+
 ## The modal was invisible while you built it (build 1477)
 
 Build 1468 made a modal a **stack of widgets** gated on `_modalOpen`, and build 1471 has `toggleEditor`
