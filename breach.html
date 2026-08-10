@@ -13766,6 +13766,21 @@ function _hwSafeUrl(u){
   if(!/^https?:\/\//i.test(u) && !/^data:image\//i.test(u)) return '';
   return u.slice(0, 400);
 }
+/* build 1476: WIDGETS DRAW IN LIST ORDER. `_hwRebuild` appends them in array order into one absolutely
+   positioned host with no z-index of their own, so the LAST entry paints in front — and until this build
+   there was no way to change that order but delete everything and re-add it in the right sequence.
+   Build 1260's image widget (card faces, portraits, panel frames) and build 1468's modals, which are a
+   STACK of widgets by definition, are what made that unworkable: authoring the frame after the buttons
+   drew it over them permanently. Worse than it sounds — the host is `pointer-events:none` and only buttons
+   opt in, so the art covers the button and the button still works, which is a player clicking something
+   they cannot see. */
+function _hwMove(i, dir){
+  if(typeof hudWidgets==='undefined' || !Array.isArray(hudWidgets)) return false;
+  const j=i+dir;
+  if(i<0 || i>=hudWidgets.length || j<0 || j>=hudWidgets.length) return false;
+  const t=hudWidgets[i]; hudWidgets[i]=hudWidgets[j]; hudWidgets[j]=t;
+  return true;
+}
 function _sanitizeHudWidgets(a){
   if(!Array.isArray(a)) return [];
   const out=[];
@@ -35285,7 +35300,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1475 · 2026-08-10';
+const BUILD_VERSION = 'build 1476 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45630,6 +45645,16 @@ function renderHudPanel(){
       const l1=document.createElement('div'); l1.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;';
       l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar'],['button','Button'],['image','Image']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
       const lab=inp(w.label, w.kind==='timer'?'label (before the time)':'label \u2014 {var} shows live', 150, v=>{ w.label=v.slice(0,80); }); lab.style.flex='1'; l1.appendChild(lab);
+      /* build 1476: the buttons speak in LAYERING, not in list indices. A creator thinks "put the frame
+         behind the buttons"; making them work out that earlier in a list means further back is a puzzle
+         with a wrong answer. Moving BACK is one step earlier in the array, FRONT one step later. */
+      const mk=(txt, dir, tip, dis)=>{ const b=document.createElement('button'); b.textContent=txt; b.title=tip;
+        b.style.cssText='padding:1px 6px;font-size:10px;flex:0 0 auto;';
+        if(dis) b.disabled=true;
+        else b.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); if(_hwMove(i, dir)){ commitW(); renderHudPanel(); } };
+        return b; };
+      l1.appendChild(mk('\u25bc back', -1, 'Draw this one step further BACK (behind the others)', i===0));
+      l1.appendChild(mk('\u25b2 front', 1, 'Draw this one step further FORWARD (in front of the others)', i===hudWidgets.length-1));
       const del=document.createElement('button'); del.textContent='\u2715'; del.title='Remove widget'; del.style.cssText='padding:1px 7px;font-size:11px;flex:0 0 auto;'; del.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudWidgets.splice(i,1); commitW(); renderHudPanel(); };
       l1.appendChild(del); card.appendChild(l1);
       if(w.kind==='button'){   /* build 1255 */
@@ -45709,6 +45734,10 @@ function renderHudPanel(){
       }
       wrap.appendChild(card);
     });
+    { /* build 1476: the order is not decoration — it is what decides which widget covers which */
+      const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:4px 0 0;font-size:10.5px;';
+      h.textContent='Widgets draw in this order: the LAST one is in front. Put a panel frame or a card face at the back and the text and buttons over it \u2014 use \u25bc back / \u25b2 front to restack. (An image never blocks a button\u2019s clicks, so art drawn over one hides a control that still works.)';
+      wrap.appendChild(h); }
     const addRow=document.createElement('div'); addRow.style.cssText='display:flex;gap:6px;margin:4px 0 2px;';
     const mkAdd=(txt,proto)=>{ const b=document.createElement('button'); b.textContent=txt; b.style.cssText='flex:1;padding:4px 6px;font-size:11px;';
       b.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); if(hudWidgets.length>=24){ if(typeof toast==='function') toast('Widget limit reached (24)'); return; }

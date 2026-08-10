@@ -490,6 +490,54 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The widgets could not be restacked (build 1476)
+
+`_hwRebuild` appends widgets in **array order** into one absolutely positioned host with no z-index of their
+own, so the **last** entry paints in front. Until this build the only way to change that order was to delete
+everything and re-add it in the right sequence.
+
+Build 1260's image widget (card faces, portraits, panel frames) and build 1468's modals — which are a
+**stack** of widgets by definition — are what made that unworkable: authoring the frame after the buttons
+drew it over them permanently, and re-ordering a nine-widget shop meant retyping eight of them.
+
+**And it is worse than it sounds.** The widget host is `pointer-events:none` and only buttons opt in, so art
+drawn over a button covers it and **the button still works** — a player clicking something they cannot see,
+which is the failure mode that is actively confusing rather than merely wrong. The panel's hint says exactly
+that, because "which widget covers which" is not guessable from a list.
+
+**The buttons speak in LAYERING, not in list indices.** A creator thinks *"put the frame behind the
+buttons"*; making them work out that earlier-in-a-list means further-back is a puzzle with a wrong answer. So
+the labels are `▼ back` / `▲ front` and the tooltips describe the screen, not the array.
+
+The ends are **disabled** rather than live-and-refusing (build 1347's rule: a disabled button is honestly
+unreachable, a live one that refuses is a dead click), each restack is **one** undo step (1163), and the
+order rides the level for free — the array **is** the order, and the serializer already writes it whole.
+
+### Measured, with a control that returns
+
+Two widgets at the same anchor: a `BUY` button and an image over it. Read out of the live DOM, since paint
+order for equal-z siblings **is** DOM order:
+
+```
+before   order buy,art | dom BUY,img | paint {buy:0, art:1} | artInFront true  | button fires true
+after    order art,buy | dom img,BUY | paint {buy:1, art:0} | artInFront false | button fires true
+control  order buy,art | dom BUY,img | paint {buy:0, art:1} | artInFront true  | button fires true
+ends     firstBack false · lastForward false · order unchanged · length 2
+```
+
+**`elementFromPoint` is deliberately not used, and that is worth the line.** The host is
+`pointer-events:none` and only buttons opt in, so it skips the image in every condition and answers `BUY`
+whatever the stacking — a row that reads the same in all three conditions is not evidence, and reporting one
+as evidence is how this repo has published wrong findings before. The button firing in **all three** rows is
+the point being made, not a null: the art never blocked the click, which is exactly why hiding it mattered.
+
+The swap itself is **executed** rather than asserted: it refuses at both ends and on four kinds of
+out-of-range index without ever losing or duplicating an entry, it is its own inverse so back-then-front
+returns exactly, and one widget walks the length of an eight-deep stack in seven steps with every other
+widget keeping its order.
+
+Zero pins moved.
+
 ## The timer widget could not read a race (build 1475)
 
 `_hwFmtTimer` had ONE format, `M:SS`, and it **ceiled**. So a movement course that ran in 12.34 seconds
