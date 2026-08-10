@@ -12,7 +12,7 @@ const src = gameSource();
 {
   const a = src.indexOf('if(!_ledge && _jumpBufT>0 && (player.onGround || _coyoteT>0)');
   assert(a > 0, 'the jump chain is found');
-  const end = src.indexOf('player.vel.y = JUMP; _airJumpsUsed++;', a);
+  const end = src.indexOf('player.vel.y = JUMP; _airJumpsUsed++;', a);   // the AIR branch, past 1483's wall branch
   assert(end > a, 'and its air branch — an anchor that MISSES slices garbage rather than failing (1392)');
   const chain = src.slice(a, src.indexOf('}', end) + 1);
   assert(/else if\(AIR_JUMPS > 0/.test(chain), 'the air jump is an `else if` of the ground jump');
@@ -33,6 +33,10 @@ const src = gameSource();
     const body = [
       'let _ledge=' + S._ledge + ', _jumpBufT=' + S._jumpBufT + ', _coyoteT=' + S._coyoteT + ';',
       'let _airJumpsUsed=' + S._airJumpsUsed + ', sliding=' + S.sliding + ';',
+      // build 1483 inserted the wall jump between the ground and air branches. It is supplied INERT here
+      // (WALL_JUMP 0, no wall found) because this rig's subject is the AIR jump — 1483 drives its own.
+      'const WALL_JUMP=0, WALL_SAME_DOT=0.7, EYE=1.7; let _wallNx=0,_wallNz=0,_wallHas=false;',
+      'const _wallPush=()=>null;',
       'const AIR_JUMPS=' + S.AIR_JUMPS + ', _levelLoaderActive=' + S._levelLoaderActive +
         ', matchWarmup=' + S.matchWarmup + ', mountedTurret=' + S.mountedTurret +
         ', _onLadder=' + S._onLadder + ', drivingCar=' + S.drivingCar + ', duelDead=' + S.duelDead +
@@ -113,8 +117,12 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- 2. the refund
 {
-  const line = src.match(/if\(player\.onGround \|\| _ledge\)\{ _dashUsed = false; _airJumpsUsed = 0; _airT = 0; \} else _airT \+= dt;/);
+  // NOT the whole line: build 1483 joined it one build later (the wall jump is re-armed on the same ground
+  // contact), which is exactly the trap this test moved test-1463 off. It matches the statement, and what
+  // this test cares about — that `_airJumpsUsed` is cleared there — is asserted separately below.
+  const line = src.match(/if\(player\.onGround \|\| _ledge\)\{[^}]*\} else _airT \+= dt;/);
   assert(line, 'the refund rides build 1463’s own line...');
+  assert(/_airJumpsUsed = 0;/.test(line[0]), '...clearing the air jumps on it');
   const run = (onGround, ledge, used) => {
     const S = { used };
     new Function('player', '_ledge', 'dt', 'S',

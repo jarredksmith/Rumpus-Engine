@@ -490,6 +490,91 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The wall jump, and a test that caught the code doing the other thing (build 1483)
+
+The last of the four verbs build 1301 named and deferred — *"double jump, wall jump, dash, air-dash — each is
+its own verb with its own tuning and its own compatibility question."* 1463 took the air dash, 1482 the double
+jump. Same shape for the same reason: `wallJump` is the push-off SPEED, so **0 means off and is every level
+ever authored**, one field both enables and tunes it, and it is the **jump key** — no new bind, nothing to
+teach, and a creator who rebinds jump moves all three together.
+
+### The wall is found with `clearAt`, not with a ray
+
+`clearAt` is the engine's own *does the body fit here* predicate — the one `moveHorizontal` already uses. So
+the wall this pushes off is **exactly the wall that stopped you walking**, rather than a second opinion from a
+raycast that could disagree with the collision that put you there. It inherits build 1324's `noCol` for free:
+decoration is not a wall.
+
+Eight compass probes are averaged rather than one ray taken, which buys two things a single probe cannot:
+
+- an **inside corner** pushes out along the diagonal, which is what a player standing in one expects;
+- **opposing walls CANCEL to null**. A shaft with a wall on each side has no push direction, and picking a
+  side would be inventing an answer — a chimney climb is its own verb, not a side effect of this one.
+
+### The test asserted the intent while the code did the other thing
+
+`_wallPush` returns a direction; the branch then had to decide what to do with the player's existing velocity.
+The first draft **SET** the component into the wall:
+
+```js
+player.vel.x += _wp.x*(WALL_JUMP - _d);     // _d = the velocity already along the push
+```
+
+That is correct from a standstill and **brakes a player already leaving faster than the push** — build 1361's
+defect, one verb along, and the exact thing build 1463 had already decided for the dash (*"`max()`, never
+`set()`"*). `test-1483` was written from the intent and failed against the code; the ENGINE moved, not the
+test:
+
+```js
+const _add = Math.max(0, WALL_JUMP - _d);
+```
+
+**The tangent is untouched either way** — only the component into the wall is lifted — so a fast run along a
+wall keeps its speed rather than being flattened into a pure push-off.
+
+### No two in a row off the same wall
+
+Without it a single face is an infinite ladder, which would let a player leave arenas their author had
+sealed — the exact outcome 1463 and 1482 are off-by-default to avoid. `WALL_SAME_DOT` is 0.7 (~45 degrees),
+so the ground, a ledge (build 1290's hang IS ground contact by every other rule in this file) or a wall facing
+a different way all re-arm it, and a corner-to-corner ascent is still real movement.
+
+It sits **between the ground jump and the air jump**, so a wall is preferred over spending an air jump — which
+is what a player standing next to one means — while a grounded press is still always the ordinary jump. It
+costs no air jump, and the same-wall rule is what keeps that honest.
+
+### Measured live, with the setting off as the control
+
+```
+              airborne   wall there   vy            vx        used   air jumps spent
+wallJump 0     2.41 m       yes      -4.5 -> -6      0        false        0
+wallJump 12    2.41 m       yes      -4.5 -> 11.5   -11.84    true         0
+wallJump 0     2.41 m       yes      -4.5 -> -6      0        false        0    <- returns
+
+same wall, six attempts          1 fired
+ground touched between attempts  6 fired    <- the positive control
+```
+
+**That second ladder row is what makes the first one a finding.** Every attempt is handed the player airborne,
+at the wall, off cooldown, so the same-wall rule is the only thing that can refuse — and a run where nothing
+fires for an unrelated reason would read as the rule working. Six proves the fixture can produce a six.
+
+### Three fixture faults, and the third is build 1482's own finding arriving again
+
+| the probe reported | why |
+|---|---|
+| `wall: null` in every row | the fixture stood at x=200 to be "well clear of the stock level" (1323) — and the ground plane stops at **±ARENA (70)**, so the player fell out of the world. Build 1405 hit this at 700 |
+| a player oscillating, never grounded | giving them their own platform box fixed the fall and left them resting **exactly on a collider box boundary** — feet -0.30 / -0.03 / -0.65 / -0.18 — which is build 1094's recorded trap |
+| the CONTROL showing a full 12 of lift | the press landed at frame 50, by which time the player had nearly landed, so the buffered key fired as an ordinary **ground** jump |
+| every row identical again | moved to frame 28 — which is 0.467 s after the ground jump, **inside `JUMP_CD` (0.5 s)**, so nothing fired at all. Build 1482 recorded this exact thing one verb ago |
+
+Frame 35 is the answer: the cooldown has cleared and there is still ~2.5 m of air underneath. **Two of the four
+were rows that read the same in every condition, which is a fixture measuring itself rather than a null.**
+
+Two pins moved, both in `test-1482` and both traps this file already records: its rig needed the new wall
+dependencies supplied **inert** (`WALL_JUMP = 0`, `_wallPush = () => null`), and its refund assertion quoted
+the whole line — the very trap I had moved `test-1463` off one build earlier.
+
 ## The double jump (build 1482)
 
 Build 1301 named four verbs it deliberately left — *"double jump, wall jump, dash, air-dash — each is its
