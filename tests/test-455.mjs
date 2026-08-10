@@ -6,7 +6,7 @@ const src = gameSource();
 assert(/\(invOpen && NET\.mode==='off'\)\) && !\(duelDead && pvpMode\(\)\)/.test(src), 'inventory open freezes the solo world');
 
 // (2) clicks while the inventory is open never reach the trigger
-assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\) return;/.test(src), 'mousedown ignored while inventory open');
+assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\b[^)]*\) return;/.test(src), 'mousedown ignored while inventory open');
 assert(/if\(invOpen\) return;/.test(extractFunction('shoot')), 'shoot() bails while inventory open');
 
 // (3) the close control is a stylized round X used by both the panel and the inspector

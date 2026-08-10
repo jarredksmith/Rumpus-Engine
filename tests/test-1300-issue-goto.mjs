@@ -100,8 +100,10 @@ const mkGo = (props, resolveTo) => {
   // pad, a Destroy mission with no targets at all) stay plain rows, which is this build's own rule.
   // build 1425 added the NINTH: a model over the optimizer's triangle budget, which has one specific prop
   // to go and fix. Its LEVEL-TOTAL sibling deliberately stays a plain row — there is nothing to point at.
-  eq((li.match(/_issueAt\(/g) || []).length, 9,
-    'nine raise-sites point somewhere (both cutscene faults among them); the rest are level-wide — a light budget or a missing key pad has no single prop to blame');
+  eq((li.match(/_issueAt\(/g) || []).length, 10,
+    'ten raise-sites point somewhere (both cutscene faults among them, and build 1472\'s signal that opens ' +
+    'an empty modal); the rest are level-wide — a light budget, a missing key pad or a modal nothing opens ' +
+    'has no single prop to blame');
 }
 
 // ---------------------------------------------------------------- the row

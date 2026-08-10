@@ -8,7 +8,7 @@ const src = gameSource();
 
 // ---- every runtime node type has an editor definition, and vice versa ----
 const defs = new Function('return ' + extractConst('LG_DEFS', src) + ';')();
-const runtimeTypes = ['start','event','interval','onkill','onwave','onspot','onhurt','branch','counter','delay','repeat','random','once','setvar','addvar','math','read','list','expr','do','toast','emit','win','lose','goto'];   // build 1352: goto — a NODE, not a `do` verb, because `do` routes through _applySignalAction which knows nothing about levels; this list is what catches that (it caught it during 1352's own build). build 1169: math + read; build 1269: list; build 1271: expr (each has a _lgPulse case — the parity this test exists to hold)
+const runtimeTypes = ['start','event','interval','onkill','onwave','onspot','onhurt','branch','counter','delay','repeat','random','once','setvar','addvar','math','read','list','expr','do','toast','emit','win','lose','goto','timer'];   // build 1474: timer — a COUNTDOWN, distinct from interval (which repeats) and delay (which waits once); build 1352: goto — a NODE, not a `do` verb, because `do` routes through _applySignalAction which knows nothing about levels; this list is what catches that (it caught it during 1352's own build). build 1169: math + read; build 1269: list; build 1271: expr (each has a _lgPulse case — the parity this test exists to hold)
 for(const t of runtimeTypes) assert(defs[t], 'palette covers runtime type: '+t);
 eq(Object.keys(defs).length, runtimeTypes.length, 'no orphan editor types the runtime would ignore');
 // pin the pieces the interpreter dispatches on

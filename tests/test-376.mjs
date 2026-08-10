@@ -18,7 +18,7 @@ assert(!/if\(e\.code==='KeyM'\)\{ const m=toggleMute\(\)/.test(src), 'the old M=
 assert(/if\(mapOpen\)\{[\s\S]*?if\(e\.code===BINDS\.map \|\| e\.code==='Escape'\) closeBigMap\(\);[\s\S]*?else if\(e\.code==='KeyC'\) mapWaypoint=null;[\s\S]*?e\.preventDefault\(\); return;/.test(src), 'while open: Esc/map-bind close, C clears the waypoint, other keys are swallowed');
 
 // ---- live-play gating: no fire while the map is up; releasing the lock for the map doesn't open pause ----
-assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\) return;/.test(src), 'firing is blocked while the map is open');
+assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\b[^)]*\) return;/.test(src), 'firing is blocked while the map is open');
 /* build 1467: the free cursor joined this condition, so a pin quoting the WHOLE line broke with every
    part of what it meant still true — the whole-line trap this file records under builds 519/928/1073/1412.
    What each of these means is asserted as MEMBERSHIP of the guard. */

@@ -670,6 +670,12 @@
   /* On-screen touch controls (shown on touch devices during play) */
   canvas { touch-action: none; }
   #touchUI { position:absolute; inset:0; z-index:40; display:none; pointer-events:none; -webkit-user-select:none; user-select:none; }
+  /* build 1473: a MODAL is a menu, and the touch control layer sits at z-index 40 — ten times the modal's
+     own backdrop and widgets. On a phone the fire button, both sticks and every action button were live
+     and fully visible ON TOP of the dimmed menu, so a tap meant to buy something fired a round instead.
+     Build 1468's mousedown gate is a MOUSE gate and never covered this. Same shape as the cinematic rule
+     below, which stands the same layer down for the same reason. */
+  body.modalUp #touchUI { display: none !important; }
   #touchUI > * { pointer-events:auto; }
   #tLook { position:absolute; right:0; top:0; bottom:0; left:42%; touch-action:none; }
   #tStick { position:absolute; left:26px; bottom:26px; width:132px; height:132px; border-radius:50%;
@@ -7220,7 +7226,11 @@ const HUD_ELEMENTS = [
   { k:'dlg',       sel:'#dialogue',  label:'NPC dialogue',    text:true },   // build 701: the NPC talk box
   { k:'speedo',    sel:'#driveHud',  label:'Speedometer' },   // build 783: the driving speed gauge — only visible while driving
 ];
-const DEFAULT_HUD = { accent:'#38f5b5', health:'#ff4d6d', score:'#ffd166', uiFont:'Rajdhani', displayFont:'Rajdhani', shape:'angular', panelOp:1, border:true, hide:{}, el:{} };   // build 967
+/* build 1469: `menu*` are the FULL-SCREEN panels — the inventory and the item inspector — which sat outside
+   the HUD theme entirely. Their defaults are the exact hexes those panels were hardcoded with, so a level
+   that never touches them renders byte-identically. */
+const DEFAULT_HUD = { accent:'#38f5b5', health:'#ff4d6d', score:'#ffd166', uiFont:'Rajdhani', displayFont:'Rajdhani', shape:'angular', panelOp:1, border:true,
+  menuBg:'#0b141a', menuEdge:'#2a3a42', menuText:'#cfeee2', menuDim:'#7fa99c', hide:{}, el:{} };   // build 967 \u00b7 1469
 function _sanitizeHud(h){
   h = (h && typeof h==='object') ? h : {};
   const hx = (v,d)=>{ v=String(v||'').trim(); return /^#[0-9a-fA-F]{3,8}$/.test(v) ? v : d; };
@@ -7234,6 +7244,10 @@ function _sanitizeHud(h){
     shape: (['angular','rounded','square'].indexOf(h.shape)>=0) ? h.shape : DEFAULT_HUD.shape,
     panelOp: (h.panelOp==null) ? 1 : Math.max(0, Math.min(1, isNaN(+h.panelOp)?1:+h.panelOp)),
     border: h.border!==false,
+    menuBg:   hx(h.menuBg,   DEFAULT_HUD.menuBg),     /* build 1469: the inventory / inspector panels */
+    menuEdge: hx(h.menuEdge, DEFAULT_HUD.menuEdge),
+    menuText: hx(h.menuText, DEFAULT_HUD.menuText),
+    menuDim:  hx(h.menuDim,  DEFAULT_HUD.menuDim),
     hide: {}, el: {}
   };
   for(const k of HUD_TOGGLES) out.hide[k] = !!(h.hide && h.hide[k]);
@@ -7245,6 +7259,46 @@ function _sanitizeHud(h){
 }
 let hudCfg = null;   // initialized once savedLevel is read (see below); _sanitizeHud(null) until then
 let _hudElSel = 'health';   // build 666: which element the Per-element controls target
+// ---------- MENU PANEL THEME (build 1469) ----------
+// Asked for from play: "more customizable controls for creators that want to control how the inventory
+// screens look".
+//
+// Build 665's theme reaches `#hud` and NOTHING ELSE — every var it sets is scoped to that element, which is
+// deliberate (the editor's own chrome must not take the level's colours). The inventory and the item
+// inspector are `position:fixed` panels appended to `document.body`, so they were outside it entirely: a
+// creator who themed their level gold-and-black opened the inventory and got the engine's teal, with no
+// control anywhere in the product.
+//
+// So the same scoping trick is applied one level out: the theme is stamped ON THE PANEL, and the panel's
+// own styles read it. The editor is still untouched, because the editor is not one of these elements.
+function _hexMix(a, b, t){
+  const rd=(h)=>{ h=String(h||'').replace('#',''); if(h.length===3) h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    const n=parseInt(h.slice(0,6),16); return isNaN(n) ? [0,0,0] : [(n>>16)&255,(n>>8)&255,n&255]; };
+  const A=rd(a), B=rd(b), k=Math.max(0,Math.min(1,+t||0));
+  const m=(i)=>Math.round(A[i]+(B[i]-A[i])*k);
+  return '#'+[m(0),m(1),m(2)].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+function _menuVars(el){
+  if(!el || !el.style) return;
+  const c=(typeof hudCfg!=='undefined' && hudCfg) ? hudCfg : DEFAULT_HUD;
+  const sh=c.shape||'angular';
+  el.style.setProperty('--mn-bg', c.menuBg);
+  el.style.setProperty('--mn-edge', c.menuEdge);
+  el.style.setProperty('--mn-text', c.menuText);
+  el.style.setProperty('--mn-dim', c.menuDim);
+  /* the inset colour a cell and the close button sit on is DERIVED rather than a fifth field to author —
+     four colours that must agree is already the most a creator should have to keep in their head. */
+  el.style.setProperty('--mn-cell', _hexMix(c.menuBg, c.menuEdge, 0.28));
+  el.style.setProperty('--mn-accent', c.accent);
+  el.style.setProperty('--mn-title', c.score);
+  /* the scrim is the panel's own background at low alpha, so a light theme dims to light rather than to the
+     engine's near-black — which would read as a bug on any level that is not dark. */
+  el.style.setProperty('--mn-scrim', 'rgba('+_hexToRgbTriplet(c.menuBg)+',0.78)');
+  el.style.setProperty('--mn-r',  sh==='square' ? '0px' : (sh==='rounded' ? '18px' : '12px'));
+  el.style.setProperty('--mn-r2', sh==='square' ? '0px' : (sh==='rounded' ? '12px' : '8px'));
+  el.style.setProperty('--mn-font', "'"+(c.uiFont||'Rajdhani')+"'");
+  el.style.setProperty('--mn-display', "'"+(c.displayFont||'Rajdhani')+"'");
+}
 function applyHudCfg(){
   if(!hudCfg) hudCfg = _sanitizeHud(null);
   const c = hudCfg, hud = (typeof document!=='undefined') && document.getElementById('hud');
@@ -7262,6 +7316,10 @@ function applyHudCfg(){
     hud.style.setProperty('--hud-font', "'"+c.uiFont+"'");
     hud.style.setProperty('--hud-display-font', "'"+c.displayFont+"'");
     hud.style.setProperty('--hud-panel-op', String(c.panelOp));
+    /* build 1469: a panel that is already open must follow the change, or a creator picking colours with
+       the inventory up sees nothing happen until they close and reopen it. */
+    if(typeof _invEl!=='undefined' && _invEl) _menuVars(_invEl);
+    if(typeof _inspEl!=='undefined' && _inspEl) _menuVars(_inspEl);
     // build 666: per-element size/offset vars + optional accent tint set on the element itself
     for(const e of HUD_ELEMENTS){ const o=(c.el && c.el[e.k]) || {};
       hud.style.setProperty('--el-'+e.k+'-s', String(o.s!=null?o.s:1));
@@ -7287,6 +7345,14 @@ function applyHudCfg(){
   body.style.setProperty('--hud-panel-op', String(c.panelOp));
   body.style.setProperty('--accent', c.accent);
   body.style.setProperty('--accent-rgb', _hexToRgbTriplet(c.accent));
+  /* build 1470: 701 mirrored THREE of the global set and stopped, and the two FONTS are the two it left —
+     so a level that chose Orbitron got Orbitron on every panel inside #hud and Rajdhani on the box its NPCs
+     speak out of, on the objective banner, on the interact prompt and on the grab hint. It is invisible
+     until a creator changes the font, which is why it survived: the fallback is the engine's own.
+     Every consumer of these two is either inside #hud or one of those four, so this reaches nothing else —
+     in particular the editor's own chrome, which reads --ui-font and is untouched. */
+  body.style.setProperty('--hud-font', "'"+c.uiFont+"'");
+  body.style.setProperty('--hud-display-font', "'"+c.displayFont+"'");
   for(const s of ['angular','rounded','square']) body.classList.toggle('hud-shape-'+s, c.shape===s);
   body.classList.toggle('hud-noborder', !c.border);
   for(const k of HUD_TOGGLES) body.classList.toggle('hud-hide-'+k, !!(c.hide && c.hide[k]));
@@ -13328,6 +13394,7 @@ function _lgEmit(name){
 }
 function logicStart(){       // a match begins: fresh state, seed the repeating timers, fire 'start'
   logicVars={}; logicLists={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;   /* build 1269 */
+  _lgCountdowns=Object.create(null);   /* build 1474: a countdown is MATCH state, like every timer beside it */
   if(typeof _lgPropVarClear==='function') _lgPropVarClear();   /* build 1461: per-prop values are MATCH state, like logicVars */
   if(typeof _persistSeed==='function') _persistSeed();       // build 1075: carried values come back before anything runs
   if(typeof _trigState!=='undefined') _trigState.length=0;   // build 1072: trigger volumes re-arm with the match (once-only fires again on a retry)
@@ -13335,6 +13402,7 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
   if(typeof _lgMusic!=='undefined') _lgMusic=null;           // ...and the level's own music track comes back
   _viewOv=null;                                              // build 1404: ...and so does the level's own camera
   if(typeof _markersClear==='function') _markersClear();     // build 1412: ...and the objective arrows are play state too
+  if(typeof _modalSet==='function') _modalSet('');            // build 1468: ...and no modal survives a deploy
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   _lgRunT = performance.now();   // build 1169: the 'time' stat reads seconds since this deploy
   for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
@@ -13356,7 +13424,10 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
      rendered the box UNCHECKED while the runtime treated it as on — the table is now the one place that
      says so and the renderer reads it too;
    - everything else passes through, with the four fields that NAME something interpolated (build 1402).  */
-const _LG_NAME_FIELDS = new Set(['target','prefab','item','text','at','vtag','escope']);
+/* build 1472: `mid` joins them, which is build 1402's own rule applied to the field build 1468 added and
+   did not include — "every field that NAMES something interpolates". A fair with five booths wants
+   `modal show booth{n}` rather than five branches, which is exactly the case 1402 exists for. */
+const _LG_NAME_FIELDS = new Set(['target','prefab','item','text','at','vtag','escope','mid']);
 function _lgDoArgs(p){
   const out = { do: p.verb || 'toggle' };
   const params = (typeof LG_DEFS!=='undefined' && LG_DEFS.do && LG_DEFS.do.params) || [];
@@ -13511,6 +13582,21 @@ function _lgPulse(id, pin){
       if(st.c>=Math.max(1,Math.round(_lgNum(p.target||1)))){ if(p.hold!==true) st.c=0; _lgFollow(id,0); }   // out 0: target reached (auto-resets unless held)
       break; }
     case 'delay': { _lgTimers.push({ at:Math.max(0.05,_lgNum(p.sec||1)), node:id, kind:'delay' }); break; }
+    case 'timer': {   /* build 1474 */
+      const key=_lgVarKey(String(_lgName(p.tvar)||'').trim().slice(0,24));
+      if(!key){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A Countdown node has no variable to count into.'); break; }
+      const md=(p.tmode==='stop'||p.tmode==='add') ? p.tmode : 'start';
+      if(md==='stop'){ delete _lgCountdowns[key]; logicVars[key]=0; }
+      else if(md==='add'){
+        const T=_lgCountdowns[key];
+        /* ADD to a timer that is not running STARTS one. The alternative is a node that silently does
+           nothing depending on invisible state, which is the harder of the two to debug by a distance. */
+        if(T){ T.left=Math.max(0, Math.min(86400, T.left + _lgNum(p.tsec||0))); logicVars[key]=Math.round(T.left*100)/100; }
+        else _lgTimerStart(key, _lgNum(p.tsec||0), '');
+      }
+      else _lgTimerStart(key, _lgNum(p.tsec||0), _lgName(p.tev));
+      _lgFollow(id,0);
+      break; }
     case 'repeat': { const N=Math.max(1,Math.min(100,Math.round(_lgNum(p.times||1)))), gap=Math.max(0,_lgNum(p.gap||0));
       if(gap<=0){ for(let i=0;i<N;i++){ logicVars['#i']=i; _lgFollow(id,1); } _lgFollow(id,0); }   // out 1 each pass (#i = index), out 0 when done
       else { st.left=N; st.i=0; _lgTimers.push({ at:0.001, node:id, kind:'repeat', gap }); }
@@ -13599,11 +13685,43 @@ function _lgPulse(id, pin){
     default: break;   // start / event / interval / onkill / onwave / onspot / onhurt are entries — they only ever FIRE, never receive
   }
 }
+/* build 1474: one countdown per VARIABLE, which is also its identity — "the timer that fills `left`". A
+   creator never names a timer separately from the thing they read, and two timers writing one variable is
+   not a case anybody wants. */
+const LG_TIMER_MAX = 24;
+let _lgCountdowns = Object.create(null);
+function _lgTimerStart(key, sec, ev){
+  if(Object.keys(_lgCountdowns).length >= LG_TIMER_MAX && !(key in _lgCountdowns)){
+    if(typeof _noteLogicFailure==='function') _noteLogicFailure('More than '+LG_TIMER_MAX+' countdowns are running at once; \u201c'+key+'\u201d was not started.');
+    return;
+  }
+  _lgCountdowns[key] = { left:Math.max(0, Math.min(86400, +sec||0)), ev:String(ev==null?'':ev).trim().slice(0,60) };
+  logicVars[key] = Math.round(_lgCountdowns[key].left*100)/100;
+}
+function _lgTimerTick(dt){
+  for(const key in _lgCountdowns){
+    const T=_lgCountdowns[key];
+    T.left -= dt;
+    if(T.left <= 0){
+      /* delete BEFORE firing: the event is free to start this very timer again, and clearing afterwards
+         would throw the restart away — the same ordering build 1391's reset needed. */
+      delete _lgCountdowns[key];
+      logicVars[key] = 0;
+      if(T.ev && typeof logicEvent==='function') logicEvent(T.ev);
+    } else {
+      logicVars[key] = Math.round(T.left*100)/100;   /* 2dp, so `==` in a Branch can ever be true (1352) */
+    }
+  }
+}
 function updateLogic(dt){
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   if(!gameOn || (typeof editorOpen!=='undefined' && editorOpen)) return;
   if(!logicGraph.nodes.length) return;
   _lgBudget=0; _lgWarned=false;   // a fresh pulse budget every frame
+  /* build 1474: countdowns tick on the frame's own dt, so they stop while paused, while a cutscene runs and
+     while the editor is open — which is the correctness a hand-rolled `read time` countdown cannot have,
+     because `time` is wall-clock seconds since deploy and keeps running through all three. */
+  _lgTimerTick(dt);
   for(let i=_lgTimers.length-1;i>=0;i--){
     const T=_lgTimers[i]; T.at-=dt; if(T.at>0) continue;
     if(T.kind==='interval'){
@@ -13661,6 +13779,7 @@ function _sanitizeHudWidgets(a){
       max:String(w.max==null?'':w.max).slice(0,24).trim(),
       when:String(w.when==null?'':w.when).slice(0,24).trim(),
       event:String(w.event==null?'':w.event).slice(0,60).trim(),   /* build 1255: the logic event a BUTTON fires */
+      modal:String(w.modal==null?'':w.modal).slice(0,24).trim(),    /* build 1468: '' = an ordinary HUD widget, forever; a name puts it in that modal */
       img:_hwSafeUrl(w.img),                                        /* build 1260: art — the widget on 'image', the backdrop on every other kind */
       iw:Math.max(8,Math.min(1600,Math.round(+w.iw||160))),         /* image box, in pixels */
       ih:Math.max(8,Math.min(1200,Math.round(+w.ih||100))),
@@ -13678,6 +13797,67 @@ function _sanitizeHudWidgets(a){
 }
 let hudWidgets = _sanitizeHudWidgets(savedLevel && savedLevel.hudWidgets);   // authored; serialized with the level
 const _hwCd = {}; let _hwCursorFree = false;   /* build 1255: per-button cooldown + whether a button is holding the pointer free */
+// ---------- CUSTOM MODALS (build 1468) ----------
+// Asked for from play: "ways to create custom modals that can be triggered open".
+//
+// A MODAL IS A NAMED GROUP OF HUD WIDGETS, not a parallel system. Every part of a menu already exists —
+// text, bars, timers, buttons that fire a logic event, images for card faces and panel frames, per-widget
+// anchor/offset/size/colour, a sanitizer, the level file, the editor panel. What was missing was the three
+// things that make a group of widgets a MODAL: they open and close together under one name, a backdrop
+// separates them from the world, and the world stops taking your clicks while they are up.
+//
+// So `modal` is one more field on a widget and one more world verb. A widget with no modal name is
+// byte-identical to build 1255's — which is every widget in every level ever saved.
+let _modalOpen = '', _modalBack = null, _modalX = null;
+function _modalWidgets(id){   // how many widgets belong to a modal — used by the verb's refusal and the editor's list
+  const nm=String(id==null?'':id).trim(); if(!nm) return 0;
+  let n=0; if(typeof hudWidgets!=='undefined') for(const w of hudWidgets){ if(w && w.modal===nm) n++; }
+  return n;
+}
+function _modalSet(id){
+  const v=String(id==null?'':id).slice(0,24).trim();
+  if(v===_modalOpen) return;
+  _modalOpen=v;
+  /* A held trigger must not carry through the moment a menu opens over it — the mousedown gate below stops
+     a NEW shot, and this stops the one already in flight. */
+  if(v){ if(typeof firing!=='undefined') firing=false; if(typeof firingLatch!=='undefined') firingLatch=false; }
+  _modalSyncBack();
+  if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}
+}
+/* build 1473: build 1471 gave the player Escape. A PHONE HAS NO ESCAPE KEY — so on touch the only way out
+   of a modal was one the creator remembered to build, which is the lock-in 1471 exists to make impossible,
+   surviving on the one device that could not fall back to the keyboard.
+   It is a real close BUTTON rather than a tap on the backdrop: a modal's widgets sit in a pointer-events:none
+   host, so a backdrop tap would fire on the panel art, the title and every non-button pixel of the menu —
+   dismissing the shop because the player touched its own background is worse than not being able to leave. */
+function _modalCloseBtn(){
+  const b=document.createElement('button'); b.id='modalX'; b.type='button';
+  b.textContent='\u2715'; b.setAttribute('aria-label','Close'); b.dataset.close='1';   /* build 940: the pad navigator backs out via [data-close] */
+  b.style.cssText='position:absolute;top:14px;right:16px;width:38px;height:38px;z-index:5;pointer-events:auto;'
+    +'display:grid;place-items:center;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;padding:0;'
+    +'border:1px solid rgba(var(--accent-rgb),0.5);background:rgba(6,12,15,0.72);color:var(--accent);';
+  b.onclick=(ev)=>{ ev.preventDefault(); ev.stopPropagation(); _modalSet(''); };
+  return b;
+}
+function _modalSyncBack(){
+  /* The backdrop is the modal-ness: it dims the world behind the panel and it is what the eye reads as
+     "this is a menu". It sits BELOW the widget host (z-index 3 against 4) so the widgets draw on top of it.
+     It is a property of PLAY, so the editor and the pause menu never show one. */
+  const want = !!_modalOpen && !(typeof editorOpen!=='undefined' && editorOpen) && !(typeof paused!=='undefined' && paused);
+  /* build 1473: the body class is what stands the touch control layer down, and it follows `want` rather
+     than `_modalOpen` — so opening the editor or pausing hands the sticks straight back. */
+  try{ if(document.body) document.body.classList.toggle('modalUp', want); }catch(e){}
+  if(!want){ if(_modalBack){ _modalBack.remove(); _modalBack=null; } if(_modalX){ _modalX.remove(); _modalX=null; } return; }
+  if(_modalBack && _modalBack.parentNode) return;
+  const hud=document.getElementById('hud'); if(!hud) return;
+  _modalBack=document.createElement('div'); _modalBack.id='modalBack';
+  _modalBack.style.cssText='position:absolute;inset:0;z-index:3;background:rgba(3,7,10,0.62);backdrop-filter:blur(2px);pointer-events:auto;';
+  hud.appendChild(_modalBack);
+  /* a SIBLING of the backdrop, not a child: the backdrop carries z-index 3 and therefore its own stacking
+     context, so anything inside it paints below the widget host at 4 and a full-bleed panel image would
+     bury the only way out. */
+  _modalX=_modalCloseBtn(); hud.appendChild(_modalX);
+}
 // ---------- ACTION BINDINGS (build 1071) ----------
 // Seven authored animation slots (parry, dodge, block, holster, knockdown, getup, idleToCombat)
 // were pickable in the editor but nothing in the engine ever played them — a creator could assign
@@ -13879,13 +14059,17 @@ function _hwRebuild(){
   _hwBuiltRev=_hwRev;
 }
 function updateHudWidgets(){
+  _modalSyncBack();   /* build 1468: the backdrop follows the open modal, and closes itself in the editor or on pause */
   if(!hudWidgets.length){ if(_hwHost){ _hwHost.remove(); _hwHost=null; _hwBuiltRev=-1; } _hwSyncCursor(false); return; }   /* build 1255: no widgets = no button holding the cursor */
   if(_hwBuiltRev!==_hwRev || !_hwHost || !_hwHost.parentNode) _hwRebuild();
   if(!_hwHost) return;
   let _btnVis=false;   /* build 1255 */
   for(const e of _hwEls){
     const w=e.w;
-    const vis=!w.when || (+logicVars[w.when]||0)!==0;
+    /* build 1468: TWO gates, and they compose. A widget in a modal is eligible only while that modal is
+       open; `show when` then decides within it, exactly as it always did. A widget with no modal name has
+       no first gate at all, so every level authored before this build is unchanged. */
+    const vis=(w.modal ? _modalOpen===w.modal : true) && (!w.when || (+logicVars[w.when]||0)!==0);
     if(vis && w.kind==='button') _btnVis=true;
     if(vis!==e.vis){ e.vis=vis; e.el.style.display=vis?'':'none'; }
     if(!vis) continue;
@@ -13897,7 +14081,9 @@ function updateHudWidgets(){
       if(Math.abs(pct-e.pct)>0.4){ e.pct=pct; e.fill.style.width=pct.toFixed(1)+'%'; }
     }
   }
-  _hwSyncCursor(_btnVis && (typeof gameOn!=='undefined' && gameOn) && !(typeof paused!=='undefined' && paused) && !(typeof editorOpen!=='undefined' && editorOpen));
+  /* build 1468: an open modal frees the mouse whether or not it happens to contain a button — a panel you
+     cannot point at is not a menu, and the player needs a cursor to read one. */
+  _hwSyncCursor((_btnVis || !!_modalOpen) && (typeof gameOn!=='undefined' && gameOn) && !(typeof paused!=='undefined' && paused) && !(typeof editorOpen!=='undefined' && editorOpen));
   if(typeof NET!=='undefined' && NET.mode==='host' && _hwVars.length){
     // build 1287: a name ending in `@` is PER PLAYER (build 1231), so one broadcast scalar was wrong by
     // construction — every client saw the HOST's value. Shared names still ride one shared object; the
@@ -13932,6 +14118,16 @@ const LG_DEFS = {
   branch:   { t:'Branch',          cat:'fl', ins:['in'], outs:['true','false'], params:[{k:'a',l:'A',w:56,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['==','!=','<','<=','>','>=']},{k:'b',l:'B',w:56,listId:'lgVarList'}] },
   counter:  { t:'Counter',         cat:'fl', ins:['in','reset'], outs:['reached','each'], params:[{k:'target',l:'target',w:40}] },
   delay:    { t:'Delay',           cat:'fl', ins:['in'], outs:['then'],  params:[{k:'sec',l:'sec',w:40}] },
+  /* build 1474: a COUNTDOWN. `interval` repeats and `delay` waits once; neither counts DOWN, so every timed
+     booth was five nodes of arithmetic over `read time` plus two scratch variables — which is literally what
+     build 1403's own shooting range had to do. Its output is a logic VARIABLE, which is the whole design:
+     the HUD's timer widget (1058) binds to it, Branch compares it, the expression evaluator reads it, the
+     per-player `name@` scoping (1231) applies to it and the host already mirrors it to clients (1287). */
+  timer:    { t:'Countdown',       cat:'fl', ins:['in'], outs:['\u25b6'], params:[
+    {k:'tmode',l:'',w:88,sel:[['start','Start'],['stop','Stop'],['add','Add time']]},
+    {k:'tvar',l:'into',w:76,listId:'lgVarList'},
+    {k:'tsec',l:'sec',w:40,ifv:['tmode',['start','add']]},
+    {k:'tev',l:'at zero fire',w:88,ifv:['tmode','start'],listId:'lgEvtList'}] },
   repeat:   { t:'Repeat',          cat:'fl', ins:['in'], outs:['done','each (#i)'], params:[{k:'times',l:'times',w:40},{k:'gap',l:'gap s',w:40}] },
   random:   { t:'Random',          cat:'fl', ins:['in'], outs:['A','B','C','D'], params:[{k:'w0',l:'A%',w:32},{k:'w1',l:'B%',w:32},{k:'w2',l:'C%',w:32},{k:'w3',l:'D%',w:32}] },
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
@@ -13947,7 +14143,7 @@ const LG_DEFS = {
     {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist','propvar']],listId:'lgPlaceList'},
     {k:'pvn',l:'of',w:72,ifv:['stat','propvar']},
     {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['marker','Objective marker'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab'],['setpropvar','Set prop value']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop','setpropvar']]},{k:'pvop',l:'',w:56,ifv:['verb','setpropvar'],sel:[['add','Add'],['set','Set']]},{k:'pvn',l:'name',w:72,ifv:['verb','setpropvar']},{k:'pvv',l:'by',w:52,ifv:['verb','setpropvar']},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb',['objective','marker']]},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'vdwell',l:'cut every (s)',w:44,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'mkmode',l:'',w:112,ifv:['verb','marker'],sel:[['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']]},{k:'mcol',l:'colour',w:70,ifv:['verb','marker']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view','marker']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill','marker']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['marker','Objective marker'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab'],['setpropvar','Set prop value'],['modal','Open/close a modal']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','resetprop','pushprop','setpropvar']]},{k:'pvop',l:'',w:56,ifv:['verb','setpropvar'],sel:[['add','Add'],['set','Set']]},{k:'pvn',l:'name',w:72,ifv:['verb','setpropvar']},{k:'pvv',l:'by',w:52,ifv:['verb','setpropvar']},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb',['objective','marker']]},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'once',l:'once',chk:1,ifv:['verb','pickup']},{k:'vmode',l:'',w:130,ifv:['verb','view'],sel:[['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']]},{k:'vtag',l:'camera tag',w:86,ifv:['verb','view'],ifv2:['vmode','fixed'],listId:'lgTagList'},{k:'vtrack',l:'follows the player',chk:1,def:1,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'vdwell',l:'cut every (s)',w:44,ifv:['verb','view'],ifv2:['vmode','fixed']},{k:'mmode',l:'',w:96,ifv:['verb','modal'],sel:[['show','Open\u2026'],['hide','Close']]},{k:'mid',l:'modal',w:96,ifv:['verb','modal'],ifv2:['mmode','show'],listId:'lgModalList'},{k:'mkmode',l:'',w:112,ifv:['verb','marker'],sel:[['show','Point at\u2026'],['hide','Stop pointing at\u2026'],['clear','Clear all markers']]},{k:'mcol',l:'colour',w:70,ifv:['verb','marker']},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take','view','marker','modal']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill','marker']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'escope',l:'near',w:84,ifv:['verb','command'],ifv2:['ewho','near'],listId:'lgPlaceList'},{k:'er',l:'radius',w:44,ifv:['verb','command'],ifv2:['ewho','near']},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -13976,6 +14172,7 @@ function _lgVarOptions(){   // build 1060: every variable name in play — from 
     if(n.type==='setvar'||n.type==='addvar'||n.type==='math'||n.type==='read') addName(q.name);   // build 1169
     if(n.type==='branch'){ addName(q.a); addName(q.b); }
     if(n.type==='toast'||n.type==='do') addRefs(q.text);
+    if(n.type==='timer') addName(q.tvar);   /* build 1474: a countdown's variable is a variable */
   }
   if(typeof hudWidgets!=='undefined' && hudWidgets) for(const w of hudWidgets){ addName(w.value); addName(w.max); addName(w.when); addRefs(w.label); }
   for(const t of ['#x','#z','#hp','#hpf','#pid','#team']) set.add(t);   // build 1221: the event payload tokens, always offered so onkill/onhurt/onspot graphs discover them; build 1231: the player identity pair (triggers + onkill)
@@ -14014,6 +14211,13 @@ function _lgSoundOptions(){
     if(a && typeof a==='object'){ (function walk(x){ for(const k in x){ const v=x[k]; if(typeof v==='string' && v.slice(0,4)==='http') set.add(v); else if(v && typeof v==='object') walk(v); } })(a); } }catch(e){}
   return Array.from(set).sort();
 }
+/* build 1468: the modal names a creator has already authored, read off the WIDGETS rather than off the
+   graph — the widget is where a modal is defined, so this offers what exists rather than what was typed. */
+function _lgModalOptions(){
+  const m=new Map();
+  if(typeof hudWidgets!=='undefined') for(const w of hudWidgets){ if(w && w.modal) m.set(w.modal, (m.get(w.modal)||0)+1); }
+  return [...m.entries()].sort((a,b)=>a[0]<b[0]?-1:1).map(e=>({ v:e[0], n:e[1] }));
+}
 function _lgRefreshDatalists(){
   const mk=(id)=>{ let el=document.getElementById(id); if(!el){ el=document.createElement('datalist'); el.id=id; document.body.appendChild(el); } el.innerHTML=''; return el; };
   const tl=mk('lgTagList');
@@ -14035,6 +14239,8 @@ function _lgRefreshDatalists(){
   for(const o of _lgPlaceOptions()){ const op=document.createElement('option'); op.value=o.v; op.label=o.l; pl.appendChild(op); }
   const pfl=mk('lgPrefabList');   // build 1216: prefab names, for the spawn-prefab verb
   if(typeof prefabLib!=='undefined') for(const nm in prefabLib){ const op=document.createElement('option'); op.value=nm; const c=(prefabLib[nm]&&prefabLib[nm].props)?prefabLib[nm].props.length:0; op.label=c+(c===1?' prop':' props'); pfl.appendChild(op); }
+  const ml=mk('lgModalList');   // build 1468: every modal name the level's HUD widgets mention
+  for(const nm of _lgModalOptions()){ const op=document.createElement('option'); op.value=nm.v; op.label=nm.n+(nm.n===1?' widget':' widgets'); ml.appendChild(op); }
   const il=mk('lgItemList');    // build 1073: inventory item ids, for a spawned collectible
   if(typeof invCatalog!=='undefined') for(const id of Object.keys(invCatalog)){ const op=document.createElement('option'); op.value=id; op.label=(invCatalog[id]&&invCatalog[id].name)||id; il.appendChild(op); }
 }
@@ -14565,7 +14771,7 @@ function _applySignalAction(s, src){
     // HANDLER's source and the DROPDOWN's source and never that a node reaches the handler. test-1277
     // walks the path instead.
     if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'
-       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'||s.do==='view'||s.do==='marker'||s.do==='setpropvar'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
+       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'||s.do==='resetprop'||s.do==='view'||s.do==='marker'||s.do==='setpropvar'||s.do==='modal'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
       if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
       return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
@@ -14923,6 +15129,25 @@ function _applyWorldAction(s){
     const pay={ mk:[mm, at, tx, mc] };
     if(who==='actor'){ if(_wactToActor(pay)) return; }
     _applyMarker(mm, at, tx, mc); _wactSend(pay); return; }
+  /* build 1468: open or close a modal — a named group of HUD widgets. Same shape as the two verbs above,
+     because it is the same kind of thing: a LOCAL, per-player interface change. `who:'actor'` opens it for
+     the one player who tripped the trigger, which is what a shop terminal in a co-op level means; the
+     default reaches everyone, and a client applies the identical payload through the identical function. */
+  if(s.do==='modal'){
+    const mm=(s.mmode==='hide')?'hide':'show';
+    /* build 1472: a signal resolves its own fields, so the interpolation has to be asked for here too —
+       the Do node gets it from _LG_NAME_FIELDS above. Idempotent: a resolved name has no braces left. */
+    const _raw=(typeof _lgName==='function') ? _lgName(s.mid) : s.mid;
+    const mid=(mm==='hide')?'':String(_raw==null?'':_raw).slice(0,24).trim();
+    if(mm==='show'){
+      /* A modal that opens onto nothing is a dimmed screen the player cannot dismiss — the worst outcome
+         this verb has. Report it (build 1214's channel) and change nothing, rather than doing it silently. */
+      if(!mid){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "modal" action has no modal name, so there is nothing to open.'); return; }
+      if(!_modalWidgets(mid)){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "modal" action opens `'+mid+'`, but no HUD widget belongs to that modal.'); return; }
+    }
+    const mpay={ md:mid };
+    if(who==='actor'){ if(_wactToActor(mpay)) return; }
+    _modalSet(mid); _wactSend(mpay); return; }
   if(s.do==='command'){
     /* build 1408: an order can be given to the enemies at ONE PLACE. This resolved to all of them or to the
        single nearest one to the PLAYER, so in a level with more than one room "hold position" froze every
@@ -20957,7 +21182,8 @@ const SIG_KEYS = {
   vmode:'vm', vtag:'vt', vtrack:'vk', vdwell:'vd',                      // view (build 1404); the bank's dwell (1410)
   mkmode:'mk', mcol:'mo',                                               // marker (build 1412); `at` and `text` are shared
   prefab:'pb', escope:'es', er:'er',                                    // build 1408: the command's own scope
-  pvn:'pn', pvv:'pw', pvop:'po'                                         // build 1461: per-prop variables
+  pvn:'pn', pvv:'pw', pvop:'po',                                        // build 1461: per-prop variables
+  mmode:'md', mid:'mj'                                                  // build 1468: custom modals
 };
 const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
 const SIG_STR_MAX = 300;   // a signal can carry a sound URL; the consumers keep their own tighter caps
@@ -22569,6 +22795,19 @@ addEventListener('keydown', e=>{
   if(e.code==='Escape' && editorOpen && !e.repeat && typeof selProps!=='undefined' && selProps && selProps.length){
     e.preventDefault(); if(typeof deselectAllProps==='function') deselectAllProps(); return;
   }
+  /* build 1471: a MODAL is a full-screen overlay, so nothing behind it may have this key — not build mode,
+     not a turret, not a car, not the multiplayer match menu. It goes first, under only the editor's own
+     deselect, because a modal never belongs on screen while authoring (see toggleEditor below).
+
+     THERE IS DELIBERATELY NO "cannot be dismissed" OPTION. A creator authoring a menu has to wire a button
+     to a logic event to a `modal hide` node — three steps — for the single most universal action a menu
+     has, and forgetting any one of them leaves the player standing in a dimmed screen with no way back,
+     which is exactly the failure build 1468's three refusals exist to prevent, arriving through the other
+     door. A forced choice can be rebuilt by reopening the modal; a locked-out player cannot rebuild
+     anything. This engine's own rule is to prefer the recoverable failure. */
+  if(e.code==='Escape' && !e.repeat && typeof _modalOpen!=='undefined' && _modalOpen && !editorOpen){
+    e.preventDefault(); if(typeof _modalSet==='function') _modalSet(''); return;
+  }
   if(e.code==='Escape' && typeof buildMode!=='undefined' && buildMode){ e.preventDefault(); exitBuildMode(); return; }   // build 928
   if(e.code==='KeyX' && typeof buildMode!=='undefined' && buildMode && gameOn && !editorOpen){ e.preventDefault(); _bmDeleteAimed(); return; }   // build 941: delete the aimed placed block
   if(e.code==='Escape' && mountedTurret){ e.preventDefault(); dismountTurret(); return; }
@@ -22577,6 +22816,18 @@ addEventListener('keydown', e=>{
     e.preventDefault();
     if(typeof toggleMatchMenu==='function') toggleMatchMenu();
     return;
+  }
+  /* build 1471: SOLO play has never bound Escape to the pause menu — it releases the pointer lock, and the
+     pointerlockchange handler pauses on the way out. Build 1467's free cursor never TAKES that lock, so
+     from that build until this one a solo player with a cursor view had no way to pause at all. A defect
+     shipped three builds ago, found by asking what else Escape should do once a modal could eat it.
+
+     It sits BELOW the turret, car and match-menu branches on purpose: each of those already owns Escape
+     and is a more specific thing to back out of than "open the menu". */
+  if(e.code==='Escape' && !e.repeat && typeof _cursorFreeNow==='function' && _cursorFreeNow()
+     && gameOn && !gameOver && !paused && !editorOpen && !shopOpen && !invOpen && !mapOpen && !chatOpen
+     && !radialOpen && !choosingUpgrade && !(NET.mode && NET.mode!=='off')){
+    e.preventDefault(); if(typeof openPause==='function') openPause(); return;
   }
   keys[e.code]=true;
   // Claim the keys the game drives so the browser never swallows them — Space in particular gets eaten
@@ -31051,6 +31302,7 @@ function handleHostMsg(msg){
     if(msg.k) try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){}
     else if(msg.d>0) try{ applyEnemyDamageToSelf(+msg.d||0, null, null); }catch(e){}
     if(msg.vw && typeof _setViewOverride==='function') try{ _setViewOverride(String(msg.vw[0]||''), String(msg.vw[1]||''), !!msg.vw[2], +msg.vw[3]||0); }catch(e){}
+    if(msg.md!=null && typeof _modalSet==='function') try{ _modalSet(String(msg.md)); }catch(e){}   // build 1468: the host opened or closed a modal ('' is CLOSE, so the test is !=null)
     if(msg.mk && typeof _applyMarker==='function') try{ _applyMarker(String(msg.mk[0]||'show'), String(msg.mk[1]||''), String(msg.mk[2]||''), String(msg.mk[3]||'')); }catch(e){}   // build 1412   // build 1404: the host's camera change lands here (1410: the dwell rides along; a pre-1410 host sends none and the bank holds)
     if(msg.h>0){ player.hp=Math.min(player.maxHp, player.hp+(+msg.h||0)); if(typeof updateHUD==='function') updateHUD(); }
     if(msg.gi && typeof giveItem==='function') try{ giveItem(String(msg.gi[0]), +msg.gi[1]||1); }catch(e){}      // build 1074
@@ -34439,34 +34691,39 @@ function spawnItemProp(id, it){
 }
 window.giveItem=giveItem; window.defineItem=defineItem; window.useItem=useItem;   // used by editor authoring + console testing
 function openInventory(){ if(invOpen) return; invOpen=true; if(typeof safeExitPointerLock==='function') safeExitPointerLock();
-  if(!_invEl){ _invEl=document.createElement('div'); _invEl.id='inventory'; _invEl.style.cssText='position:fixed;inset:0;z-index:78;display:flex;align-items:center;justify-content:center;background:rgba(4,8,10,.72);'; document.body.appendChild(_invEl); _invEl.addEventListener('click', e=>{ if(e.target===_invEl) closeInventory(); }); }
+  if(!_invEl){ _invEl=document.createElement('div'); _invEl.id='inventory'; _invEl.style.cssText='position:fixed;inset:0;z-index:78;display:flex;align-items:center;justify-content:center;background:var(--mn-scrim);'; document.body.appendChild(_invEl); _invEl.addEventListener('click', e=>{ if(e.target===_invEl) closeInventory(); }); }
+  _menuVars(_invEl);   /* build 1469: the level's own colours, every open */
   _invEl.style.display='flex'; renderInventory(); }
 function closeInventory(){ invOpen=false; if(_invEl) _invEl.style.display='none'; closeInspect(); if(typeof gameOn!=='undefined' && gameOn && !paused && !isTouch && typeof tryPointerLock==='function') tryPointerLock(); }
 function toggleInventory(){ invOpen?closeInventory():openInventory(); }
 function _invCloseX(onclick){   // build 601: a stylized round close button (red on hover)
   const b=document.createElement('button'); b.textContent='\u2715'; b.setAttribute('aria-label','Close'); b.dataset.close='1';   // build 940: the pad navigator's B backs out via [data-close]
-  b.style.cssText='width:30px;height:30px;flex:0 0 auto;border-radius:50%;border:1px solid #2a3a42;background:#0c1822;color:#9fe6cf;font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:background .15s,color .15s,border-color .15s,transform .15s;';
+  b.style.cssText='width:30px;height:30px;flex:0 0 auto;border-radius:50%;border:1px solid var(--mn-edge);background:var(--mn-cell);color:var(--mn-accent);font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:background .15s,color .15s,border-color .15s,transform .15s;';
+  /* the DESTRUCTIVE hover stays red on purpose — it is a warning colour, not decoration, and a themed
+     close button that turns the level's own accent is one a player reads as "confirm" rather than "cancel". */
   b.onmouseenter=()=>{ b.style.background='#ff3b30'; b.style.color='#fff'; b.style.borderColor='#ff3b30'; b.style.transform='scale(1.08)'; };
-  b.onmouseleave=()=>{ b.style.background='#0c1822'; b.style.color='#9fe6cf'; b.style.borderColor='#2a3a42'; b.style.transform='none'; };
+  b.onmouseleave=()=>{ b.style.background='var(--mn-cell)'; b.style.color='var(--mn-accent)'; b.style.borderColor='var(--mn-edge)'; b.style.transform='none'; };
   b.onclick=onclick; return b;
 }
 function renderInventory(){ if(!_invEl) return; _invEl.innerHTML='';
-  const card=document.createElement('div'); card.style.cssText='background:#0b141a;border:1px solid #2a3a42;border-radius:12px;max-width:560px;width:92%;max-height:86vh;overflow:auto;padding:18px 20px;';
-  const h=document.createElement('div'); h.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;'; h.innerHTML='<div style="font-family:var(--display-font);font-size:22px;color:#ffd166;letter-spacing:2px;">INVENTORY</div>';
+  const card=document.createElement('div'); card.style.cssText='background:var(--mn-bg);border:1px solid var(--mn-edge);border-radius:var(--mn-r);max-width:560px;width:92%;max-height:86vh;overflow:auto;padding:18px 20px;font-family:var(--mn-font);color:var(--mn-text);';
+  /* build 1469: this asked for `--display-font`, which build 665 sets on `#hud` — an element this panel is
+     not inside — so the authored display font had never once reached the inventory title. */
+  const h=document.createElement('div'); h.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;'; h.innerHTML='<div style="font-family:var(--mn-display);font-size:22px;color:var(--mn-title);letter-spacing:2px;">INVENTORY</div>';
   const cl=_invCloseX(closeInventory); h.appendChild(cl); card.appendChild(h);
-  if(!inventory.length){ const e=document.createElement('div'); e.style.cssText='color:#7fa99c;font-size:13px;padding:24px 0;text-align:center;'; e.textContent='Empty. Find items in the world to collect them.'; card.appendChild(e); }
+  if(!inventory.length){ const e=document.createElement('div'); e.style.cssText='color:var(--mn-dim);font-size:13px;padding:24px 0;text-align:center;'; e.textContent='Empty. Find items in the world to collect them.'; card.appendChild(e); }
   else { const grid=document.createElement('div'); grid.style.cssText='display:grid;grid-template-columns:repeat(4,1fr);gap:8px;';
     for(const slot of inventory){ const it=invCatalog[slot.id]||{ name:slot.id };
-      const cell=document.createElement('button'); cell.style.cssText='position:relative;aspect-ratio:1;background:#0c1822;border:1px solid #24323a;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:6px;overflow:hidden;';
-      const ico=document.createElement('div'); ico.style.cssText='position:absolute;left:6px;right:6px;top:6px;bottom:22px;border-radius:6px;background:#06222a;';
-      if(it.thumb||it.model){ try{ _renderCharThumb({ url:it.model, thumb:it.thumb, scale:it.scale }, ico); }catch(e){} } else { ico.style.display='flex'; ico.style.alignItems='center'; ico.style.justifyContent='center'; ico.innerHTML='<span style="font-size:26px;color:#9fe6cf;">'+String(it.name||'?').slice(0,1).toUpperCase()+'</span>'; }
+      const cell=document.createElement('button'); cell.style.cssText='position:relative;aspect-ratio:1;background:var(--mn-cell);border:1px solid var(--mn-edge);border-radius:var(--mn-r2);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:6px;overflow:hidden;font-family:var(--mn-font);';
+      const ico=document.createElement('div'); ico.style.cssText='position:absolute;left:6px;right:6px;top:6px;bottom:22px;border-radius:6px;background:var(--mn-bg);';
+      if(it.thumb||it.model){ try{ _renderCharThumb({ url:it.model, thumb:it.thumb, scale:it.scale }, ico); }catch(e){} } else { ico.style.display='flex'; ico.style.alignItems='center'; ico.style.justifyContent='center'; ico.innerHTML='<span style="font-size:26px;color:var(--mn-accent);">'+String(it.name||'?').slice(0,1).toUpperCase()+'</span>'; }
       cell.appendChild(ico);
-      const nm=document.createElement('div'); nm.textContent=it.name||slot.id; nm.style.cssText='position:relative;z-index:1;font-size:10px;color:#cfeee2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; cell.appendChild(nm);
-      if(slot.n>1){ const cnt=document.createElement('div'); cnt.textContent='\u00d7'+slot.n; cnt.style.cssText='position:absolute;top:4px;right:6px;font-size:11px;font-weight:700;color:#ffd166;z-index:1;'; cell.appendChild(cnt); }
+      const nm=document.createElement('div'); nm.textContent=it.name||slot.id; nm.style.cssText='position:relative;z-index:1;font-size:10px;color:var(--mn-text);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; cell.appendChild(nm);
+      if(slot.n>1){ const cnt=document.createElement('div'); cnt.textContent='\u00d7'+slot.n; cnt.style.cssText='position:absolute;top:4px;right:6px;font-size:11px;font-weight:700;color:var(--mn-title);z-index:1;'; cell.appendChild(cnt); }
       cell.onclick=()=>openInspect(slot.id); grid.appendChild(cell);
     } card.appendChild(grid);
   }
-  const hint=document.createElement('div'); hint.style.cssText='margin-top:10px;font-size:11px;color:#7fa99c;'; hint.textContent='Click an item to inspect it. Press I or Esc to close.'; card.appendChild(hint);
+  const hint=document.createElement('div'); hint.style.cssText='margin-top:10px;font-size:11px;color:var(--mn-dim);'; hint.textContent='Click an item to inspect it. Press I or Esc to close.'; card.appendChild(hint);
   _invEl.appendChild(card);
 }
 // ---- Item inspector: rotate/zoom a 3D object, or read a journal page ----
@@ -34478,7 +34735,8 @@ function _ensureInspectR(){   // build 1000: shared by the inventory inspector A
 }
 function openInspect(id){
   const it=invCatalog[id]; if(!it) return;
-  if(!_inspEl){ _inspEl=document.createElement('div'); _inspEl.id='inspect'; _inspEl.style.cssText='position:fixed;inset:0;z-index:82;display:none;align-items:center;justify-content:center;background:rgba(3,6,8,.86);'; const cd=document.createElement('div'); cd.id='inspectCard'; cd.style.cssText='position:relative;background:#0a1016;border:1px solid #2a3a42;border-radius:14px;max-width:540px;width:92%;padding:16px 18px;'; _inspEl.appendChild(cd); document.body.appendChild(_inspEl); _inspEl.addEventListener('click', e=>{ if(e.target===_inspEl) closeInspect(); }); }
+  if(!_inspEl){ _inspEl=document.createElement('div'); _inspEl.id='inspect'; _inspEl.style.cssText='position:fixed;inset:0;z-index:82;display:none;align-items:center;justify-content:center;background:var(--mn-scrim);'; const cd=document.createElement('div'); cd.id='inspectCard'; cd.style.cssText='position:relative;background:var(--mn-bg);border:1px solid var(--mn-edge);border-radius:var(--mn-r);max-width:540px;width:92%;padding:16px 18px;font-family:var(--mn-font);color:var(--mn-text);'; _inspEl.appendChild(cd); document.body.appendChild(_inspEl); _inspEl.addEventListener('click', e=>{ if(e.target===_inspEl) closeInspect(); }); }
+  _menuVars(_inspEl);   /* build 1469 */
   const card=_inspEl.querySelector('#inspectCard'); card.innerHTML='';
   const hd=document.createElement('div'); hd.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
   /* build 1325 (platform audit 2.2, V2): this was `hd.innerHTML = '...' + (it.name||id) + '...'`, and
@@ -34486,7 +34744,7 @@ function openInspect(id){
      ammo prompt and did not reach here, which is the argument for sanitising at the SOURCE as well: the
      inventory item title is one click away from picking anything up. textContent, not an escape, because a
      title has no reason to carry markup at all. */
-  { const t=document.createElement('div'); t.style.cssText='font-family:var(--display-font);font-size:20px;color:#ffd166;letter-spacing:1px;'; t.textContent = it.name || id; hd.appendChild(t); }
+  { const t=document.createElement('div'); t.style.cssText='font-family:var(--mn-display);font-size:20px;color:var(--mn-title);letter-spacing:1px;'; t.textContent = it.name || id; hd.appendChild(t); }
   const cl=_invCloseX(closeInspect); hd.appendChild(cl); card.appendChild(hd);
   _inspEl.style.display='flex';
   if(it.type==='journal'){
@@ -34509,15 +34767,15 @@ function openInspect(id){
       const loop=()=>{ if(!_invR || !_inspEl || _inspEl.style.display==='none'){ _inspRAF=0; return; } if(_inspSpin) _inspRotY+=0.005; if(_inspModel) _inspModel.rotation.set(_inspRotX,_inspRotY,0); _inspCam.position.set(0,0,_inspDist); _inspCam.lookAt(0,0,0); _invR.render(_inspScene,_inspCam); _inspRAF=requestAnimationFrame(loop); };
       if(_inspRAF) cancelAnimationFrame(_inspRAF); _inspRAF=requestAnimationFrame(loop);
     }
-    const tip=document.createElement('div'); tip.style.cssText='margin-top:6px;font-size:10px;color:#6f9385;text-align:center;'; tip.textContent='Drag to rotate \u00b7 scroll to zoom'; card.appendChild(tip);
+    const tip=document.createElement('div'); tip.style.cssText='margin-top:6px;font-size:10px;color:var(--mn-dim);text-align:center;'; tip.textContent='Drag to rotate \u00b7 scroll to zoom'; card.appendChild(tip);
   }
-  if(it.desc){ const d=document.createElement('div'); d.style.cssText='margin-top:10px;font-size:13px;color:#bfe0d2;line-height:1.5;'; d.textContent=it.desc; card.appendChild(d); }
+  if(it.desc){ const d=document.createElement('div'); d.style.cssText='margin-top:10px;font-size:13px;color:var(--mn-text);line-height:1.5;'; d.textContent=it.desc; card.appendChild(d); }
   if(it.useType && it.useType!=='none' && typeof gameOn!=='undefined' && gameOn){
     const ub=document.createElement('button');
     ub.textContent = it.useType==='key' ? ('Use \u2014 '+(it.useKey||'gold')+' key') : it.useType==='heal' ? ('Use \u2014 +'+(+it.useAmount||25)+' HP') : it.useType==='ammo' ? 'Use \u2014 refill ammo' : it.useType==='place' ? 'Use \u2014 hold & place' : 'Use';
-    ub.style.cssText='margin-top:14px;width:100%;padding:11px 0;border-radius:9px;border:1px solid #1f6f4a;background:#16432e;color:#9fe6cf;font-family:var(--display-font);font-size:15px;letter-spacing:1px;cursor:pointer;transition:background .15s,transform .12s;';
-    ub.onmouseenter=()=>{ ub.style.background='#1f6f4a'; ub.style.color='#fff'; ub.style.transform='translateY(-1px)'; };
-    ub.onmouseleave=()=>{ ub.style.background='#16432e'; ub.style.color='#9fe6cf'; ub.style.transform='none'; };
+    ub.style.cssText='margin-top:14px;width:100%;padding:11px 0;border-radius:var(--mn-r2);border:1px solid var(--mn-accent);background:var(--mn-cell);color:var(--mn-accent);font-family:var(--mn-display);font-size:15px;letter-spacing:1px;cursor:pointer;transition:background .15s,transform .12s;';
+    ub.onmouseenter=()=>{ ub.style.background='var(--mn-accent)'; ub.style.color='var(--mn-bg)'; ub.style.transform='translateY(-1px)'; };
+    ub.onmouseleave=()=>{ ub.style.background='var(--mn-cell)'; ub.style.color='var(--mn-accent)'; ub.style.transform='none'; };
     ub.onclick=()=>{ if(useItem(id)){ if(!hasItem(id)) closeInspect(); } };
     card.appendChild(ub);
   }
@@ -35012,7 +35270,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1467 · 2026-08-09';
+const BUILD_VERSION = 'build 1474 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35505,7 +35763,7 @@ addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ 
 addEventListener('mousedown', e=>{
   if(radialOpen){ if(e.button===0) closeRadial(true); return; }
   if(typeof buildMode!=='undefined' && buildMode){ if(e.button===0){ placeBuild(); } else if(e.button===1){ _bmDeleteAimed(); } else if(e.button===2){ buildSnap=!buildSnap; try{ localStorage.setItem('breach_buildsnap', buildSnap?'1':'0'); }catch(_e){} _bmHint(); } e.preventDefault(); return; }
-  if(shopOpen || editorOpen || paused || mapOpen || duelDead || invOpen) return;   // no actions while eliminated or while the inventory is open
+  if(shopOpen || editorOpen || paused || mapOpen || duelDead || invOpen || _modalOpen) return;   // no actions while eliminated, while the inventory is open, or while a custom modal is up (build 1468)
   { const _m=(e.button===1)?'mouse3':(e.button===3)?'mouse4':(e.button===4)?'mouse5':'';   // build 1071: actions can claim the middle/side buttons
     if(_m){ const _ai=actionForInput(actionBinds, _m); if(_ai>=0){ e.preventDefault(); fireAction(_ai); return; } } }
   if(e.button===0){ if(heldProp){ throwHeld(); return; } firing=true; }
@@ -45419,6 +45677,17 @@ function renderHudPanel(){
       bgL.appendChild(bg); bgL.appendChild(document.createTextNode('panel')); l4.appendChild(bgL);
       l4.appendChild(document.createTextNode('show when')); l4.appendChild(inp(w.when,'always',70, v=>{ w.when=v.trim().slice(0,24); }, 'lgVarList'));
       card.appendChild(l4);
+      { /* build 1468: naming a modal is what turns a set of widgets into a menu that opens and closes together */
+        const l5=document.createElement('div'); l5.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+        l5.appendChild(document.createTextNode('in modal'));
+        l5.appendChild(inp(w.modal,'none \u2014 always on the HUD',150, v=>{ w.modal=v.trim().slice(0,24); renderHudPanel(); }, 'lgModalList'));
+        card.appendChild(l5);
+        if(w.modal){
+          const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:1px 0 0;font-size:10.5px;';
+          h.textContent='Every widget sharing this name opens and closes together, over a dimmed backdrop, with the mouse freed and the world no longer taking your clicks. Open it from the Logic graph with Do action \u2192 Open/close a modal, or from a prop signal. Esc always closes it, so a player can never be locked in one \u2014 wire your own close button too if you want the menu to have one. Like "show when", a widget in a modal is hidden while you author \u2014 blank this field to lay it out, then put the name back.';
+          card.appendChild(h);
+        }
+      }
       wrap.appendChild(card);
     });
     const addRow=document.createElement('div'); addRow.style.cssText='display:flex;gap:6px;margin:4px 0 2px;';
@@ -45435,6 +45704,13 @@ function renderHudPanel(){
   }
   grp('Colours');
   colorRow('Accent', 'accent'); colorRow('Health', 'health'); colorRow('Score', 'score');
+
+  grp('Menus');
+  colorRow('Menu panel', 'menuBg'); colorRow('Menu border', 'menuEdge');
+  colorRow('Menu text', 'menuText'); colorRow('Menu dim text', 'menuDim');
+  { const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:2px 0 0;font-size:10.5px;';
+    h.textContent='The full-screen panels \u2014 the inventory and the item inspector. They also take the Accent, Score, Shape and Font settings above, so a themed level no longer opens an engine-coloured menu. The scrim behind them is your panel colour, so a light theme dims to light.';
+    wrap.appendChild(h); }
 
   grp('Fonts');
   fontRow('UI font', 'uiFont'); fontRow('Display font', 'displayFont');
@@ -47552,6 +47828,38 @@ function levelIssues(){
       if(tg){ for(const p of propModels){ const ss=p && p.userData && p.userData.signals; if(!ss) continue;
         for(const s of ss){ if(s.target===tg){ wired=true; break; } } if(wired) break; } }
       if(!wired) issues.push(_issueAt('A Signals-only mechanism can never move \u2014 '+(tg ? ("nothing targets its tag '"+tg+"'.") : 'it has no tag for signals to target.'), ()=>[o])); }
+    /* build 1472: MODALS, both directions. Build 1468 refuses a modal that opens onto nothing and reports
+       it through the run-time channel — which a creator only sees AFTER playing, and only if they happen to
+       trip that branch. Both mistakes are visible statically, before publishing:
+         - a modal a creator built and nothing can open is authored content that can never appear;
+         - a verb that opens a name no widget carries is a dimmed screen with nothing in it.
+       A name carrying `{` is skipped in both directions: it is computed at run time (1402/1472) and the
+       check cannot know what it resolves to. Reporting a guess there would be worse than saying nothing. */
+    if(typeof hudWidgets!=='undefined' && Array.isArray(hudWidgets)){
+      const built=new Map();                       // modal name -> how many widgets belong to it
+      for(const w of hudWidgets){ if(w && w.modal) built.set(w.modal, (built.get(w.modal)||0)+1); }
+      const opened=new Set(); const computed=[];   // every name something tries to OPEN
+      const note=(v)=>{ const n=String(v==null?'':v).trim(); if(!n) return;
+        if(n.indexOf('{')>=0) computed.push(n); else opened.add(n); };
+      if(typeof logicGraph!=='undefined' && logicGraph && Array.isArray(logicGraph.nodes))
+        for(const n of logicGraph.nodes){ if(n && n.type==='do' && n.p && n.p.verb==='modal' && n.p.mmode!=='hide') note(n.p.mid); }
+      for(const o of propModels){ const sg=o && o.userData && o.userData.signals; if(!Array.isArray(sg)) continue;
+        for(const sig of sg){ if(sig && sig.do==='modal' && sig.mmode!=='hide') note(sig.mid); } }
+      if(!computed.length){   // one computed name can reach any modal, so neither direction is decidable
+        for(const [name, n] of built){
+          if(!opened.has(name))
+            issues.push('The modal \u201c'+name+'\u201d has '+n+' widget'+(n>1?'s':'')+', but nothing opens it \u2014 no logic node and no prop signal names it, so those widgets can never appear. Add a Do action \u2192 Open/close a modal somewhere, or clear the "in modal" field to put them back on the HUD.');
+        }
+      }
+      for(const name of opened){
+        if(built.has(name)) continue;
+        /* a SIGNAL has a prop to point at (build 1300); a graph node has nowhere to send you, and a row
+           that looks clickable and is not is the dead click build 1147 removed. */
+        const owner=propModels.find(o=>{ const sg=o && o.userData && o.userData.signals; return Array.isArray(sg) && sg.some(x=>x && x.do==='modal' && x.mmode!=='hide' && String(x.mid||'').trim()===name); });
+        const msg='Something opens the modal \u201c'+name+'\u201d, but no HUD widget belongs to it \u2014 it would dim the screen with nothing on it. Set "in modal" to that name on the widgets that make up the menu.';
+        issues.push(owner ? _issueAt(msg, ()=>[owner]) : msg);
+      }
+    }
     // build 1166: a Sketchfab model with no recorded attribution is a LICENSING exposure, not a cosmetic one \u2014
     // Sketchfab downloadable models are typically CC-BY, and CC-BY is only satisfied if the credit ships.
     // (Models placed through the in-editor search always carry one; this catches hand-pasted sketchfab: urls.)
@@ -47748,6 +48056,12 @@ function _sigWorldRow(s, rerender){
          not exist. Nothing else in the product says that tagging a SECOND prop makes a camera bank. */
       lab('s \u2014 tag several props to cut between them');
     }
+    sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
+  } else if(s.do==='modal'){
+    /* build 1406's rule, applied on the way in rather than a build later: a verb the dropdown offers must
+       have a row that configures it, or it is offered and unreachable. */
+    sel([['show','Open\u2026'],['hide','Close']], s.mmode||'show', v=>{ s.mmode=v; });
+    if(s.mmode!=='hide') txt('modal name', s.mid, v=>{ if(v) s.mid=v; else delete s.mid; }, 120, 'lgModalList');
     sel([['player','The player'],['actor','The event\u2019s player']], s.who||'player', v=>{ s.who=v; });
   } else if(s.do==='setpropvar'){
     /* build 1461: per-prop values. The tag box defaults to blank, which means `#self` — the prop whose
@@ -53374,6 +53688,10 @@ function toggleEditor(){
   releaseHeld();
   if(!editorOpen && pvpMode()){ if(typeof flashToast==='function') flashToast('Editor is disabled in this mode'); return; }   // no mid-match settings changes / cheating
   if(!editorOpen && drivingCar && typeof exitCar==='function') exitCar();   // build 766: opening the editor forces you out of the car (no stuck speedo HUD)
+  /* build 1471: a modal is PLAY state and must never survive into authoring — the backdrop already hides
+     itself in the editor (1468), but leaving `_modalOpen` set would keep its widgets on screen and would
+     hand the creator a dimmed viewport the moment they left again. */
+  if(typeof _modalSet==='function') try{ _modalSet(''); }catch(_e){}
   editorOpen = !editorOpen; _editorOpenFlag = editorOpen;
   if(typeof grid!=='undefined' && grid) grid.visible = _gridWanted();   // build 1133: the grid follows the editor, not the level
   if(editorOpen){

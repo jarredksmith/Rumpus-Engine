@@ -490,6 +490,459 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A countdown in the logic graph (build 1474)
+
+`interval` repeats and `delay` waits once. **Neither counts DOWN** — so every timed booth was five nodes of
+arithmetic over `read time` plus two scratch variables, which is literally what build 1403's own shooting
+range had to do to run a twenty-second round. A county fair is a row of them.
+
+**Its output is a logic VARIABLE, and that is the design rather than a detail.** The HUD's timer widget
+(1058) binds to it, Branch compares it, the expression evaluator reads it, build 1231's per-player `name@`
+scoping applies to it, and the host already mirrors it to clients (1287). One node replaces the five, and
+nothing downstream needed a line.
+
+### The hand-rolled version was also WRONG, in a way you would not notice until you shipped
+
+`read time` is wall-clock seconds since deploy, so a countdown built from it **keeps running while the game
+is paused, while a cutscene plays, and while the creator is in the editor.**
+
+**But the correction to my own claim is the more useful half.** The probe first called `updateLogic` BY HAND
+while `paused` and watched it count straight down — because `updateLogic` never looks at `paused`. **The
+frame loop does**, returning on shop / upgrade pick / map / inventory / solo-pause long before it reaches
+the call. So the claim is about the loop and is pinned there — and in multiplayer nothing freezes the world
+for one player, so a countdown correctly keeps running there. Stated rather than claimed away.
+
+### Executed frame by frame
+
+- writes the full time **immediately**, so a widget reads `0:20` on the first frame rather than `0:00`;
+- lands on **exactly 0** at 20 / 30 / 60 / 144 fps and after a 9.5-second hitch, never a small negative;
+- fires its event **once** and never twice, and the variable stays at 0 rather than counting into negatives;
+- **can be restarted from inside that event** — the entry is deleted *before* the fire, the same ordering
+  build 1391's reset needed;
+- `ADD` extends a running countdown and **starts one that is not running**, because a node that silently
+  does nothing depending on invisible state is by a distance the harder of the two to debug;
+- bounded at 24 with the refusal reported through build 1214's channel, and restarting one already at the
+  cap is correctly not a new one.
+
+Measured live on a real booth: `20 → 15 → 0` with the HUD reading `0:20 / 0:15 / 0:00`, `ended` set once,
+the countdown gone from the live set, and a deploy clearing it — against a control that ran 120 frames with
+nothing started and read `null`.
+
+### Two rigs needed feeding, and one of them found a real mistake
+
+`test-1027` evaluates `updateLogic` in a constructed scope, so it was handed `_lgTimerTick` **lifted from
+source** rather than restated (that file's own rule, three lines above where it landed). And `test-1060`
+crashed — because I had added the timer's variable name as a **second, unguarded** walk over
+`logicGraph.nodes` beside the existing guarded one. It belongs *inside* that loop, which is where it is now:
+**a second walk over a thing that is already being walked is both a bug and a smell.**
+
+One pin moved (1028's palette↔runtime parity, 25 → 26 node types) — the guard that exists for exactly this,
+doing its job.
+
+## A modal is usable on a phone (build 1473)
+
+Two defects in a feature two builds old, **both invisible on a desktop**.
+
+**1. The touch layer sat ten times higher than the menu.** `#touchUI` is `z-index: 40`, against the modal's
+backdrop at 3 and its widget host at 4. So on a phone the fire button, both sticks and every action button
+were live and fully visible **on top of** the dimmed menu — a tap meant to buy something fired a round
+instead. Build 1468's `_modalOpen` gate is a **mousedown** gate and never covered this.
+
+**2. A phone has no Escape key.** Build 1471 gave the player a way out and it was a keyboard one, so on
+touch the only exit was one the creator remembered to build — *exactly the lock-in 1471 exists to make
+impossible, surviving on the one device that could not fall back to the keyboard.*
+
+### Two decisions worth keeping
+
+**The touch layer stands down the same way a cinematic already stands it down** — a body class and one CSS
+rule, rather than a second mechanism. The class follows the backdrop's own `want`, so opening the editor or
+pausing hands the sticks straight back with the modal still armed.
+
+**The way out is a real BUTTON, deliberately not a tap on the backdrop.** A modal's widgets live in a
+`pointer-events:none` host, so every non-button pixel of the menu — the panel art, the title, the price list
+— *is* backdrop. Dismissing the shop because the player touched its own background is worse than not being
+able to leave. And it is a **sibling** of the backdrop rather than a child: the backdrop carries `z-index: 3`
+and therefore its own stacking context, so anything inside it paints below the widgets and a full-bleed
+panel image would bury the only way out.
+
+### Measured with `elementFromPoint` at the fire button's own centre
+
+That question — *what is under a finger there* — is the defect in one word, and no Node harness can answer it.
+
+```
+                          body class  #touchUI   under the fire button   close btn   under the close btn
+no modal                    false      block          tFire                 no             —
+modal open                  TRUE       none           (no box at all)      yes           modalX
+after the close button      false      block          tFire                 no             —      <- control returns
+modal armed, PAUSED         false      block          (sticks handed back, modal still armed)
+```
+
+The middle row reads `(no box at all)` rather than "something else is on top": with the layer hidden the
+button has no rect, which is a stronger result than occlusion.
+
+**One pin-writing note:** the assertion that `#touchUI` is z-index 40 first parsed *the first* `#touchUI {`
+rule in the file — and there are two, the earlier being the uiScale zoom rule with no z-index in it at all.
+Build 1392's recorded hazard: *an indexOf or first-match that misses is not an error, it is a wrong answer.*
+It asserts the literal now.
+
+## The Level Check knows about modals (build 1472)
+
+Build 1468 refuses a modal that opens onto nothing and reports it through build 1214's run-time channel —
+which a creator sees only **after playing**, and only if they happen to trip that branch. Both mistakes a
+modal invites are decidable **statically**, before publishing:
+
+- **a modal a creator built that nothing can open** — authored content that can never appear;
+- **a verb that opens a name no widget carries** — a dimmed screen with nothing in it.
+
+A prop signal counts as an opener exactly as much as a graph node does, and a **close is deliberately not
+an opener**: closing a menu nobody opens is nothing.
+
+### The clickable/plain split is build 1300's rule, not a uniform choice
+
+A signal opening an empty modal takes you to the prop that carries it. A graph node has nowhere to send
+you, so that row stays plain — a row that looks clickable and is not is the dead click build 1147 removed.
+A modal nobody opens is level-wide and stays plain too: a modal is not a prop.
+
+### `mid` joins the interpolating fields, and that is what makes one direction undecidable
+
+Build 1402's rule is *every field that NAMES something interpolates*, and build 1468 added `mid` without
+including it. A fair with five booths wants `modal show booth{n}` rather than five branches — which is
+exactly the case 1402 exists for — so it is in the set now, and the SIGNAL path asks for it too, because
+that path resolves its own fields rather than going through `_lgDoArgs`.
+
+At which point a name carrying `{` **silences the unopened direction entirely**: the check cannot know what
+it resolves to, and *a wrong warning about content that works is worse than no warning*. The decidable
+direction still fires beside it, in the same level, which the test asserts rather than assumes.
+
+### Measured in the real panel, because returning the right string is not the same as showing it
+
+Build 1423's own first draft wrote markup into a text node, and that defect lives entirely in the gap
+between `levelIssues()` and `renderLevelIssues()`. So the probe opens the editor, switches to the tab that
+builds the panel, and reads the rendered rows:
+
+```
+widgets built, nothing opens      1 row: "The modal "fairShop" has 2 widgets, but nothing opens it…"   plain, prose
++ a node that opens it            0 rows          <- the control
+open "typoShop" instead           2 rows: unopened fairShop AND empty typoShop
+open "booth{n}"                   0 rows          <- computed: neither direction decidable
+no modals at all                  0 rows          <- the control returns
+```
+
+One pin moved (1300), and its intent is unchanged and slightly stronger: the count of raise-sites that
+point somewhere went nine to ten, and what it means — level-wide issues stay plain — now covers a third
+kind of level-wide issue.
+
+## Escape, when there is no pointer lock to give back (build 1471)
+
+Two defects, one key, both found by asking what Escape should do once build 1468 gave the screen something
+that can cover it.
+
+**1. A modal had no way out.** A creator had to wire a button to a logic event to a `modal hide` node —
+three steps for the single most universal action a menu has — and forgetting any one of them left the player
+standing in a dimmed screen with no way back. That is exactly the failure 1468's three refusals exist to
+prevent, **arriving through the other door**.
+
+**2. Solo play has never bound Escape to the pause menu.** It releases the pointer lock, and the
+`pointerlockchange` handler pauses on the way out. **Build 1467's free cursor never TAKES that lock** — so
+from that build until this one, a solo player in a cursor view could not pause at all. A defect I shipped
+three builds ago, closed here rather than left for a report.
+
+### Order is the whole design, because six branches want this key
+
+The modal goes **first** — above build mode, a mounted turret, a driven car and the multiplayer match menu —
+because a modal is a full-screen overlay and nothing behind it may have the key. Only the editor's own
+deselect (1310) outranks it, and the branch excludes the editor explicitly rather than relying on that.
+
+The free-cursor pause goes **last**, below the turret, the car and the match menu, because each of those is
+a more specific thing to back out of than "open the menu", and it is gated on ten states that already own
+Escape.
+
+### There is deliberately no "cannot be dismissed" option
+
+A forced choice — a mandatory class pick, a game-over screen — is a real thing to want, and it is still
+buildable by reopening the modal. **A locked-out player cannot rebuild anything.** So this takes the
+recoverable failure, the absence is asserted in both the node table and the whole engine, and the creator is
+told where they author the modal rather than finding out from a player.
+
+### Measured with real KeyboardEvents on `document`, so it is the engine's own chain
+
+```
+                          modal   backdrop  modal widget  plain HUD widget  paused
+modal open                 fair     yes        shown          shown           no
+Escape                     ''       gone       hidden         shown            no    <- and it did NOT pause behind it
+Escape again               ''       gone       hidden         shown           YES    <- the 1467 hole
+Escape, cursor CAPTURED    ''       gone       hidden         shown            no    <- the control, old route unchanged
+Escape while DRIVING       closed the modal, still driving, not paused
+enter the editor           modal cleared, backdrop gone; leaving does not bring it back
+```
+
+The plain HUD widget holding `shown` in every row is what makes the rest a finding rather than a rebuild.
+
+**One pin-writing note, for the record:** the assertion that no lock-in flag exists used a bare `mesc`,
+which matches inside **"timescaled"**. Build 1400 records exactly this — *a short variable name in a source
+pin is a substring of everything that ends with it* — and it cost one run. The pin asserts the real key
+shapes now.
+
+## Ten builds of new state, and all of it survives the file (probe pass, after build 1470)
+
+Builds 1461-1470 each added state and not one had been through `serializeLevel -> restoreLevel`: per-prop
+variables, the air dash, six new HUD toggles, the free cursor, the `modal` field on a widget, four menu
+colours and the font mirror. That is the shape this repo keeps losing data to — 1398, 1400, 1401, 1406 and
+1427 were all in-memory features that worked until you pressed Save.
+
+`tools/probe/recent-builds-roundtrip.mjs` authors every field at a **non-default** value (a field that
+happens to equal its default cannot tell a working loader from a missing one), RESETS everything to a
+distinctive "the loader never ran" state, reloads through the real loader, and then plays the result.
+**Nothing is broken; no engine change was needed.**
+
+```
+cleared first    widgets 0 · view fps · free false · dash 0 · menuBg #0b141a · zones 0/0/0
+after reload     4 widgets with hudScore:- shopTtl:fairShop shopBuy:fairShop soldOut:fairShop
+                 button event BUY · inner `show when` sold · 3 modal members
+                 hides boss,buffs,hitmark,marker,minimap,reload
+                 menu #1a1206 #6b4f16 #f4e3b8 #9c8a5e · Orbitron/Teko · rounded · 0.42 · border false
+                 body --hud-font 'Orbitron'    <- build 1470's mirror, through the file
+                 view top · freeCursor true · airDash 9
+                 water flow 1.1/2.4/1.7 · fx haste 17 both · death zone back
+stability        byte-identical across three save cycles (15,646 chars)
+PLAYED           the modal opens from a RELOADED graph over RELOADED widgets — backdrop up, cursor freed,
+                 the inner `show when` row still correctly hidden, reload bar and minimap hidden by the
+                 reloaded toggles
+```
+
+**The one deliberate absence is the interesting row.** Build 1461's per-prop values read **0** after the
+load and the string `pv` appears nowhere in the file — they are MATCH state, like `logicVars`, and a level
+that carried them would resurrect a shot-up shooting gallery on every open. Asserted as an absence rather
+than assumed.
+
+### What it found instead: a modal has no way out
+
+Not a serialization defect — a design gap the round trip made obvious. A creator authoring a modal must wire
+a button to a logic event to a `modal hide` node, three steps, for the single most universal action a menu
+has. Forget any one of them and the player is standing in a dimmed screen with no way back — **which is
+exactly the failure build 1468's three refusals exist to prevent, arriving through the other door.**
+
+## The hypothesis was mostly wrong, and the probe said so (build 1470)
+
+The reasoning after 1469: build 665's GLOBAL variables live on `#hud`, and four HUD elements are not
+descendants of it — the dialogue box and the goal banner are built in JS on `document.body`, and the interact
+prompt and the grab hint are markup siblings. So the accent, the fonts and the panel opacity must all be
+falling through to the engine's `:root` defaults there. A whole mechanism was written for it: a derived
+`stray = !hud.contains(dom)` test and a `_hudGlobalVars(el)` stamp, with the two lazily-built elements asking
+for the theme on creation.
+
+**Measured, with the stamp removed so the run reproduces build 1469 exactly:**
+
+```
+                         dialogue border         speaker   panel bg               dialogue font
+build 1469         rgba(255,204,51,0.4)  <- GOLD    gold    rgba(6,12,15,0.32)     Rajdhani
+build 1470         rgba(255,204,51,0.4)             gold    rgba(6,12,15,0.32)     Orbitron
+ammo panel (control, INSIDE #hud)                                                  Orbitron / Orbitron
+```
+
+**Build 701 had already done three-fifths of it** — it mirrors `--hud-panel-op`, `--accent` and
+`--accent-rgb` onto `<body>` for exactly this reason, and names these four elements in its comment while
+doing it. The accent already arrived. The opacity already arrived.
+
+**What it left behind is the two FONTS**, and that is the entire defect: a level that chose Orbitron got
+Orbitron on every panel inside the HUD and the engine's Rajdhani on the box its NPCs speak out of, on the
+objective banner, on the interact prompt and on the grab hint. Invisible until a creator changes the font,
+because the fallback is the engine's own — the same reason 1469's `--display-font` bug survived.
+
+So the build is **two lines added to build 701's mirror**, and the mechanism written first was thrown away.
+A second writer beside that mirror is two implementations of one thing, which is the defect this file
+records more than any other.
+
+**Safe by check, not by assumption.** A body-level mirror is only safe if nothing else reads these
+variables. Every rule in the stylesheet that does is either inside `#hud` or one of those four elements —
+`test-1470` extracts them and asserts it — so the editor's own chrome is untouched, and it reads `--ui-font`,
+which this build never writes. That is the scoping argument 1469 rested on, kept intact.
+
+**The lesson is the ratio.** The hypothesis was plausible, specific, and named a real structural fact
+(`#hud`-scoped variables, elements outside it). It was still 60% wrong, and the only thing that established
+which 40% was real was a before/after in one session with a control that stayed put. *Reading the code told
+me where to look; it did not tell me what was already fixed there.*
+
+## The theme stopped at the edge of the HUD (build 1469)
+
+The last of the five things asked for in one message from play: *"more customizable controls for creators
+that want to control how the inventory screens look"*.
+
+**Verified before building, because the obvious reading is wrong.** Build 665's theme is real and complete —
+accent, health, score, two fonts, panel shape, panel opacity, border — and every variable it sets is scoped
+to `#hud`. That scoping is deliberate: the editor's own chrome must not take the level's colours. But the
+inventory and the item inspector are `position:fixed` panels appended to `document.body`, so they were
+outside it **entirely**. A creator who themed their level gold-and-black opened the inventory and got the
+engine's teal, and there was no control anywhere in the product.
+
+So the same trick applies one level out: `_menuVars(el)` stamps the theme **on the panel**, and the panel's
+own styles read it. The editor is still untouched, because the editor is not one of these elements.
+
+### The defaults ARE the hexes that were hardcoded
+
+`menuBg #0b141a`, `menuEdge #2a3a42`, `menuText #cfeee2`, `menuDim #7fa99c` — the exact values the inventory
+card, its border and its two text weights already carried. So a level that never opens the new group renders
+byte-identically, and that is checkable rather than hopeful: the probe's control condition comes back to
+`rgb(11, 20, 26)` / `rgb(42, 58, 66)` / `12px` after two other themes.
+
+**Everything else is DERIVED from what the creator already authored.** The accent, the heading colour, the
+corner radius and both fonts come from the existing HUD theme rather than becoming four more fields, and the
+inset colour a cell sits on is `_hexMix(bg, edge, 0.28)` rather than a fifth question — **four colours that
+must agree with each other is already the most a creator should have to hold in their head.**
+
+**The scrim is the panel's own colour at 78%**, not a fixed near-black. Measured: a light theme dims to
+`rgba(242, 239, 230, 0.78)`. A fixed dark scrim behind a cream panel reads as a bug on any level that is not
+dark, and that is the one thing about this design that is not guessable, so the hint says it.
+
+### Measured on real computed styles, because a var is invisible when it fails
+
+The Node harness executes the derivation. What it cannot say is what the browser PAINTS — **an unresolved
+custom property renders transparent**, so a panel reading one variable it was never stamped with is a hole in
+the middle of a menu. `getComputedStyle` off the real card, with the engine default as the control at both
+ends:
+
+```
+                card bg           border            radius  title colour      scrim               unresolved
+DEFAULT      rgb(11,20,26)    rgb(42,58,66)         12px   rgb(255,209,102)  rgba(11,20,26,.78)      0
+GOLD         rgb(26,18,6)     rgb(107,79,22)        18px   rgb(255,230,128)  rgba(26,18,6,.78)       0
+LIGHT        rgb(242,239,230) rgb(196,189,168)       0px   rgb(138,106,16)   rgba(242,239,230,.78)   0
+DEFAULT      rgb(11,20,26)    rgb(42,58,66)         12px   rgb(255,209,102)  rgba(11,20,26,.78)      0   <- returns
+
+re-theming with the panel ALREADY OPEN:  rgb(11,20,26) -> rgb(43,13,13)
+```
+
+`applyHudCfg` re-stamps whatever is on screen for exactly that last row — a creator picking colours with the
+inventory up must see it change, not have to close and reopen it.
+
+### Two hexes deliberately kept, and named rather than missed
+
+- **The journal page's parchment.** It is a paper sheet — content, not panel chrome — and a themed one stops
+  being a paper sheet.
+- **The close button's red destructive hover.** A warning colour, not decoration: a close button that turns
+  the level's own accent reads as *confirm* rather than *cancel*.
+
+`test-1469` bounds the remaining hexes in the inspector and asserts the journal is identifiably that
+exception, so a third one cannot creep in unnoticed — **one hardcoded colour left behind is a teal stripe
+across a gold menu, which reads worse than no theming at all.**
+
+### A latent bug found on the way
+
+The inventory heading asked for `font-family:var(--display-font)` — which build 665 sets on `#hud`, an
+element this panel is **not inside**. So the authored display font had never once reached the inventory
+title, for as long as both features have existed. Neither panel still names a variable that cannot resolve
+there, and the test asserts that absence.
+
+**Zero pins moved**, which is the compatibility claim arriving from the other direction.
+
+**Not measured, and stated as such:** the inspector's Use button read `null` in the probe (the fixture item
+never produced one), so its themed colours are covered by a source pin and the derivation test rather than by
+a computed style. And the probe's own first run reported the title taking the BODY colour in every theme —
+`card.querySelector('div div')` matches an ancestor **anywhere in the document**, and the card is itself a div
+inside `#inventory`, so the selector returned the header ROW. That reads exactly like the title colour failing
+to apply. *A selector that can match the wrong element is an instrument, not a finding.*
+
+## A modal is a named group of HUD widgets (build 1468)
+
+Asked for from play, the fourth item of a five-part request: *"ways to create custom modals that can be
+triggered open"*. Build 1467 had just given the player a real mouse cursor, so a menu finally had something
+to be clicked with.
+
+**It is not a parallel system, and that is the whole build.** Every part of a menu already existed — text,
+bars, timers, buttons that fire a named logic event (1255), images for card faces and panel frames (1260),
+per-widget anchor/offset/size/colour, a sanitizer, the level file, the editor panel. What was missing was the
+three things that turn a set of widgets into a MODAL:
+
+- one name that opens and closes them **together**,
+- a **backdrop** that separates them from the world,
+- and a world that **stops taking your clicks** while they are up.
+
+So it is ONE field on a widget (`modal`) and ONE world verb. A parallel modal object would have meant a
+second sanitizer, a second serializer, a second editor panel and a second renderer — four places to drift
+from the widget system that already does all of it.
+
+### Two gates, and the compatibility argument is that the first one is opt-in
+
+```js
+const vis = (w.modal ? _modalOpen===w.modal : true) && (!w.when || (+logicVars[w.when]||0)!==0);
+```
+
+A widget with no modal name **has no first gate at all**, so every widget in every level ever saved is
+byte-identical — executed across three modal states rather than asserted. And the two gates COMPOSE, which is
+the design rather than a side effect: the modal decides whether the menu is up, `show when` still decides each
+row within it, so one shelf of a shop can read SOLD OUT while the shop is open.
+
+### Three refusals, because the failure mode is unrecoverable
+
+A modal that opens onto nothing is a **dimmed world the player cannot dismiss** — the worst outcome this verb
+has, and the first one a creator hits by mistyping a name. An unnamed modal, and a name no widget carries,
+each open nothing, send nothing, and are REPORTED by name through build 1214's channel. A **CLOSE is never
+refused**: closing has to work even for a modal that has no members, or a typo becomes permanent.
+
+### Four decisions worth keeping
+
+- **The backdrop sits at z-index 3 against the widget host's 4**, or the menu would be behind its own dimmer.
+  It takes the pointer, it is built once rather than per frame, and it is a property of PLAY — never shown in
+  the editor or over the pause menu, re-checked every frame so opening the editor over a modal clears it.
+- **An open modal frees the mouse whether or not it contains a button.** Build 1255 tied the cursor to a
+  visible button; a panel you cannot point at is not a menu, so `_btnVis || _modalOpen` drives the one call.
+- **The world refuses clicks through the gate the shop and the inventory already use**, not a new one — and a
+  trigger already HELD when the menu opens is dropped, because the mousedown gate only stops the next shot.
+- **`who:'actor'` opens it for the one player who tripped the trigger**, which is what a shop terminal in a
+  co-op level means; the default reaches everyone, and a client applies the identical payload through the
+  identical function. The wire test is `msg.md != null`, because the empty name is CLOSE and a truthiness
+  test would make a modal impossible to shut on anybody but the host.
+
+### Measured live, with an ordinary HUD widget as the control in every row
+
+```
+                       hudScore  shopTtl  shopBuy  soldOut   backdrop  z   cursor    firing
+before, nothing open     shown   hidden   hidden   hidden      none    -   captured   no
+after OPEN               shown   SHOWN    SHOWN    hidden      yes    3/4  FREE       no
+...then sold=1           shown   shown    shown    SHOWN       yes    3/4  free       no
+after SHUT               shown   hidden   hidden   hidden      none    -   captured   no
+
+a click, modal OPEN -> firing false        a click, modal CLOSED -> firing true   <- the control
+a HELD trigger      -> true, then false and the latch with it
+the BUY button inside the modal            -> logicVars.bought 1
+blank name / bad name / real name / hide   -> '' / '' / 'shop' / ''   with 2 reported in Level Check
+a deploy                                   -> 'shop' -> '', backdrop gone
+```
+
+Row three is the composition, measured: `soldOut` sits **inside** the open modal and stays hidden until its
+own `show when` passes — one shelf sold out while the shop is open.
+
+**The control is what makes it a finding.** `hudScore` never moves in any condition — if the modal's widgets
+appeared and the ordinary one changed too, the measurement would be the rebuild rather than the gate.
+
+### Still open, and stated rather than implied
+
+**A modal does not PAUSE the world**, and that is a decision with a reason: `paused` early-returns the frame
+loop, so `updateHudWidgets` would stop running and `_hwFire` returns on it — a paused modal is a frozen,
+unclickable one. Pausing properly needs a freeze that is not `paused`, which is its own build. What this one
+does instead is stop the world taking your clicks, which is what "modal" has to mean before it can mean
+anything else.
+
+**A modal widget is hidden while you author it**, exactly as a `show when` widget already is — the creator
+blanks the field to lay it out and puts the name back. Consistent with the existing precedent rather than a
+novelty beside it, and the hint says so rather than leaving it to be discovered.
+
+### Seven pins moved, and FOUR of them were one line quoted verbatim
+
+1058, 1255 and 1277 are the ordinary kind: `show when` is still asserted as its own term beside the new gate,
+a visible button is still asserted as a term of the one cursor call, and the verb count went 31 to 32.
+
+The other four (376, 453, 455, 66) all quoted **the same input gate**, character for character —
+`if(shopOpen || editorOpen || paused || mapOpen || duelDead || invOpen) return;` — to assert four different
+things: that firing is blocked while the map is open, while eliminated, while the inventory is up, and while
+paused. Every one of those four statements is still TRUE; all four broke because a sixth condition joined the
+list. **A pin that quotes a whole condition is a pin against the condition's neighbours, not against what it
+says** — the same trap this file records for whole lists, whole literals and character budgets, in its
+narrowest form yet: one added `||` term costs four harnesses. They assert membership now.
+
+**A backtick inside page code for the SIXTEENTH time** — and for the second build running, `tools/probe/lint.mjs`
+named the file and line before node ever ran it. The habit that fixes it is running the lint after the last
+edit, not before the first.
+
 ## The gizmo snaps (build 1146)
 
 The transform gizmo moved, rotated and scaled in raw continuous mouse units. Nothing in the product could
