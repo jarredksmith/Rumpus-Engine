@@ -490,6 +490,84 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The theme stopped at the edge of the HUD (build 1469)
+
+The last of the five things asked for in one message from play: *"more customizable controls for creators
+that want to control how the inventory screens look"*.
+
+**Verified before building, because the obvious reading is wrong.** Build 665's theme is real and complete —
+accent, health, score, two fonts, panel shape, panel opacity, border — and every variable it sets is scoped
+to `#hud`. That scoping is deliberate: the editor's own chrome must not take the level's colours. But the
+inventory and the item inspector are `position:fixed` panels appended to `document.body`, so they were
+outside it **entirely**. A creator who themed their level gold-and-black opened the inventory and got the
+engine's teal, and there was no control anywhere in the product.
+
+So the same trick applies one level out: `_menuVars(el)` stamps the theme **on the panel**, and the panel's
+own styles read it. The editor is still untouched, because the editor is not one of these elements.
+
+### The defaults ARE the hexes that were hardcoded
+
+`menuBg #0b141a`, `menuEdge #2a3a42`, `menuText #cfeee2`, `menuDim #7fa99c` — the exact values the inventory
+card, its border and its two text weights already carried. So a level that never opens the new group renders
+byte-identically, and that is checkable rather than hopeful: the probe's control condition comes back to
+`rgb(11, 20, 26)` / `rgb(42, 58, 66)` / `12px` after two other themes.
+
+**Everything else is DERIVED from what the creator already authored.** The accent, the heading colour, the
+corner radius and both fonts come from the existing HUD theme rather than becoming four more fields, and the
+inset colour a cell sits on is `_hexMix(bg, edge, 0.28)` rather than a fifth question — **four colours that
+must agree with each other is already the most a creator should have to hold in their head.**
+
+**The scrim is the panel's own colour at 78%**, not a fixed near-black. Measured: a light theme dims to
+`rgba(242, 239, 230, 0.78)`. A fixed dark scrim behind a cream panel reads as a bug on any level that is not
+dark, and that is the one thing about this design that is not guessable, so the hint says it.
+
+### Measured on real computed styles, because a var is invisible when it fails
+
+The Node harness executes the derivation. What it cannot say is what the browser PAINTS — **an unresolved
+custom property renders transparent**, so a panel reading one variable it was never stamped with is a hole in
+the middle of a menu. `getComputedStyle` off the real card, with the engine default as the control at both
+ends:
+
+```
+                card bg           border            radius  title colour      scrim               unresolved
+DEFAULT      rgb(11,20,26)    rgb(42,58,66)         12px   rgb(255,209,102)  rgba(11,20,26,.78)      0
+GOLD         rgb(26,18,6)     rgb(107,79,22)        18px   rgb(255,230,128)  rgba(26,18,6,.78)       0
+LIGHT        rgb(242,239,230) rgb(196,189,168)       0px   rgb(138,106,16)   rgba(242,239,230,.78)   0
+DEFAULT      rgb(11,20,26)    rgb(42,58,66)         12px   rgb(255,209,102)  rgba(11,20,26,.78)      0   <- returns
+
+re-theming with the panel ALREADY OPEN:  rgb(11,20,26) -> rgb(43,13,13)
+```
+
+`applyHudCfg` re-stamps whatever is on screen for exactly that last row — a creator picking colours with the
+inventory up must see it change, not have to close and reopen it.
+
+### Two hexes deliberately kept, and named rather than missed
+
+- **The journal page's parchment.** It is a paper sheet — content, not panel chrome — and a themed one stops
+  being a paper sheet.
+- **The close button's red destructive hover.** A warning colour, not decoration: a close button that turns
+  the level's own accent reads as *confirm* rather than *cancel*.
+
+`test-1469` bounds the remaining hexes in the inspector and asserts the journal is identifiably that
+exception, so a third one cannot creep in unnoticed — **one hardcoded colour left behind is a teal stripe
+across a gold menu, which reads worse than no theming at all.**
+
+### A latent bug found on the way
+
+The inventory heading asked for `font-family:var(--display-font)` — which build 665 sets on `#hud`, an
+element this panel is **not inside**. So the authored display font had never once reached the inventory
+title, for as long as both features have existed. Neither panel still names a variable that cannot resolve
+there, and the test asserts that absence.
+
+**Zero pins moved**, which is the compatibility claim arriving from the other direction.
+
+**Not measured, and stated as such:** the inspector's Use button read `null` in the probe (the fixture item
+never produced one), so its themed colours are covered by a source pin and the derivation test rather than by
+a computed style. And the probe's own first run reported the title taking the BODY colour in every theme —
+`card.querySelector('div div')` matches an ancestor **anywhere in the document**, and the card is itself a div
+inside `#inventory`, so the selector returned the header ROW. That reads exactly like the title colour failing
+to apply. *A selector that can match the wrong element is an instrument, not a finding.*
+
 ## A modal is a named group of HUD widgets (build 1468)
 
 Asked for from play, the fourth item of a five-part request: *"ways to create custom modals that can be
