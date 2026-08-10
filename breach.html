@@ -35738,7 +35738,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1486 · 2026-08-10';
+const BUILD_VERSION = 'build 1487 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -48433,6 +48433,43 @@ function levelIssues(){
         const owner=propModels.find(o=>{ const sg=o && o.userData && o.userData.signals; return Array.isArray(sg) && sg.some(x=>x && x.do==='modal' && x.mmode!=='hide' && String(x.mid||'').trim()===name); });
         const msg='Something opens the modal \u201c'+name+'\u201d, but no HUD widget belongs to it \u2014 it would dim the screen with nothing on it. Set "in modal" to that name on the widgets that make up the menu.';
         issues.push(owner ? _issueAt(msg, ()=>[owner]) : msg);
+      }
+    }
+    /* build 1487: A CONTROL THAT FIRES AN EVENT NOBODY HEARS. Build 1402 gave the `emit` verb this exact
+       report and named, in its own entry, the three things it did not cover: "everything else that fires an
+       event (a HUD button, a trigger zone, an action bind) names a fixed event per control and keeps calling
+       `logicEvent` directly". Those three are the ones a player can PRESS, WALK INTO and TRIGGER — a dead
+       button is the "nothing happened" builds 1147, 1484 and 1486 exist to remove, and it is silent.
+
+       It asks `_lgEventHeard`, which is 1402's own predicate, so the panel and the run-time report can never
+       come to different answers about the same name.
+
+       No interpolation to worry about, unlike the modal check beside it: `emit` computes its name (1402) and
+       these three do not — `_hwFire`, the countdown and `fireAction` each pass their field straight through —
+       so the question is decidable for every one of them.
+
+       A BLANK name is deliberately not reported. All three sites guard on truthiness, so a blank fires
+       nothing at all rather than firing into the void, and a half-authored control is a work in progress
+       rather than a defect. */
+    {
+      const dead = new Map();                       // event name -> what fires it
+      const want = (name, what) => {
+        const nm = String(name==null?'':name).trim();
+        if(!nm || (typeof _lgEventHeard==='function' && _lgEventHeard(nm))) return;
+        if(!dead.has(nm)) dead.set(nm, []);
+        const a = dead.get(nm); if(a.length < 4) a.push(what);
+      };
+      if(typeof hudWidgets!=='undefined' && Array.isArray(hudWidgets))
+        for(const w of hudWidgets){ if(w && w.kind==='button')
+          want(w.event, 'the HUD button \u201c'+String(w.label||w.id||'').slice(0,40)+'\u201d'); }
+      if(typeof triggerZones!=='undefined' && Array.isArray(triggerZones))
+        for(const z of triggerZones){ if(z) want(z.ev, 'a trigger zone'); }
+      if(typeof actionBinds!=='undefined' && Array.isArray(actionBinds))
+        for(const a of actionBinds){ if(a) want(a.event, 'an action bind'); }
+      let shown = 0;
+      for(const [nm, who] of dead){
+        if(++shown > 6){ issues.push('\u2026and '+(dead.size-6)+' more control'+(dead.size-6>1?'s':'')+' firing an event nothing listens for.'); break; }
+        issues.push(who.join(', ')+' fire'+(who.length>1?'':'s')+' the event \u201c'+nm+'\u201d, but no "On event" node listens for it \u2014 using it will do nothing. Add an On event node named \u201c'+nm+'\u201d in the logic graph, or clear the field.');
       }
     }
     // build 1166: a Sketchfab model with no recorded attribution is a LICENSING exposure, not a cosmetic one \u2014

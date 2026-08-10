@@ -490,6 +490,61 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A control that fires an event nobody hears (build 1487)
+
+Build 1402 gave the `emit` verb exactly this report and named, in its own entry, the three things it did not
+cover: *"everything else that fires an event (a HUD button, a trigger zone, an action bind) names a fixed
+event per control and keeps calling `logicEvent` directly."* Those three are the ones a player can **press,
+walk into and trigger** — and a dead one is completely silent, which is the *"nothing happened"* builds 1147,
+1484 and 1486 exist to remove. A creator wires a prize-counter button, presses it, nothing happens, and
+nothing anywhere says why.
+
+**The predicate already existed.** `_lgEventHeard` is 1402's own, so the panel and the run-time report can
+never come to different answers about the same name; the test asserts the block holds no second copy of
+*"does anything listen"*.
+
+Four decisions:
+
+- **No interpolation to worry about**, unlike the modal check directly beside it. `emit` COMPUTES its name
+  (1402) and these three do not — `_hwFire`, the countdown and `fireAction` each pass their field straight
+  through — so the question is decidable for every one of them and needs none of 1472's undecidability guard.
+- **A blank name is deliberately not reported.** All three sites guard on truthiness, so a blank fires
+  nothing at all rather than firing into the void, and a half-authored control is a work in progress.
+- **One row per EVENT NAME**, listing up to four of the controls that fire it, capped at six rows with a
+  summary. Twelve buttons on one dead name is one row; a panel that scrolls is not read (1274).
+- **Plain rows, never clickable.** A HUD button and a trigger zone are not props, so there is nowhere to send
+  you — build 1300's rule as 1423 restated it, asserted by the absence of `_issueAt`.
+
+### Measured live, and the wiring is the control
+
+```
+unwired                the button row AND the trigger row
++ On event "buy"       the trigger row ALONE          <- per-name, not per-panel
++ On event "entered"   nothing at all                 <- a panel that always complains is not read
+the rendered panel     both rows, as prose (no literal markup)
+```
+
+**Wiring one of the two and watching only its row go is what makes this a measurement** rather than a check
+that fires on everything.
+
+The last row is build 1423's lesson: `levelIssues()` returning the right string and the creator being able
+to READ it are two different claims, and that build's first draft's bug lived entirely in the gap.
+
+**Stated limit:** an `On event` node is the only listener in the engine today (a prop signal's `when` values
+are destroyed / interacted / contact / damaged / clicked, and a HUD widget's `when` is a variable gate, not
+an event). If a second kind of listener ever arrives, `_lgEventHeard` is the one place to teach — and both
+consumers inherit it.
+
+### Two probe faults, and the second is a habit rather than a mistake
+
+- **The panel row read zero and measured STALENESS.** `renderEditorFields()` left the host holding its
+  previous content; the panel has its own renderer and it has to be driven by name.
+- **Backticks inside the page-code template literal, for the fifteenth time.** `tools/probe/lint.mjs` exists
+  for exactly this and reports it instantly — and I ran it BEFORE the last edit rather than after, which is
+  build 1415's own recorded habit and the whole value of the tool.
+
+Zero pins moved.
+
 ## The interaction booth survives the file (probe pass, after build 1486)
 
 `tools/probe/interaction-booth-level.mjs` runs this repo's most productive shape — author it, SAVE it, reload
