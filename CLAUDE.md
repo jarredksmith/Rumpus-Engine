@@ -490,6 +490,153 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The modal was invisible while you built it (build 1477)
+
+Build 1468 made a modal a **stack of widgets** gated on `_modalOpen`, and build 1471 has `toggleEditor`
+close any open modal. So every widget in a modal was **invisible for the whole time a creator was authoring
+it** — and build 1476 had just given them a layering control they could not see the effect of.
+
+**The engine said so itself.** Build 1468's own hint read:
+
+> *"a widget in a modal is hidden while you author — blank this field to lay it out, then put the name back."*
+
+That is eighteen edits for a nine-widget shop, and the moment the name goes back you can no longer check the
+layering. **A workaround the product instructs you to perform is a missing feature.**
+
+`_hwPrevModal` is a picker in the HUD panel; the visibility gate answers it instead of `_modalOpen` while the
+layout editor is on screen.
+
+Four decisions:
+
+- **It is read behind the `hudPreview` body class**, which is the SAME signal build 969 already keys on for
+  the touch buttons. One answer in the file to *"is the layout editor on screen"*, rather than two that can
+  disagree — and it is what makes the leak structurally impossible rather than merely unlikely.
+- **`show when` is bypassed there too**, for the reason 969 wrote down at its own site: *"the layout editor
+  shows everything so you can arrange it."* You cannot arrange a widget you cannot see, and in an editor
+  session `logicVars` holds whatever the last play run happened to leave.
+- **The backdrop stays play-only**, unchanged from 1468 — so the level shows through while you place things
+  over it. Stated in the hint rather than left to be noticed.
+- **It is a VIEW, not a setting.** No undo snapshot, no `_levelDirty`, never serialized, unknown to the
+  sanitizer. Typing a modal name now *previews* it, so the widget does not vanish at the moment a creator
+  most needs to see it.
+
+### Measured live, with a control that returns
+
+Three widgets: a play-HUD score, a `BUY` button in the modal `shop`, and a `show when hasKey` text with no
+such variable set.
+
+```
+                 hp     buy    gated   dirty  backdrop  saved
+editor, none    true   false   true    false   false    false
+editor, shop    true   TRUE    true    false   false    false
+editor, none    true   false   true    false   false    false    <- returns exactly
+play            true   false   FALSE     -     (see below)
+play + open     true   TRUE    false     -     true
+```
+
+Two rows carry the argument. `gated` is **true in the editor and false in play** — the 969 bypass doing
+exactly what it says, with the real gate back in force the moment the editor closes. And the `play` row is
+taken with **`_hwPrevModal` deliberately left set to `shop`**: with it cleared that row could not tell a
+working gate from a broken one, and a check whose fixture cannot produce the failure is not evidence (1422).
+
+### Two pins moved, and both were the traps this file already records
+
+`test-1468` sliced the gate by a **character budget** (`indexOf('const vis=') + 120`) and the statement grew
+onto a second line, pushing the `show when` clause past the end with the assertion still true — 1149's trap,
+again. Worse, the rig beside it **restated** the expression in a `new Function`, so its twelve executed cases
+would have gone on passing against a stale copy of the very thing under test. Both are fixed the same way:
+lift the real statement and drive its **play branch**, which makes those twelve cases test the shipped code
+rather than a paraphrase of it.
+
+The third was an assertion **on the defect** — it pinned the words *"blank this field to lay it out"*. Its
+intent (the field explains how to author with it) is unchanged and is finally true.
+
+## The widgets could not be restacked (build 1476)
+
+`_hwRebuild` appends widgets in **array order** into one absolutely positioned host with no z-index of their
+own, so the **last** entry paints in front. Until this build the only way to change that order was to delete
+everything and re-add it in the right sequence.
+
+Build 1260's image widget (card faces, portraits, panel frames) and build 1468's modals — which are a
+**stack** of widgets by definition — are what made that unworkable: authoring the frame after the buttons
+drew it over them permanently, and re-ordering a nine-widget shop meant retyping eight of them.
+
+**And it is worse than it sounds.** The widget host is `pointer-events:none` and only buttons opt in, so art
+drawn over a button covers it and **the button still works** — a player clicking something they cannot see,
+which is the failure mode that is actively confusing rather than merely wrong. The panel's hint says exactly
+that, because "which widget covers which" is not guessable from a list.
+
+**The buttons speak in LAYERING, not in list indices.** A creator thinks *"put the frame behind the
+buttons"*; making them work out that earlier-in-a-list means further-back is a puzzle with a wrong answer. So
+the labels are `▼ back` / `▲ front` and the tooltips describe the screen, not the array.
+
+The ends are **disabled** rather than live-and-refusing (build 1347's rule: a disabled button is honestly
+unreachable, a live one that refuses is a dead click), each restack is **one** undo step (1163), and the
+order rides the level for free — the array **is** the order, and the serializer already writes it whole.
+
+### Measured, with a control that returns
+
+Two widgets at the same anchor: a `BUY` button and an image over it. Read out of the live DOM, since paint
+order for equal-z siblings **is** DOM order:
+
+```
+before   order buy,art | dom BUY,img | paint {buy:0, art:1} | artInFront true  | button fires true
+after    order art,buy | dom img,BUY | paint {buy:1, art:0} | artInFront false | button fires true
+control  order buy,art | dom BUY,img | paint {buy:0, art:1} | artInFront true  | button fires true
+ends     firstBack false · lastForward false · order unchanged · length 2
+```
+
+**`elementFromPoint` is deliberately not used, and that is worth the line.** The host is
+`pointer-events:none` and only buttons opt in, so it skips the image in every condition and answers `BUY`
+whatever the stacking — a row that reads the same in all three conditions is not evidence, and reporting one
+as evidence is how this repo has published wrong findings before. The button firing in **all three** rows is
+the point being made, not a null: the art never blocked the click, which is exactly why hiding it mattered.
+
+The swap itself is **executed** rather than asserted: it refuses at both ends and on four kinds of
+out-of-range index without ever losing or duplicating an entry, it is its own inverse so back-then-front
+returns exactly, and one widget walks the length of an eight-deep stack in seven steps with every other
+widget keeping its order.
+
+Zero pins moved.
+
+## The timer widget could not read a race (build 1475)
+
+`_hwFmtTimer` had ONE format, `M:SS`, and it **ceiled**. So a movement course that ran in 12.34 seconds
+displayed `0:13` — a whole second **ahead of reality**, rounded the wrong way — and 12.01 s and 12.99 s read
+identically. Build 1474 had just made countdowns first-class and store two decimal places; the widget threw
+all of them away.
+
+```
+value     mmss (was, and still is)   sec     sec1      sec2
+12.34            0:13                12s    12.3s    12.34s
+12.99            0:13                12s    12.9s    12.99s
+0.999            0:01                 0s     0.9s     0.99s
+65.43            1:06                65s    65.4s    65.43s
+```
+
+### The decimal forms TRUNCATE, and that is the decision
+
+A stopwatch that reads 12.35 when 12.34 has elapsed is **ahead of the run**. A countdown that reads 0.01
+when it is already over is a lie about a race the player just lost. Truncation is the only reading that is
+never ahead, in either direction of travel — measured across ~1200 samples that the shown value is never
+above the true one and never more than one step below it, and that the hundredths reading is monotone as
+the value falls.
+
+Trailing zeros are kept (`12.0s`, `12.50s`) so a stopwatch does not jitter between `12.4` and `12.40`.
+
+### `M:SS` keeps its ceil, and that is also the decision
+
+Ceil is the **countdown convention** — "one second left" until there really is none — and it is what every
+level authored before this build already shows. It is proven byte-identical against a restated copy of the
+pre-1475 function across 18 values plus six kinds of junk input, and an unknown format falls back to it
+rather than blanking the widget.
+
+Measured live on the real HUD element, and on a real three-second countdown read at hundredths as it fell:
+`3.00s → 2.33s → 1.33s → 0.00s`, with the shown value never once ahead of the true one and the end-of-race
+event firing at zero.
+
+Zero pins moved.
+
 ## A countdown in the logic graph (build 1474)
 
 `interval` repeats and `delay` waits once. **Neither counts DOWN** — so every timed booth was five nodes of

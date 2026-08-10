@@ -13766,6 +13766,21 @@ function _hwSafeUrl(u){
   if(!/^https?:\/\//i.test(u) && !/^data:image\//i.test(u)) return '';
   return u.slice(0, 400);
 }
+/* build 1476: WIDGETS DRAW IN LIST ORDER. `_hwRebuild` appends them in array order into one absolutely
+   positioned host with no z-index of their own, so the LAST entry paints in front — and until this build
+   there was no way to change that order but delete everything and re-add it in the right sequence.
+   Build 1260's image widget (card faces, portraits, panel frames) and build 1468's modals, which are a
+   STACK of widgets by definition, are what made that unworkable: authoring the frame after the buttons
+   drew it over them permanently. Worse than it sounds — the host is `pointer-events:none` and only buttons
+   opt in, so the art covers the button and the button still works, which is a player clicking something
+   they cannot see. */
+function _hwMove(i, dir){
+  if(typeof hudWidgets==='undefined' || !Array.isArray(hudWidgets)) return false;
+  const j=i+dir;
+  if(i<0 || i>=hudWidgets.length || j<0 || j>=hudWidgets.length) return false;
+  const t=hudWidgets[i]; hudWidgets[i]=hudWidgets[j]; hudWidgets[j]=t;
+  return true;
+}
 function _sanitizeHudWidgets(a){
   if(!Array.isArray(a)) return [];
   const out=[];
@@ -13778,6 +13793,10 @@ function _sanitizeHudWidgets(a){
       value:String(w.value==null?'':w.value).slice(0,24).trim(),
       max:String(w.max==null?'':w.max).slice(0,24).trim(),
       when:String(w.when==null?'':w.when).slice(0,24).trim(),
+      /* build 1475: a timer widget had ONE format, `M:SS`, and it CEILED — so a movement course that ran in
+         12.34 s displayed 0:13, a second ahead of reality and rounded the wrong way, and 12.01 s and 12.99 s
+         read identically. `mmss` is unchanged and stays the default, so no level that exists moves. */
+      tfmt:(w.tfmt==='sec'||w.tfmt==='sec1'||w.tfmt==='sec2')?w.tfmt:'mmss',
       event:String(w.event==null?'':w.event).slice(0,60).trim(),   /* build 1255: the logic event a BUTTON fires */
       modal:String(w.modal==null?'':w.modal).slice(0,24).trim(),    /* build 1468: '' = an ordinary HUD widget, forever; a name puts it in that modal */
       img:_hwSafeUrl(w.img),                                        /* build 1260: art — the widget on 'image', the backdrop on every other kind */
@@ -13809,6 +13828,13 @@ const _hwCd = {}; let _hwCursorFree = false;   /* build 1255: per-button cooldow
 // So `modal` is one more field on a widget and one more world verb. A widget with no modal name is
 // byte-identical to build 1255's — which is every widget in every level ever saved.
 let _modalOpen = '', _modalBack = null, _modalX = null;
+/* build 1477: which modal the HUD LAYOUT EDITOR is previewing. Editor-only: it is never serialized, never
+   dirties the level, and is read only while the `hudPreview` body class is up, so it cannot leak into play
+   by construction. Build 1468's own hint told the creator to blank the modal field, lay the widgets out and
+   put the name back — eighteen edits for a nine-widget shop, and the moment the name goes back you can no
+   longer see whether build 1476's layering is right. A workaround the product instructs you to perform is a
+   missing feature. */
+let _hwPrevModal = '';
 function _modalWidgets(id){   // how many widgets belong to a modal — used by the verb's refusal and the editor's list
   const nm=String(id==null?'':id).trim(); if(!nm) return 0;
   let n=0; if(typeof hudWidgets!=='undefined') for(const w of hudWidgets){ if(w && w.modal===nm) n++; }
@@ -13938,7 +13964,18 @@ let _hwRev=0, _hwHost=null, _hwBuiltRev=-1, _hwEls=[], _hwVars=[], _hwSent='', _
 const _HW_POS={ tl:['top:12px;left:12px;',''], tc:['top:12px;left:50%;','translateX(-50%) '], tr:['top:12px;right:12px;',''],
   ml:['top:50%;left:12px;','translateY(-50%) '], mr:['top:50%;right:12px;','translateY(-50%) '],
   bl:['bottom:86px;left:12px;',''], bc:['bottom:86px;left:50%;','translateX(-50%) '], br:['bottom:86px;right:12px;',''] };
-function _hwFmtTimer(sec){ sec=Math.max(0, Math.ceil(+sec||0)); return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0'); }
+function _hwFmtTimer(sec, fmt){
+  const v=Math.max(0, +sec||0);
+  /* the decimal forms TRUNCATE rather than round, in both directions of travel: a stopwatch that reads
+     12.35 when 12.34 has elapsed is ahead of the run, and a countdown that reads 0.01 when it is already
+     over is a lie about a race the player just lost. Truncation is the only reading that is never ahead. */
+  if(fmt==='sec')  return String(Math.floor(v))+'s';
+  if(fmt==='sec1') return (Math.floor(v*10)/10).toFixed(1)+'s';
+  if(fmt==='sec2') return (Math.floor(v*100)/100).toFixed(2)+'s';
+  /* M:SS keeps its CEIL, which is the countdown convention — "1 second left" until there is really none —
+     and is what every level authored before build 1475 already shows. */
+  const t=Math.ceil(v); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
+}
 // build 1287: a HUD per-player name resolves against MY id, deliberately NOT through _lgVarKey.
 // _lgVarKey keys on _lgCtx.pid — "the player this event is about" — which is the right question inside a
 // graph pulse and the wrong one here: the HUD draws every frame, outside any event, where _lgCtx.pid is
@@ -13961,7 +13998,7 @@ function _hwText(w){
   // build 1287: the `@` class the toast node has accepted since 1231, resolved through _hwVarKey (above).
   // Without it a widget bound to `coins@` matched nothing and rendered the literal text; with the mirror
   // below fixed too, it now shows THIS player's value. A co-op shop or scoreboard needed both halves.
-  if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (_hwInterp(w.label)+' '+t) : t; }
+  if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value), w.tfmt); return w.label ? (_hwInterp(w.label)+' '+t) : t; }
   return _hwInterp(w.label);
 }
 /* build 1411: lifted out of _hwText so the world SIGN can share it. A sign renders outside any event,
@@ -14064,12 +14101,20 @@ function updateHudWidgets(){
   if(_hwBuiltRev!==_hwRev || !_hwHost || !_hwHost.parentNode) _hwRebuild();
   if(!_hwHost) return;
   let _btnVis=false;   /* build 1255 */
+  /* asked ONCE, and asked of the same signal build 969 already keys on, so there is one answer in the file
+     to "is the layout editor on screen" rather than two that can disagree. */
+  const _hwPrev=!!(document.body && document.body.classList.contains('hudPreview'));
   for(const e of _hwEls){
     const w=e.w;
     /* build 1468: TWO gates, and they compose. A widget in a modal is eligible only while that modal is
        open; `show when` then decides within it, exactly as it always did. A widget with no modal name has
        no first gate at all, so every level authored before this build is unchanged. */
-    const vis=(w.modal ? _modalOpen===w.modal : true) && (!w.when || (+logicVars[w.when]||0)!==0);
+    /* build 1477: in the layout editor the PREVIEW answers both gates instead. `show when` is bypassed for
+       the same reason build 969 gave for the touch buttons — "the layout editor shows everything so you can
+       arrange it" — and you cannot arrange a widget you cannot see. The backdrop stays play-only (build
+       1468's rule, unchanged), so the level shows through while you place things over it. */
+    const vis=_hwPrev ? (w.modal ? _hwPrevModal===w.modal : true)
+                      : ((w.modal ? _modalOpen===w.modal : true) && (!w.when || (+logicVars[w.when]||0)!==0));
     if(vis && w.kind==='button') _btnVis=true;
     if(vis!==e.vis){ e.vis=vis; e.el.style.display=vis?'':'none'; }
     if(!vis) continue;
@@ -35270,7 +35315,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1474 · 2026-08-10';
+const BUILD_VERSION = 'build 1477 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45606,6 +45651,9 @@ function renderHudPanel(){
     hint.innerHTML='On-screen text, countdown timers and bars that read the <b>Logic graph\u2019s variables</b> live. Write <b>{score}</b> inside a label to show that variable. A <b>timer</b> reads a seconds variable (drive it in Logic: <i>Every 1 sec \u2192 Change variable time \u22121 \u2192 Branch \u2264 0 \u2192 win/lose</i>). A <b>bar</b> fills value/max. <b>Show when</b> hides the widget until that variable is non-zero. Synced to every player in multiplayer.';
     wrap.appendChild(hint);
     const commitW=()=>{ _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){} _levelDirty=true; };
+    /* build 1477: preview a modal while you lay it out. Deliberately NOT commitW — a preview is not an edit,
+       so it takes no undo snapshot and never marks the level dirty. */
+    const previewW=()=>{ if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){} };
     if(typeof _lgRefreshDatalists==='function') try{ _lgRefreshDatalists(); }catch(e){}   // build 1060: seed the variable dropdown from the graph
     const inp=(val,ph,wd,fn,listId)=>{ const i=document.createElement('input'); i.type='text'; i.value=val; i.placeholder=ph; i.style.cssText='width:'+wd+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;'; if(listId) i.setAttribute('list', listId); i.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); fn(i.value); commitW(); if(listId==='lgVarList' && typeof _lgRefreshDatalists==='function') _lgRefreshDatalists(); }; return i; };
     const numI=(val,wd,fn)=>{ const i=document.createElement('input'); i.type='number'; i.value=val; i.style.cssText='width:'+wd+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;'; i.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); fn(+i.value||0); commitW(); }; return i; };
@@ -45614,7 +45662,17 @@ function renderHudPanel(){
       const card=document.createElement('div'); card.style.cssText='border:1px solid rgba(var(--accent-rgb),0.18);border-radius:6px;padding:6px 7px;margin:5px 0;display:flex;flex-direction:column;gap:4px;';
       const l1=document.createElement('div'); l1.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;';
       l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar'],['button','Button'],['image','Image']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
-      const lab=inp(w.label, w.kind==='timer'?'label (before the M:SS)':'label \u2014 {var} shows live', 150, v=>{ w.label=v.slice(0,80); }); lab.style.flex='1'; l1.appendChild(lab);
+      const lab=inp(w.label, w.kind==='timer'?'label (before the time)':'label \u2014 {var} shows live', 150, v=>{ w.label=v.slice(0,80); }); lab.style.flex='1'; l1.appendChild(lab);
+      /* build 1476: the buttons speak in LAYERING, not in list indices. A creator thinks "put the frame
+         behind the buttons"; making them work out that earlier in a list means further back is a puzzle
+         with a wrong answer. Moving BACK is one step earlier in the array, FRONT one step later. */
+      const mk=(txt, dir, tip, dis)=>{ const b=document.createElement('button'); b.textContent=txt; b.title=tip;
+        b.style.cssText='padding:1px 6px;font-size:10px;flex:0 0 auto;';
+        if(dis) b.disabled=true;
+        else b.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); if(_hwMove(i, dir)){ commitW(); renderHudPanel(); } };
+        return b; };
+      l1.appendChild(mk('\u25bc back', -1, 'Draw this one step further BACK (behind the others)', i===0));
+      l1.appendChild(mk('\u25b2 front', 1, 'Draw this one step further FORWARD (in front of the others)', i===hudWidgets.length-1));
       const del=document.createElement('button'); del.textContent='\u2715'; del.title='Remove widget'; del.style.cssText='padding:1px 7px;font-size:11px;flex:0 0 auto;'; del.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudWidgets.splice(i,1); commitW(); renderHudPanel(); };
       l1.appendChild(del); card.appendChild(l1);
       if(w.kind==='button'){   /* build 1255 */
@@ -45631,6 +45689,10 @@ function renderHudPanel(){
         l2.appendChild(document.createTextNode(w.kind==='timer'?'seconds variable':'value variable'));
         l2.appendChild(inp(w.value,'e.g. time',80, v=>{ w.value=v.trim().slice(0,24); }, 'lgVarList'));
         if(w.kind==='bar'){ l2.appendChild(document.createTextNode('max')); l2.appendChild(inp(w.max,'100 or a variable',90, v=>{ w.max=v.trim().slice(0,24); }, 'lgVarList')); }
+        /* build 1475: a course timed to the hundredth and a round counted down in minutes are the same
+           widget, and `M:SS` can only say one of them. */
+        if(w.kind==='timer'){ l2.appendChild(document.createTextNode('as'));
+          l2.appendChild(selI([['mmss','M:SS  (1:05)'],['sec','seconds  (65s)'],['sec1','tenths  (65.4s)'],['sec2','hundredths  (65.43s)']], w.tfmt||'mmss', v=>{ w.tfmt=v; })); }
         card.appendChild(l2);
       }
       { /* build 1260: art on any widget — the picture on an Image, the backdrop on everything else */
@@ -45680,16 +45742,39 @@ function renderHudPanel(){
       { /* build 1468: naming a modal is what turns a set of widgets into a menu that opens and closes together */
         const l5=document.createElement('div'); l5.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
         l5.appendChild(document.createTextNode('in modal'));
-        l5.appendChild(inp(w.modal,'none \u2014 always on the HUD',150, v=>{ w.modal=v.trim().slice(0,24); renderHudPanel(); }, 'lgModalList'));
+        /* build 1477: naming a modal used to make the widget VANISH — the exact moment a creator most needs
+           to see it. Typing the name now previews it, so the widget stays on screen and the shop it just
+           joined comes with it. */
+        l5.appendChild(inp(w.modal,'none \u2014 always on the HUD',150, v=>{ w.modal=v.trim().slice(0,24); if(w.modal) _hwPrevModal=w.modal; renderHudPanel(); }, 'lgModalList'));
         card.appendChild(l5);
         if(w.modal){
           const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:1px 0 0;font-size:10.5px;';
-          h.textContent='Every widget sharing this name opens and closes together, over a dimmed backdrop, with the mouse freed and the world no longer taking your clicks. Open it from the Logic graph with Do action \u2192 Open/close a modal, or from a prop signal. Esc always closes it, so a player can never be locked in one \u2014 wire your own close button too if you want the menu to have one. Like "show when", a widget in a modal is hidden while you author \u2014 blank this field to lay it out, then put the name back.';
+          h.textContent='Every widget sharing this name opens and closes together, over a dimmed backdrop, with the mouse freed and the world no longer taking your clicks. Open it from the Logic graph with Do action \u2192 Open/close a modal, or from a prop signal. Esc always closes it, so a player can never be locked in one \u2014 wire your own close button too if you want the menu to have one. Use the Preview picker above to lay it out.';
           card.appendChild(h);
         }
       }
       wrap.appendChild(card);
     });
+    { /* build 1476: the order is not decoration — it is what decides which widget covers which */
+      const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:4px 0 0;font-size:10.5px;';
+      h.textContent='Widgets draw in this order: the LAST one is in front. Put a panel frame or a card face at the back and the text and buttons over it \u2014 use \u25bc back / \u25b2 front to restack. (An image never blocks a button\u2019s clicks, so art drawn over one hides a control that still works.)';
+      wrap.appendChild(h); }
+    { /* build 1477: the modal preview picker. Always present, even with nothing to pick, because a control
+         that appears only once you already know the feature exists teaches nobody (build 1348). */
+      const opts=(typeof _lgModalOptions==='function') ? _lgModalOptions() : [];
+      if(_hwPrevModal && !opts.some(o=>o.v===_hwPrevModal)) _hwPrevModal='';   // its last widget was deleted
+      const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:6px;margin:6px 0 2px;font-size:11px;color:#9fbdb2;';
+      r.appendChild(document.createTextNode('Preview'));
+      const sel=document.createElement('select'); sel.style.cssText='flex:1 1 auto;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+      const add=(v,t)=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; if(_hwPrevModal===v) o.selected=true; sel.appendChild(o); };
+      add('', 'the play HUD (no modal open)');
+      for(const o of opts) add(o.v, o.v+'  \u2014 '+o.n+(o.n===1?' widget':' widgets'));
+      if(!opts.length){ sel.disabled=true; sel.title='No widget names a modal yet \u2014 set "in modal" on one to build a menu'; }
+      sel.onchange=()=>{ _hwPrevModal=sel.value; previewW(); };
+      r.appendChild(sel); wrap.appendChild(r);
+      const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:1px 0 4px;font-size:10.5px;';
+      h.textContent='Shows that modal\u2019s widgets on screen so you can place and restack them \u2014 "show when" is ignored here, so nothing is invisible while you arrange it. The dimmed backdrop is play-only, so your level stays visible behind the panel. This is a view, not a setting: it is never saved and never opens the modal in play.';
+      wrap.appendChild(h); }
     const addRow=document.createElement('div'); addRow.style.cssText='display:flex;gap:6px;margin:4px 0 2px;';
     const mkAdd=(txt,proto)=>{ const b=document.createElement('button'); b.textContent=txt; b.style.cssText='flex:1;padding:4px 6px;font-size:11px;';
       b.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); if(hudWidgets.length>=24){ if(typeof toast==='function') toast('Widget limit reached (24)'); return; }
