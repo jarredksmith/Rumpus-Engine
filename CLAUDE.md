@@ -490,6 +490,53 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The Level Check knows about modals (build 1472)
+
+Build 1468 refuses a modal that opens onto nothing and reports it through build 1214's run-time channel —
+which a creator sees only **after playing**, and only if they happen to trip that branch. Both mistakes a
+modal invites are decidable **statically**, before publishing:
+
+- **a modal a creator built that nothing can open** — authored content that can never appear;
+- **a verb that opens a name no widget carries** — a dimmed screen with nothing in it.
+
+A prop signal counts as an opener exactly as much as a graph node does, and a **close is deliberately not
+an opener**: closing a menu nobody opens is nothing.
+
+### The clickable/plain split is build 1300's rule, not a uniform choice
+
+A signal opening an empty modal takes you to the prop that carries it. A graph node has nowhere to send
+you, so that row stays plain — a row that looks clickable and is not is the dead click build 1147 removed.
+A modal nobody opens is level-wide and stays plain too: a modal is not a prop.
+
+### `mid` joins the interpolating fields, and that is what makes one direction undecidable
+
+Build 1402's rule is *every field that NAMES something interpolates*, and build 1468 added `mid` without
+including it. A fair with five booths wants `modal show booth{n}` rather than five branches — which is
+exactly the case 1402 exists for — so it is in the set now, and the SIGNAL path asks for it too, because
+that path resolves its own fields rather than going through `_lgDoArgs`.
+
+At which point a name carrying `{` **silences the unopened direction entirely**: the check cannot know what
+it resolves to, and *a wrong warning about content that works is worse than no warning*. The decidable
+direction still fires beside it, in the same level, which the test asserts rather than assumes.
+
+### Measured in the real panel, because returning the right string is not the same as showing it
+
+Build 1423's own first draft wrote markup into a text node, and that defect lives entirely in the gap
+between `levelIssues()` and `renderLevelIssues()`. So the probe opens the editor, switches to the tab that
+builds the panel, and reads the rendered rows:
+
+```
+widgets built, nothing opens      1 row: "The modal "fairShop" has 2 widgets, but nothing opens it…"   plain, prose
++ a node that opens it            0 rows          <- the control
+open "typoShop" instead           2 rows: unopened fairShop AND empty typoShop
+open "booth{n}"                   0 rows          <- computed: neither direction decidable
+no modals at all                  0 rows          <- the control returns
+```
+
+One pin moved (1300), and its intent is unchanged and slightly stronger: the count of raise-sites that
+point somewhere went nine to ten, and what it means — level-wide issues stay plain — now covers a third
+kind of level-wide issue.
+
 ## Escape, when there is no pointer lock to give back (build 1471)
 
 Two defects, one key, both found by asking what Escape should do once build 1468 gave the screen something

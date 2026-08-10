@@ -13417,7 +13417,10 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
      rendered the box UNCHECKED while the runtime treated it as on — the table is now the one place that
      says so and the renderer reads it too;
    - everything else passes through, with the four fields that NAME something interpolated (build 1402).  */
-const _LG_NAME_FIELDS = new Set(['target','prefab','item','text','at','vtag','escope']);
+/* build 1472: `mid` joins them, which is build 1402's own rule applied to the field build 1468 added and
+   did not include — "every field that NAMES something interpolates". A fair with five booths wants
+   `modal show booth{n}` rather than five branches, which is exactly the case 1402 exists for. */
+const _LG_NAME_FIELDS = new Set(['target','prefab','item','text','at','vtag','escope','mid']);
 function _lgDoArgs(p){
   const out = { do: p.verb || 'toggle' };
   const params = (typeof LG_DEFS!=='undefined' && LG_DEFS.do && LG_DEFS.do.params) || [];
@@ -15045,7 +15048,10 @@ function _applyWorldAction(s){
      default reaches everyone, and a client applies the identical payload through the identical function. */
   if(s.do==='modal'){
     const mm=(s.mmode==='hide')?'hide':'show';
-    const mid=(mm==='hide')?'':String(s.mid==null?'':s.mid).slice(0,24).trim();
+    /* build 1472: a signal resolves its own fields, so the interpolation has to be asked for here too —
+       the Do node gets it from _LG_NAME_FIELDS above. Idempotent: a resolved name has no braces left. */
+    const _raw=(typeof _lgName==='function') ? _lgName(s.mid) : s.mid;
+    const mid=(mm==='hide')?'':String(_raw==null?'':_raw).slice(0,24).trim();
     if(mm==='show'){
       /* A modal that opens onto nothing is a dimmed screen the player cannot dismiss — the worst outcome
          this verb has. Report it (build 1214's channel) and change nothing, rather than doing it silently. */
@@ -35177,7 +35183,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1471 · 2026-08-10';
+const BUILD_VERSION = 'build 1472 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -47735,6 +47741,38 @@ function levelIssues(){
       if(tg){ for(const p of propModels){ const ss=p && p.userData && p.userData.signals; if(!ss) continue;
         for(const s of ss){ if(s.target===tg){ wired=true; break; } } if(wired) break; } }
       if(!wired) issues.push(_issueAt('A Signals-only mechanism can never move \u2014 '+(tg ? ("nothing targets its tag '"+tg+"'.") : 'it has no tag for signals to target.'), ()=>[o])); }
+    /* build 1472: MODALS, both directions. Build 1468 refuses a modal that opens onto nothing and reports
+       it through the run-time channel — which a creator only sees AFTER playing, and only if they happen to
+       trip that branch. Both mistakes are visible statically, before publishing:
+         - a modal a creator built and nothing can open is authored content that can never appear;
+         - a verb that opens a name no widget carries is a dimmed screen with nothing in it.
+       A name carrying `{` is skipped in both directions: it is computed at run time (1402/1472) and the
+       check cannot know what it resolves to. Reporting a guess there would be worse than saying nothing. */
+    if(typeof hudWidgets!=='undefined' && Array.isArray(hudWidgets)){
+      const built=new Map();                       // modal name -> how many widgets belong to it
+      for(const w of hudWidgets){ if(w && w.modal) built.set(w.modal, (built.get(w.modal)||0)+1); }
+      const opened=new Set(); const computed=[];   // every name something tries to OPEN
+      const note=(v)=>{ const n=String(v==null?'':v).trim(); if(!n) return;
+        if(n.indexOf('{')>=0) computed.push(n); else opened.add(n); };
+      if(typeof logicGraph!=='undefined' && logicGraph && Array.isArray(logicGraph.nodes))
+        for(const n of logicGraph.nodes){ if(n && n.type==='do' && n.p && n.p.verb==='modal' && n.p.mmode!=='hide') note(n.p.mid); }
+      for(const o of propModels){ const sg=o && o.userData && o.userData.signals; if(!Array.isArray(sg)) continue;
+        for(const sig of sg){ if(sig && sig.do==='modal' && sig.mmode!=='hide') note(sig.mid); } }
+      if(!computed.length){   // one computed name can reach any modal, so neither direction is decidable
+        for(const [name, n] of built){
+          if(!opened.has(name))
+            issues.push('The modal \u201c'+name+'\u201d has '+n+' widget'+(n>1?'s':'')+', but nothing opens it \u2014 no logic node and no prop signal names it, so those widgets can never appear. Add a Do action \u2192 Open/close a modal somewhere, or clear the "in modal" field to put them back on the HUD.');
+        }
+      }
+      for(const name of opened){
+        if(built.has(name)) continue;
+        /* a SIGNAL has a prop to point at (build 1300); a graph node has nowhere to send you, and a row
+           that looks clickable and is not is the dead click build 1147 removed. */
+        const owner=propModels.find(o=>{ const sg=o && o.userData && o.userData.signals; return Array.isArray(sg) && sg.some(x=>x && x.do==='modal' && x.mmode!=='hide' && String(x.mid||'').trim()===name); });
+        const msg='Something opens the modal \u201c'+name+'\u201d, but no HUD widget belongs to it \u2014 it would dim the screen with nothing on it. Set "in modal" to that name on the widgets that make up the menu.';
+        issues.push(owner ? _issueAt(msg, ()=>[owner]) : msg);
+      }
+    }
     // build 1166: a Sketchfab model with no recorded attribution is a LICENSING exposure, not a cosmetic one \u2014
     // Sketchfab downloadable models are typically CC-BY, and CC-BY is only satisfied if the credit ships.
     // (Models placed through the in-editor search always carry one; this catches hand-pasted sketchfab: urls.)
