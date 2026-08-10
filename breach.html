@@ -552,6 +552,33 @@
     display: block; height: 100%; width: 100%; border-radius: 2px; transform: scaleX(0);
     background: var(--accent); transform-origin: left center;
   }
+  /* build 1485: the CROSSHAIR says what is clickable, which is the answer build 1480 named and declined to
+     invent — "a click cue for a view that has no cursor is a different feature". Builds 1479/1480 gave the
+     world an On-click trigger and a hover cue, and the cue was gated on a FREE pointer, so in first person —
+     the engine's default view — a clickable prop was completely undiscoverable while clicking it worked fine.
+
+     A RING, not a recolour, because the arms carry their colour as an inline literal (a creator may author
+     any hex) and recolouring them would mean rebuilding the reticle's innerHTML on a hover — per frame, at
+     the one moment the player is trying to aim. The ring is one element, built once with the reticle, and
+     switched by a class.
+
+     It is deliberately painted for `style:'none'` TOO. The ring is not a reticle: it can never appear unless
+     the player is looking at something the level itself made clickable, so it cannot clutter a screen a
+     creator wanted clean — and a no-reticle level with clickable props otherwise has no affordance at all.
+
+     `clickHotAim`, not `clickHot`, and that distinction is load-bearing: the ring sits at SCREEN CENTRE, and
+     screen centre is only where the hit was resolved when the pointer is LOCKED. With a free cursor the hit
+     was resolved under the POINTER, so a ring at the centre would point at the wrong thing. The class says
+     where the answer came from rather than what the setting says, which is why it is not `body.freeCursor`. */
+  #crosshair .xhHot {
+    position: absolute; left: 50%; top: 50%; width: 150%; height: 150%;
+    transform: translate(-50%,-50%);
+    border: 2px solid var(--accent); border-radius: 50%;
+    opacity: 0; transition: opacity .12s var(--ease-out);
+    box-shadow: 0 0 6px var(--accent);
+    pointer-events: none;
+  }
+  body.clickHotAim #crosshair .xhHot { opacity: .95; }
   #crosshair::before, #crosshair::after { display:none; }   /* crosshair is built in JS now (configurable) */
   #crosshair .dot {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
@@ -15015,7 +15042,7 @@ function _cmMarkTick(dt){
 }
 const CLK_HOVER_EVERY = 4;    // frames between hover raycasts — 15 Hz is imperceptible from 60 for a cursor
 const CLK_SCAN_EVERY  = 30;   // frames between "does this level have anything clickable at all"
-let _clkAny = false, _clkTick = 0, _clkHot = false, _clkMx = -1, _clkMy = -1;
+let _clkAny = false, _clkTick = 0, _clkHot = false, _clkHotAim = false, _clkMx = -1, _clkMy = -1;
 /* The same seven states the mousedown gate names. They are two expressions rather than one because that
    gate also governs the grab, ADS and the action binds, and is not purely about clicks — `test-1480`
    asserts they name the same set, so they cannot drift into a cursor that lies. */
@@ -15025,10 +15052,15 @@ function _clkBlocked(){
     || (typeof duelDead!=='undefined' && duelDead) || (typeof invOpen!=='undefined' && invOpen)
     || (typeof _modalOpen!=='undefined' && _modalOpen));
 }
-function _clkSetHot(v){
-  if(v === _clkHot) return;   // a class write only on a CHANGE — this runs every frame of every session
-  _clkHot = v;
-  try{ if(document.body) document.body.classList.toggle('clickHot', v); }catch(err){}
+/* build 1485: `aim` says the hit was resolved through SCREEN CENTRE (a locked pointer), which is the only
+   case in which a cue drawn at screen centre points at the thing that answered. One writer of both classes,
+   so the cursor cue and the reticle cue can never come to different conclusions. */
+function _clkSetHot(v, aim){
+  const a = !!v && !!aim;
+  if(v === _clkHot && a === _clkHotAim) return;   // a class write only on a CHANGE — this runs every frame
+  _clkHot = v; _clkHotAim = a;
+  try{ if(document.body){ document.body.classList.toggle('clickHot', v);
+                          document.body.classList.toggle('clickHotAim', a); } }catch(err){}
 }
 function _clkAnyClickable(){
   if(typeof propModels==='undefined') return false;
@@ -15041,17 +15073,19 @@ function _clkAnyClickable(){
   return false;
 }
 function _clkHoverTick(){
-  /* Captured pointer = no cursor to change. The crosshair is already the aim, and a click cue for a view
-     that has no cursor is a different feature with a different answer (a crosshair state, or the interact
-     prompt), deliberately not invented here. */
-  if(typeof document==='undefined' || document.pointerLockElement || _clkBlocked()
+  /* build 1485: a captured pointer no longer returns. `_clkResolve` has always rayed through screen centre
+     when locked — so the ANSWER was available the whole time and only the cue was missing, which is why this
+     is a class rather than a second resolver. */
+  if(typeof document==='undefined' || _clkBlocked()
      || !(typeof gameOn!=='undefined' && gameOn)){ _clkSetHot(false); return; }
+  const _locked = !!document.pointerLockElement;
   _clkTick++;
   if(_clkTick % CLK_SCAN_EVERY === 1) _clkAny = _clkAnyClickable();   // re-asked, so a prop spawned at run
   if(!_clkAny){ _clkSetHot(false); return; }                          // time gets its cue within half a second
   if(_clkTick % CLK_HOVER_EVERY) return;
-  if(_clkMx < 0){ _clkSetHot(false); return; }   // the pointer has not been seen yet
-  _clkSetHot(!!_clkResolve(_clkMx, _clkMy));
+  /* only a FREE pointer has to have been seen — a locked one ignores the coordinates entirely */
+  if(!_locked && _clkMx < 0){ _clkSetHot(false); return; }
+  _clkSetHot(!!_clkResolve(_clkMx, _clkMy), _locked);
 }
 function fireSignals(o, when){
   const sigs = o && o.userData && o.userData.signals; if(!sigs || !sigs.length) return;
@@ -35668,7 +35702,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1484 · 2026-08-10';
+const BUILD_VERSION = 'build 1485 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38869,7 +38903,10 @@ function applyCrosshair(cfg){
   const col = (!cfg.color || cfg.color==='accent') ? 'var(--accent)' : cfg.color;
   const size = Math.max(4, +cfg.size||24), th = Math.max(1, +cfg.thickness||2), gap = Math.max(0, +cfg.gap||0);
   el.style.width = size+'px'; el.style.height = size+'px';
-  if(cfg.style==='none'){ el.innerHTML=''; return; }
+  /* build 1485: the hover ring rides every style, including `none` — see the CSS for why. It carries no
+     `--xh-bloom` term, so it holds its size while the arms breathe with the spread (1219). */
+  const hotRing = '<div class="xhHot"></div>';
+  if(cfg.style==='none'){ el.innerHTML = hotRing; return; }
   const arm = Math.max(0, size/2 - gap);
   const ln = 'position:absolute;background:'+col+';box-shadow:0 0 6px '+col+';';
   // build 1219: each arm offsets outward by --xh-bloom (set per frame from the live spread), so the centre
@@ -38889,7 +38926,7 @@ function applyCrosshair(cfg){
     const ds = Math.max(2, th+2);
     html += '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:'+ds+'px;height:'+ds+'px;background:#fff;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.6)"></div>';
   }
-  el.innerHTML = html;
+  el.innerHTML = html + hotRing;
 }
 
 // ---------- Minimap ----------

@@ -490,6 +490,94 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The affordance was gated on the view most players are not in (build 1485)
+
+Build 1479 gave the world an On-click trigger, 1480 gave it a hover cue, and that cue opened:
+
+```js
+if(document.pointerLockElement || _clkBlocked() || !gameOn){ _clkSetHot(false); return; }
+```
+
+**First person is the engine's DEFAULT view**, and in it the pointer is captured — so a clickable prop was
+completely undiscoverable while clicking it worked perfectly. The whole point-and-click surface those two
+builds added was invisible to anyone who had not turned the free cursor on.
+
+**The answer already existed, and that is what makes this a class rather than a feature.** `_clkResolve` has
+rayed through SCREEN CENTRE whenever the pointer is locked since 1480 — its own comment says so. Nothing
+needed a second resolver; only the cue was missing. Build 1480's own comment names the fix and declines it:
+*"a click cue for a view that has no cursor is a different feature with a different answer (a crosshair
+state, or the interact prompt), deliberately not invented here."* This is that.
+
+### A ring, not a recolour
+
+The reticle's arms carry their colour as an **inline literal** — a creator may author any hex — so tinting
+them on hover would mean rebuilding `#crosshair`'s `innerHTML` on a hover, per frame, at the one moment the
+player is trying to aim. The ring is one element, built once beside the arms by `applyCrosshair`, switched by
+a class. `test-1485` asserts the hover path never touches `innerHTML` or calls `applyCrosshair`, because that
+is the property, not the implementation.
+
+It carries **no `--xh-bloom` term**, so it holds still while build 1219's arms breathe with the spread.
+
+**It is painted for `style:'none'` too.** The ring is not a reticle: it can never appear unless the player is
+looking at something the level itself made clickable, so it cannot clutter a screen a creator wanted clean —
+and a no-reticle level with clickable props otherwise has no affordance at all.
+
+### `clickHotAim`, and why it is not `body.freeCursor`
+
+The ring sits at screen centre, and **screen centre is only where the hit was resolved when the pointer is
+LOCKED**. With a free cursor the hit was resolved under the POINTER, so a centre ring would point at the
+wrong thing. So `_clkSetHot(v, aim)` writes two classes from one place: `clickHot` is "something clickable is
+under the resolution point" and `clickHotAim` adds "…and that point is the crosshair".
+
+It is deliberately **not** keyed on `body.freeCursor`, which is the *setting* rather than the lock state —
+those disagree in the window after Escape. The class says where the answer came from.
+
+`aim` is `!!v && !!aim`, so it can never outlive `clickHot`; the old one-argument calls still mean "not
+aiming"; and the write still happens **only on a change**, which is what a fixed count in `test-1480` had
+been standing in for.
+
+### Measured live in the locked view, with a control that goes dark
+
+```
+                    clickHot   clickHotAim   ring opacity
+looking AT it         true        true           0.95
+looking away          false       false          0
+signal REMOVED        false       false          0        <- the control
+signal restored       true        true           0.95
+a modal open          false       false          0
+the modal closed      true        true           0.95
+```
+
+**The control is the same prop at the same aim with its `clicked` signal taken away** — a cue that fires over
+everything is the same bug as one that never fires.
+
+### Two clock faults on one column, and the second is build 1344's lesson
+
+`ringOpacity` read **0 in every row**, lit ones included, on the first run: `__drive` advances the game's
+VIRTUAL clock, so no real time passes inside one eval and the CSS transition never starts. A wall-clock
+sleep then fixed it **intermittently** — a transition advances on FRAMES, and SwiftShader renders about 1.5 a
+second, so some reads caught a completed fade and some caught its start value. That is build 1344's recorded
+rule verbatim: *a probe that waits in wall-clock time is measuring the renderer's speed, not its output.* The
+read polls until two consecutive samples agree and prints how long that took (2–3 polls).
+
+### Seven pins moved, and two of them were asserting the defect
+
+`test-1480`'s *"a captured pointer has no cursor to change"* turned the cue OFF — which **was** the bug; it
+now asserts that a locked pointer is hot and gets the AIM class. Its two write-COUNTS (1 and 2) were standing
+in for *"written only on a change"*, and a second class moved them; that property is asserted directly now,
+so it cannot move again. `test-337`'s *"'none' hides the crosshair"* quoted `innerHTML=''`; what it meant —
+no arms, no dot — is unchanged, since the branch still returns before either.
+
+**And my own replacement pin fell into this file's most-repeated trap on the way**: a `[\s\S]{0,80}` window
+after the `none` branch ran past it into the arm code and matched `arm`. The branch RETURNS; asserting what
+the ring *is* needs no window at all.
+
+### Container rollback #25, at the start of this build
+
+The tree was at `dd7a08c` (build 1424 in the source, 1225 test files missing) — the documented signature.
+`git log` first, then `git fetch origin <branch> && git reset --hard FETCH_HEAD`. One command, because every
+build is pushed the moment it lands.
+
 ## A refused click and an unheard click looked the same (build 1484)
 
 Build 1481 shipped click-to-move and left the feedback out. So the player points at a wall face, or at a spot

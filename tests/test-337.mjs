@@ -12,7 +12,13 @@ assert(/crosshair: \{ style: gameCfg\.crosshair\.style, size: \+gameCfg\.crossha
 assert(/#crosshair::before, #crosshair::after \{ display:none; \}/.test(page), 'old CSS crosshair lines are disabled (JS builds it)');
 const ac = extractFunction('applyCrosshair');
 assert(/cfg\.color==='accent'\) \? 'var\(--accent\)' : cfg\.color/.test(ac), "'accent' color follows the player's theme; a hex is literal");
-assert(/if\(cfg\.style==='none'\)\{ el\.innerHTML=''; return; \}/.test(ac), "'none' hides the crosshair");
+/* build 1485 put the hover ring on every style including this one — it is an affordance, not a reticle, and
+   is invisible until the player looks at something the level made clickable. The intent here is that 'none'
+   draws no RETICLE, which is asserted directly now rather than by quoting an empty assignment. */
+assert(/if\(cfg\.style==='none'\)\{ el\.innerHTML = hotRing; return; \}/.test(ac), "'none' hides the crosshair");
+/* and the branch RETURNS, so no arm or dot can be reached — asserted by what the ring IS rather than by a
+   character window after it, which is this file's most-repeated pin trap and caught me writing one. */
+assert(/const hotRing = '<div class="xhHot"><\/div>';/.test(ac), "...whose ring is one empty element, not a reticle");
 assert(/cfg\.style==='cross' \|\| cfg\.style==='classic' \|\| cfg\.style==='tee'/.test(ac), 'cross / classic / tee draw arms');
 assert(/cfg\.style==='circle'/.test(ac) && /border-radius:50%/.test(ac), 'circle style draws a ring');
 assert(/cfg\.dot \|\| cfg\.style==='dot'/.test(ac), 'a center dot is supported');

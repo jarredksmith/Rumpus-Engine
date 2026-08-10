@@ -21,7 +21,7 @@ const src = gameSource();   // the game script
   assert(!/intersectObjects|_firstSolidHit|when === 'clicked'/.test(pc),
     '...and holds no copy of the resolution itself');
   const ht = extractFunction('_clkHoverTick', src);
-  assert(/_clkSetHot\(!!_clkResolve\(_clkMx, _clkMy\)\);/.test(ht), 'and so does the hover');
+  assert(/_clkSetHot\(!!_clkResolve\(_clkMx, _clkMy\)/.test(ht), 'and so does the hover');
   assert(!/intersectObjects|_firstSolidHit/.test(ht), '...with no second copy either');
 }
 
@@ -33,12 +33,15 @@ const src = gameSource();   // the game script
   eq(SCAN, 30, '...and the "is there anything clickable" question is asked far less often still');
 
   const mk = (over) => {
-    const O = { hot: null, resolves: 0, scans: 0, writes: 0 };
+    const O = { hot: null, aim: null, resolves: 0, scans: 0, writes: 0 };
     const st = Object.assign({ locked:false, blocked:false, gameOn:true, hits:false, mx:100, my:100,
                                props:[{ userData:{ signals:[{ when:'clicked' }] } }] }, over);
     const env = {
+      /* build 1485 writes TWO classes, so a stub that records `v` for whichever fired last would report
+         the aim class as the cursor class. Recorded by name. */
       document: { get pointerLockElement(){ return st.locked ? {} : null; },
-                  body: { classList: { toggle(c, v){ O.writes++; O.hot = v; } } } },
+                  body: { classList: { toggle(c, v){ O.writes++;
+                    if(c === 'clickHot') O.hot = v; else if(c === 'clickHotAim') O.aim = v; } } } },
       gameOn: st.gameOn,
       propModels: st.props,
       _clkBlocked: () => st.blocked,
@@ -47,7 +50,7 @@ const src = gameSource();   // the game script
     };
     const body = [
       'const CLK_HOVER_EVERY = ' + EVERY + ', CLK_SCAN_EVERY = ' + SCAN + ';',
-      'let _clkAny = false, _clkTick = 0, _clkHot = false, _clkMx = ' + st.mx + ', _clkMy = ' + st.my + ';',
+      'let _clkAny = false, _clkTick = 0, _clkHot = false, _clkHotAim = false, _clkMx = ' + st.mx + ', _clkMy = ' + st.my + ';',
       extractFunction('_clkSetHot', src),
       '(function(){ const real = _clkAnyClickable; _clkAnyClickable = real; })();',
       extractFunction('_clkAnyClickable', src).replace('function _clkAnyClickable', 'var _clkAnyClickableReal = function _clkAnyClickable'),
@@ -65,17 +68,25 @@ const src = gameSource();   // the game script
     for (let i = 0; i < 8; i++) r.tick();
     eq(r.hot(), true, 'hovering a clickable prop turns the cue ON');
     eq(r.O.hot, true, '...by toggling the body class');
-    eq(r.O.writes, 1, '...written ONCE, not every frame — this runs in every session forever');
+    /* the intent is "only on a CHANGE", which is what a fixed COUNT was standing in for — and build 1485
+       moved that count by adding a second class. Asserted directly, so it cannot move again. */
+    const w = r.O.writes;
+    for (let i = 0; i < 20; i++) r.tick();
+    eq(r.O.writes, w, '...written only on a CHANGE, never every frame — this runs in every session forever');
   }
 
-  // and off again, with one more write
+  // and off again, for one more change and then silence
   {
     const r = mk({ hits:true });
     for (let i = 0; i < 8; i++) r.tick();
+    const w0 = r.O.writes;
     r.st.hits = false;
     for (let i = 0; i < 8; i++) r.tick();
     eq(r.hot(), false, 'moving off it turns the cue off');
-    eq(r.O.writes, 2, '...for exactly one more class write');
+    assert(r.O.writes > w0, '...for one more class change');
+    const w1 = r.O.writes;
+    for (let i = 0; i < 20; i++) r.tick();
+    eq(r.O.writes, w1, '...and then goes quiet again');
   }
 
   // a level with NOTHING clickable pays no raycast at all
@@ -105,8 +116,16 @@ const src = gameSource();   // the game script
   }
 
   // every reason to be off, and each one turns it off rather than leaving it stuck
-  for (const [k, v, why] of [['locked', true, 'a captured pointer has no cursor to change'],
-                             ['blocked', true, 'a modal, the map, the inventory, a pause, the editor or being eliminated'],
+  /* build 1485: a captured pointer is NO LONGER a reason to be off. This pin asserted the defect — the cue
+     was gated on a free pointer, so first person, the engine's DEFAULT view, had no affordance at all. What
+     survives is that the two cues are told apart, which is asserted here rather than by turning it off. */
+  {
+    const r = mk({ hits:true, locked:true });
+    for (let i = 0; i < 8; i++) r.tick();
+    eq(r.hot(), true, 'a captured pointer is hot too — the cue moved to the reticle (1485)');
+    eq(r.O.aim, true, '...and it is the AIM cue, drawn where the hit was actually resolved');
+  }
+  for (const [k, v, why] of [['blocked', true, 'a modal, the map, the inventory, a pause, the editor or being eliminated'],
                              ['gameOn', false, 'not in a game']]) {
     const r = mk({ hits:true });
     for (let i = 0; i < 8; i++) r.tick();
