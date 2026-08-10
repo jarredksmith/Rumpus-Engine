@@ -129,14 +129,15 @@ const src = gameSource();
   assert(gate, 'the play mousedown handler is found');
   if(!gate) throw new Error('the mousedown gate could not be located — every assertion below it would ' +
     'be measuring nothing');
-  assert(/if\(e\.button===0\) _propClick\(e\);/.test(gate[0]), 'the click is resolved on LMB...');
+  assert(/if\(e\.button===0\)\{ if\(!_propClick\(e\)\) _cmClickGround\(e\); \}/.test(gate[0]),
+    'the click is resolved on LMB... (build 1481 put click-to-move behind it: a click the world ANSWERS is ' +
+    'not also a move order)');
   assert(gate[0].indexOf('_propClick(e)') > gate[0].indexOf('_modalOpen) return;'),
     '...AFTER the gate, so a click cannot reach the world through an open modal, the map, the inventory, ' +
     'the shop, the editor, a pause or while eliminated');
   assert(gate[0].indexOf('_propClick(e)') < gate[0].indexOf('firing=true'),
     '...and before the shot, so a click that opens a door is not lost to the trigger');
-  assert(/if\(e\.button===0\) _propClick\(e\);\s*\n\s*\/\*[\s\S]*?\*\/\s*\n?\s*if\(e\.button===0\)\{ if\(heldProp\)/.test(gate[0])
-      || /_propClick\(e\);\s*\n\s*if\(e\.button===0\)\{ if\(heldProp\)/.test(gate[0]),
+  assert(/if\(e\.button===0\)\{ if\(heldProp\)\{ throwHeld\(\); return; \} firing=true; \}/.test(gate[0]),
     'the firing branch is left intact beside it rather than replaced');
 
   // it does not swallow — the decision, asserted as an absence

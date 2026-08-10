@@ -267,7 +267,11 @@ const src = gameSource();
   assert(/\|\| _modalOpen\) return;/.test(md),
     'shooting, aiming and grabbing are refused while a modal is up — the same gate the shop and the ' +
     'inventory already use, rather than a new one');
-  assert(md.indexOf('_modalOpen') >= 0 && md.indexOf('_modalOpen') < md.indexOf('firing=true'),
+  // build 1481 put the click-to-move branch between the gate and the trigger, so the slice this used to
+  // reach `firing=true` in no longer does. The INTENT is an ordering, so it is asserted against the whole
+  // source rather than a window that has to keep growing.
+  assert(md.indexOf('_modalOpen') >= 0, 'the gate names the modal...');
+  assert(src.indexOf('|| _modalOpen) return;') < src.indexOf('firing=true'),
     '...before the trigger, or the first click of every menu fires a round');
 }
 

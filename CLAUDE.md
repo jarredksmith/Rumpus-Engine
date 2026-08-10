@@ -490,6 +490,554 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A control that fires an event nobody hears (build 1487)
+
+Build 1402 gave the `emit` verb exactly this report and named, in its own entry, the three things it did not
+cover: *"everything else that fires an event (a HUD button, a trigger zone, an action bind) names a fixed
+event per control and keeps calling `logicEvent` directly."* Those three are the ones a player can **press,
+walk into and trigger** — and a dead one is completely silent, which is the *"nothing happened"* builds 1147,
+1484 and 1486 exist to remove. A creator wires a prize-counter button, presses it, nothing happens, and
+nothing anywhere says why.
+
+**The predicate already existed.** `_lgEventHeard` is 1402's own, so the panel and the run-time report can
+never come to different answers about the same name; the test asserts the block holds no second copy of
+*"does anything listen"*.
+
+Four decisions:
+
+- **No interpolation to worry about**, unlike the modal check directly beside it. `emit` COMPUTES its name
+  (1402) and these three do not — `_hwFire`, the countdown and `fireAction` each pass their field straight
+  through — so the question is decidable for every one of them and needs none of 1472's undecidability guard.
+- **A blank name is deliberately not reported.** All three sites guard on truthiness, so a blank fires
+  nothing at all rather than firing into the void, and a half-authored control is a work in progress.
+- **One row per EVENT NAME**, listing up to four of the controls that fire it, capped at six rows with a
+  summary. Twelve buttons on one dead name is one row; a panel that scrolls is not read (1274).
+- **Plain rows, never clickable.** A HUD button and a trigger zone are not props, so there is nowhere to send
+  you — build 1300's rule as 1423 restated it, asserted by the absence of `_issueAt`.
+
+### Measured live, and the wiring is the control
+
+```
+unwired                the button row AND the trigger row
++ On event "buy"       the trigger row ALONE          <- per-name, not per-panel
++ On event "entered"   nothing at all                 <- a panel that always complains is not read
+the rendered panel     both rows, as prose (no literal markup)
+```
+
+**Wiring one of the two and watching only its row go is what makes this a measurement** rather than a check
+that fires on everything.
+
+The last row is build 1423's lesson: `levelIssues()` returning the right string and the creator being able
+to READ it are two different claims, and that build's first draft's bug lived entirely in the gap.
+
+**Stated limit:** an `On event` node is the only listener in the engine today (a prop signal's `when` values
+are destroyed / interacted / contact / damaged / clicked, and a HUD widget's `when` is a variable gate, not
+an event). If a second kind of listener ever arrives, `_lgEventHeard` is the one place to teach — and both
+consumers inherit it.
+
+### Two probe faults, and the second is a habit rather than a mistake
+
+- **The panel row read zero and measured STALENESS.** `renderEditorFields()` left the host holding its
+  previous content; the panel has its own renderer and it has to be driven by name.
+- **Backticks inside the page-code template literal, for the fifteenth time.** `tools/probe/lint.mjs` exists
+  for exactly this and reports it instantly — and I ran it BEFORE the last edit rather than after, which is
+  build 1415's own recorded habit and the whole value of the tool.
+
+Zero pins moved.
+
+## The interaction booth survives the file (probe pass, after build 1486)
+
+`tools/probe/interaction-booth-level.mjs` runs this repo's most productive shape — author it, SAVE it, reload
+through the real loader, then PLAY what came out — over everything builds 1468-1486 added. That shape has
+found a real bug **every previous time it has been run**: 1398 (a shootable target that saved and was never
+read back), 1400 (five game settings written and never loaded), 1401 (thirteen sections a joiner never
+received), 1406 (fourteen of seventeen signal verbs losing every parameter), 1427 (the fuse).
+
+**34/34, and no engine change was needed.** That is the result, and it is worth having: those nineteen builds
+put state on three different roads — the HUD widget sanitizer, `SIG_KEYS`' short-key table (the road 1406
+found broken), and `gameCfg`/`worldCfg` scalars (the road 1400 found broken) — and it would not otherwise
+have been obvious which of them had left something behind.
+
+```
+written    {"w":"clicked","d":"modal","md":"show","mj":"shop","mz":1} · {"w":"clicked","d":"emit","tx":"ticket"}
+the reset  widgets 0 · AIR_JUMPS 0 · WALL_JUMP 0 · clickMove false     <- distinct-wrong before the load
+reloaded   2 props with their names · 5 widgets · clickMove · AIR_JUMPS 2 · WALL_JUMP 14 · jumpCut 0.35
+widgets    button+event+modal binding, colour, plate-off, size, art box, anchor/offset, timer format sec2,
+           the image kind, and a plain widget keeping its show-when and staying OUT of the modal
+stability  byte-identical across three save cycles
+PLAY       the reloaded prop is clickable, clicking it opens the modal it saved, and the FREEZE it saved freezes
+           a reloaded air jump is really spendable: rise 3.24, one spent
+```
+
+**The reset row is what makes the rest mean anything** (build 1401's rule): restoring the same live state
+proves nothing, because nothing cleared it. Every value is driven to a distinct wrong one first.
+
+### My own fixture broke the probe's own rule, twice
+
+- **An invented identifier.** The readout named `_jumpCutNow`, which does not exist, and the probe died on
+  its first run. The recorded trap, in the instrument.
+- **A column that round-tripped a DEFAULT.** I authored `anchor:'cc'`, which is not in `HW_ANCHORS`, so the
+  sanitizer correctly reset it to `'tc'` — and the row then compared a default to a default and tested
+  nothing. That is this probe's own stated rule (*a field that happens to equal its default cannot tell a
+  working loader from a missing one*) turned on the fixture that stated it. With a real anchor the row
+  carries `br / -40 / 60`.
+
+### Two premises that died on verification, recorded so they are not re-derived
+
+Both were candidate builds, and checking cost minutes:
+
+- **"The reticle can claim a click the click would refuse."** False by construction: the cue and the click
+  both go through `_clkResolve`, which is build 1480's whole point. There is no range at which they disagree.
+- **"A clickable prop can be clicked through terrain."** True, and **not a defect** — `terrainHeightAt`'s
+  terrain is in neither `colliders` nor `propModels`, so it occludes nothing for `segmentBlocked` either, and
+  the AI's own sightline sees through hills exactly the same way. Making clicks stricter than sight would
+  make them the odd one out. Prop-on-prop occlusion IS handled: the nearest solid hit wins, and a wall prop
+  with no `clicked` signal resolves to null.
+
+Also checked and already correct: the mousedown gate refuses a click while a modal, the shop, the map, the
+inventory, the editor or a pause is up — `_propClick` sits **below** that return, so the hover cue and the
+click agree about all seven states, which is what `test-1480` asserts in both directions.
+
+## The hovered thing had no name (build 1486)
+
+Builds 1480 and 1485 answer *is this clickable* — a cursor, then a reticle ring. Neither answers **what it
+is**, and in a point-and-click level that is the other half of the affordance: every adventure ever shipped
+names the object under the pointer. The proximity prompt has named things since build 696 (*"E Talk to
+Bob"*), and a clickable prop — answerable from up to `CLICK_RANGE` away — had nothing at all.
+
+### One element, one writer
+
+`checkProximity` owns `#prompt`: it sets the text and it is the thing that hides it. So the hover label is
+produced **there**, as the branch that runs when proximity has nothing of its own. A second writer would be
+this file's most-repeated defect, and on an element that would then blink between two answers it would be
+visible on the very first frame. `test-1486` asserts the hover path never writes the element and that
+`_clkHoverLabel` **returns text and writes nothing**.
+
+**Proximity wins, and that ordering is the decision rather than a fallback.** Standing at a lever whose E
+prompt is live, the actionable verb is the one at arm's reach; the hover label fills the gap when there is no
+such verb. It is asserted structurally (the label sits in the `else` of the `nearTarget` branch) *and*
+measured with both answers available at once.
+
+The prop comes from the resolve that was **already happening** — `_clkResolve` returns the object and 1480
+threw it away — so there is no second raycast that could name a different thing from the one the ring is
+lit for. All three of the tick's giving-up exits clear it, because a remembered prop with the cue off is a
+label that will not go away; the test counts them and asserts there is no fourth.
+
+It names the **CLICK**, never the interact key: different verbs on different devices. A prop that is both
+correctly swaps to the E prompt as you walk up.
+
+### The dead tap, closed in the same build
+
+On touch, `#prompt` is `pointer-events:auto` and its tap calls `interact()` — the wrong verb for a click
+target, and a tap that does nothing is exactly the *"nothing happened"* this run of builds exists to remove.
+The prompt now carries `dataset.hover` saying **which kind of prompt is on screen**, and the tap declines a
+hover label. The proximity branch clears the flag, or one hover would disable the shortcut for every later E
+prompt.
+
+Structurally the label is nearly unreachable on touch anyway (`_clkMx` comes from mousemove), which is
+precisely why it was worth an explicit guard rather than leaving it to be incidentally true.
+
+### Measured live, through the real prompt
+
+```
+pointing AT it     <b>CLICK</b> Vault Door        hover flag 1
+pointing away      hidden                         flag cleared
+unnamed prop       <b>CLICK</b>                   never the string "undefined"
+hostile name       &lt;img src=x onerror=1&gt;    img nodes in the DOM: 0
+STANDING at it     <b>E</b> Activate              flag '' — and still pointing at it
+stepped back       <b>CLICK</b> Vault Door
+```
+
+**The fifth row is the control and `stillPointingAtIt: true` is what makes it one**: both answers were
+available on that frame and only one reached the screen. A run where the player had merely stopped pointing
+at the prop would have proved nothing about precedence.
+
+### A pin defeated by my own prose, again
+
+The first version asserted `!/prompt/.test(_clkHoverTick)` to mean *the hover never writes the element* — and
+failed against correct code, because a comment I had just written inside that function says the word
+"prompt". Builds 1411, 1412, 1421 and 1485 all record this; the rule is unconditional and I broke it anyway.
+**Pin the syntax** — `!/prompt\s*\.\s*\w+\s*=/` — never the bare word.
+
+Four pins moved across three files (116, 1480, 1485), each keeping its intent: 116's *"tapping the prompt
+calls interact"* is still exactly true of a proximity prompt and now tolerates the guard beside it, and the
+other three quoted lines this build extended by a statement.
+
+## The affordance was gated on the view most players are not in (build 1485)
+
+Build 1479 gave the world an On-click trigger, 1480 gave it a hover cue, and that cue opened:
+
+```js
+if(document.pointerLockElement || _clkBlocked() || !gameOn){ _clkSetHot(false); return; }
+```
+
+**First person is the engine's DEFAULT view**, and in it the pointer is captured — so a clickable prop was
+completely undiscoverable while clicking it worked perfectly. The whole point-and-click surface those two
+builds added was invisible to anyone who had not turned the free cursor on.
+
+**The answer already existed, and that is what makes this a class rather than a feature.** `_clkResolve` has
+rayed through SCREEN CENTRE whenever the pointer is locked since 1480 — its own comment says so. Nothing
+needed a second resolver; only the cue was missing. Build 1480's own comment names the fix and declines it:
+*"a click cue for a view that has no cursor is a different feature with a different answer (a crosshair
+state, or the interact prompt), deliberately not invented here."* This is that.
+
+### A ring, not a recolour
+
+The reticle's arms carry their colour as an **inline literal** — a creator may author any hex — so tinting
+them on hover would mean rebuilding `#crosshair`'s `innerHTML` on a hover, per frame, at the one moment the
+player is trying to aim. The ring is one element, built once beside the arms by `applyCrosshair`, switched by
+a class. `test-1485` asserts the hover path never touches `innerHTML` or calls `applyCrosshair`, because that
+is the property, not the implementation.
+
+It carries **no `--xh-bloom` term**, so it holds still while build 1219's arms breathe with the spread.
+
+**It is painted for `style:'none'` too.** The ring is not a reticle: it can never appear unless the player is
+looking at something the level itself made clickable, so it cannot clutter a screen a creator wanted clean —
+and a no-reticle level with clickable props otherwise has no affordance at all.
+
+### `clickHotAim`, and why it is not `body.freeCursor`
+
+The ring sits at screen centre, and **screen centre is only where the hit was resolved when the pointer is
+LOCKED**. With a free cursor the hit was resolved under the POINTER, so a centre ring would point at the
+wrong thing. So `_clkSetHot(v, aim)` writes two classes from one place: `clickHot` is "something clickable is
+under the resolution point" and `clickHotAim` adds "…and that point is the crosshair".
+
+It is deliberately **not** keyed on `body.freeCursor`, which is the *setting* rather than the lock state —
+those disagree in the window after Escape. The class says where the answer came from.
+
+`aim` is `!!v && !!aim`, so it can never outlive `clickHot`; the old one-argument calls still mean "not
+aiming"; and the write still happens **only on a change**, which is what a fixed count in `test-1480` had
+been standing in for.
+
+### Measured live in the locked view, with a control that goes dark
+
+```
+                    clickHot   clickHotAim   ring opacity
+looking AT it         true        true           0.95
+looking away          false       false          0
+signal REMOVED        false       false          0        <- the control
+signal restored       true        true           0.95
+a modal open          false       false          0
+the modal closed      true        true           0.95
+```
+
+**The control is the same prop at the same aim with its `clicked` signal taken away** — a cue that fires over
+everything is the same bug as one that never fires.
+
+### Two clock faults on one column, and the second is build 1344's lesson
+
+`ringOpacity` read **0 in every row**, lit ones included, on the first run: `__drive` advances the game's
+VIRTUAL clock, so no real time passes inside one eval and the CSS transition never starts. A wall-clock
+sleep then fixed it **intermittently** — a transition advances on FRAMES, and SwiftShader renders about 1.5 a
+second, so some reads caught a completed fade and some caught its start value. That is build 1344's recorded
+rule verbatim: *a probe that waits in wall-clock time is measuring the renderer's speed, not its output.* The
+read polls until two consecutive samples agree and prints how long that took (2–3 polls).
+
+### Seven pins moved, and two of them were asserting the defect
+
+`test-1480`'s *"a captured pointer has no cursor to change"* turned the cue OFF — which **was** the bug; it
+now asserts that a locked pointer is hot and gets the AIM class. Its two write-COUNTS (1 and 2) were standing
+in for *"written only on a change"*, and a second class moved them; that property is asserted directly now,
+so it cannot move again. `test-337`'s *"'none' hides the crosshair"* quoted `innerHTML=''`; what it meant —
+no arms, no dot — is unchanged, since the branch still returns before either.
+
+**And my own replacement pin fell into this file's most-repeated trap on the way**: a `[\s\S]{0,80}` window
+after the `none` branch ran past it into the arm code and matched `arm`. The branch RETURNS; asserting what
+the ring *is* needs no window at all.
+
+### Container rollback #25, at the start of this build
+
+The tree was at `dd7a08c` (build 1424 in the source, 1225 test files missing) — the documented signature.
+`git log` first, then `git fetch origin <branch> && git reset --hard FETCH_HEAD`. One command, because every
+build is pushed the moment it lands.
+
+## A refused click and an unheard click looked the same (build 1484)
+
+Build 1481 shipped click-to-move and left the feedback out. So the player points at a wall face, or at a spot
+the nav grid has nothing walkable near, and **absolutely nothing happens** — indistinguishable from a click
+the game never received. That is build 1147's *"nothing happened"*, and 1310/1348's rule that a product must
+not stay silent about its own answer.
+
+Every click that lands on a real surface now gets a cue, and **the two answers look different**: a ping in the
+level's own accent that then HOLDS at the destination while you walk, or a red ping that does not hold. A
+refusal that looked like a success would be worse than no cue at all.
+
+### The ring IS the arrival radius
+
+Its held size is `CM_ARRIVE` exactly, so the marker is not a decoration near the destination — it is a drawing
+of *where "arrived" means*, and it cannot drift from the number that decides it. Measured live at 0.55.
+
+Four things it deliberately is not, each a defect the other way:
+
+- **Not a light.** The scene's light count must never change during play (636/977/1153/1155).
+- **Not allocated per click** — one mesh, built lazily on the first click and reused for the life of the page
+  (1168). A level whose player never clicks pays for nothing at all, which the test asserts by ticking
+  without clicking and finding no mesh.
+- **Not lit.** A destination has to read in an unlit corner, which is build 1411's argument for the sign.
+- **Not a raycast target.** Its own raycast is neutralised (1093's `nocollide` convention), so it can never
+  become the thing a later click resolves to.
+
+Being `transparent` it is swept out of the AO and velocity G-buffers by `_aoNoDepthMat` **for free** — the
+rule builds 1126, 1128, 1152, 1158 and 1285 arrived at six times, satisfied here by construction rather than
+by a seventh naming. `test-1484` executes the real predicate against the real material rather than asserting
+it.
+
+**The refusal red is fixed and never the accent** — build 1469's close-button rule: a warning colour is
+information, and a destination refusal painted in the level's own theme reads as *confirm*.
+
+### Measured live, with the two answers side by side
+
+```
+before any click    the marker does not exist                       <- the control
+good click          accent #38f5b5, 17.3 m away
+  6 frames on       visible, opacity 0.76, expanding
+  the HOLD          visible, scale 0.55 = CM_ARRIVE, still walking
+  on arrival        147 frames later: gone
+REFUSED click       took false, RED, at the point pointed at
+  6 frames on       visible, opacity 0.76 — the refusal is heard
+  40 frames on      gone, and never held                            <- the answers differ
+editor              hidden, and given straight back on the way out
+```
+
+**Arrival takes the marker with it, and that is the arrival cue** — a second one would be noise.
+
+### Three fixture faults, two of them rows that measured nothing
+
+- **`took:false` in every row.** `_cmClickGround`'s second line refuses a CAPTURED pointer, and the headless
+  session holds the lock — so the whole probe measured the lock. `exitPointerLock` is asynchronous (it
+  resolves through a `pointerlockchange` event, which build 1467's handler then pauses on), so the release
+  needs its own round trip and a `__gate()` behind it.
+- **The HOLD row read an empty marker.** Aimed steeply down, the destination landed **1.6 m away** and the
+  player arrived before the ping had finished — so the one row carrying the whole success-versus-refusal
+  distinction was measuring an arrival. Aiming shallow puts it 17.3 m out.
+- **The refusal was only ever sampled after its ping was spent**, so "the refusal pings" was never actually
+  observed. It is sampled at the same 6 frames the success is now.
+
+One readback note worth keeping: the refusal reads back as `#fe4d6d` rather than the authored `#ff4d6d`.
+That is one code value of `ColorManagement` round trip through `getHexString` — `setHex` linearises on the
+way in — not a wrong colour.
+
+One pin moved (1481), and its intent is unchanged: it quoted `return _cmGoTo(...)`, which this build had to
+put in a local so the same answer could drive the cue. What it always protected is the **argument order**
+(x, z, y), which it asserts directly now, beside a new assertion that the caller is still told that answer.
+
+## The wall jump, and a test that caught the code doing the other thing (build 1483)
+
+The last of the four verbs build 1301 named and deferred — *"double jump, wall jump, dash, air-dash — each is
+its own verb with its own tuning and its own compatibility question."* 1463 took the air dash, 1482 the double
+jump. Same shape for the same reason: `wallJump` is the push-off SPEED, so **0 means off and is every level
+ever authored**, one field both enables and tunes it, and it is the **jump key** — no new bind, nothing to
+teach, and a creator who rebinds jump moves all three together.
+
+### The wall is found with `clearAt`, not with a ray
+
+`clearAt` is the engine's own *does the body fit here* predicate — the one `moveHorizontal` already uses. So
+the wall this pushes off is **exactly the wall that stopped you walking**, rather than a second opinion from a
+raycast that could disagree with the collision that put you there. It inherits build 1324's `noCol` for free:
+decoration is not a wall.
+
+Eight compass probes are averaged rather than one ray taken, which buys two things a single probe cannot:
+
+- an **inside corner** pushes out along the diagonal, which is what a player standing in one expects;
+- **opposing walls CANCEL to null**. A shaft with a wall on each side has no push direction, and picking a
+  side would be inventing an answer — a chimney climb is its own verb, not a side effect of this one.
+
+### The test asserted the intent while the code did the other thing
+
+`_wallPush` returns a direction; the branch then had to decide what to do with the player's existing velocity.
+The first draft **SET** the component into the wall:
+
+```js
+player.vel.x += _wp.x*(WALL_JUMP - _d);     // _d = the velocity already along the push
+```
+
+That is correct from a standstill and **brakes a player already leaving faster than the push** — build 1361's
+defect, one verb along, and the exact thing build 1463 had already decided for the dash (*"`max()`, never
+`set()`"*). `test-1483` was written from the intent and failed against the code; the ENGINE moved, not the
+test:
+
+```js
+const _add = Math.max(0, WALL_JUMP - _d);
+```
+
+**The tangent is untouched either way** — only the component into the wall is lifted — so a fast run along a
+wall keeps its speed rather than being flattened into a pure push-off.
+
+### No two in a row off the same wall
+
+Without it a single face is an infinite ladder, which would let a player leave arenas their author had
+sealed — the exact outcome 1463 and 1482 are off-by-default to avoid. `WALL_SAME_DOT` is 0.7 (~45 degrees),
+so the ground, a ledge (build 1290's hang IS ground contact by every other rule in this file) or a wall facing
+a different way all re-arm it, and a corner-to-corner ascent is still real movement.
+
+It sits **between the ground jump and the air jump**, so a wall is preferred over spending an air jump — which
+is what a player standing next to one means — while a grounded press is still always the ordinary jump. It
+costs no air jump, and the same-wall rule is what keeps that honest.
+
+### Measured live, with the setting off as the control
+
+```
+              airborne   wall there   vy            vx        used   air jumps spent
+wallJump 0     2.41 m       yes      -4.5 -> -6      0        false        0
+wallJump 12    2.41 m       yes      -4.5 -> 11.5   -11.84    true         0
+wallJump 0     2.41 m       yes      -4.5 -> -6      0        false        0    <- returns
+
+same wall, six attempts          1 fired
+ground touched between attempts  6 fired    <- the positive control
+```
+
+**That second ladder row is what makes the first one a finding.** Every attempt is handed the player airborne,
+at the wall, off cooldown, so the same-wall rule is the only thing that can refuse — and a run where nothing
+fires for an unrelated reason would read as the rule working. Six proves the fixture can produce a six.
+
+### Three fixture faults, and the third is build 1482's own finding arriving again
+
+| the probe reported | why |
+|---|---|
+| `wall: null` in every row | the fixture stood at x=200 to be "well clear of the stock level" (1323) — and the ground plane stops at **±ARENA (70)**, so the player fell out of the world. Build 1405 hit this at 700 |
+| a player oscillating, never grounded | giving them their own platform box fixed the fall and left them resting **exactly on a collider box boundary** — feet -0.30 / -0.03 / -0.65 / -0.18 — which is build 1094's recorded trap |
+| the CONTROL showing a full 12 of lift | the press landed at frame 50, by which time the player had nearly landed, so the buffered key fired as an ordinary **ground** jump |
+| every row identical again | moved to frame 28 — which is 0.467 s after the ground jump, **inside `JUMP_CD` (0.5 s)**, so nothing fired at all. Build 1482 recorded this exact thing one verb ago |
+
+Frame 35 is the answer: the cooldown has cleared and there is still ~2.5 m of air underneath. **Two of the four
+were rows that read the same in every condition, which is a fixture measuring itself rather than a null.**
+
+Two pins moved, both in `test-1482` and both traps this file already records: its rig needed the new wall
+dependencies supplied **inert** (`WALL_JUMP = 0`, `_wallPush = () => null`), and its refund assertion quoted
+the whole line — the very trap I had moved `test-1463` off one build earlier.
+
+## The double jump (build 1482)
+
+Build 1301 named four verbs it deliberately left — *"double jump, wall jump, dash, air-dash — each is its
+own verb with its own tuning and its own compatibility question"* — and 1463 took the air dash. This is the
+most standard of the rest, and it takes 1463's shape for 1463's reason.
+
+**OFF BY DEFAULT is the compatibility question answered.** Every gap, ledge and jump puzzle in every level
+ever authored was measured against a player with ONE jump; a second that existed by default would make a
+fraction of them trivial and would let a player leave arenas their author had sealed. `airJumps` is the
+COUNT, so 0 means off and one field both enables and tunes it — exactly `jumpCut`'s and `airDash`'s shape.
+
+**It is the JUMP KEY**, so there is no new bind, nothing to teach, and a creator who rebinds jump moves both
+together.
+
+### It needed no arm window, and that is the interesting part
+
+The dash needed `AIR_DASH_ARM` because `onGround` flickers false mid-stride (926/1160/1222) and an airborne
+dash could steal a buffered ground slide on those frames. This verb needs nothing: **build 1160's coyote is
+refreshed on every grounded frame**, so a flicker still satisfies the ground branch and the air branch's
+`_coyoteT <= 0` cannot fire there. The guard was already in the engine — this verb just had to ask for it,
+and the flicker case is executed rather than argued.
+
+Three more decisions: it is an **`else if`** of the ground jump, so a grounded press is always the ordinary
+jump and that branch is byte-identical; it **SETS** `vel.y` rather than adding, so a 40 u/s fall is arrested
+to a real recovery jump instead of nudged; and `!_onLadder` is the one guard the ground branch does not
+carry — jumping OFF a ladder is a ground-class jump and stays, while an extra mid-air jump while still
+attached to one is a hover.
+
+It inherits `JUMP_CD` (0.5 s), so it cannot be spammed, and build 1301's `jumpCut` covers it for free — that
+cut applies to a RISE and does not care which jump caused it.
+
+### Measured live, with TWO controls
+
+```
+                        rise    air jumps spent
+one press,  airJumps 0  2.71          0
+TWO presses, airJumps 0 2.71          0      <- the extra press alone does nothing
+one press,  airJumps 1  2.71          0      <- the setting alone does nothing
+TWO presses, airJumps 1 5.29          1      <- only the combination moves
+one press,  airJumps 0  2.71          0      <- returns
+
+refund   spent 1 mid-air · still 1 at touchdown · 0 three frames later
+held key 240 frames with jump HELD spends ZERO — one press is one jump, not a hover
+```
+
+**Two flat controls is what makes the fourth row a finding.** Either alone changes nothing.
+
+### The probe measured a fixture measuring itself, twice
+
+- **Every row read 2.71/0 first** — because a 2-frame tap is cut by `jumpCut` to a 0.93 m hop that is over
+  in ~13 frames, so the "mid-air" second press landed on the GROUND in all four rows. Identical rows are not
+  a null; they are a fixture with nothing in it.
+- **The refund read INVERTED** (0 mid-air, 1 after landing). The clear runs earlier in the frame than the
+  ground test, so on the touchdown frame it still sees last frame's airborne state and lands one frame
+  later. Harmless — nothing can press jump between them — but the readout has to wait for it.
+- And `afterOne` read 0 three frames after the press, which looked like a failure and was **`JUMP_CD`**: the
+  ground jump spent it, so a press at 0.4 s buffers and fires when the 0.5 s cooldown clears. That is the
+  air jump inheriting the ordinary jump's rate limit, which is the behaviour you want.
+
+One pin moved: `test-1463` sliced the dash block on the refund line this build extended. Its anchor is the
+statement the line opens now rather than its exact contents — **a slice whose anchor quotes a whole line is
+a slice against that line's neighbours.**
+
+## Click to move (build 1481)
+
+Build 1467's request, quoted in its own entry, was *"point-click type **navigation**"*. That build delivered
+the cursor; 1479 and 1480 made the world answer it. The player still could not be told where to **walk** —
+which is the defining verb of a point-and-click adventure, an ARPG and an RTS.
+
+### It supplies the WISH VECTOR and nothing else
+
+Gravity, collision, slopes, water, crouch, every speed multiplier and build 1171's acceleration model all sit
+**downstream** of `wish` and are untouched. That is what makes this small rather than a second movement
+system, and it is asserted as an absence: `_cmSteer` never names velocity, position, `onGround` or the ground
+query.
+
+### One pathfinder, driven by a shim
+
+The route is the engine's own nav grid through the **bots' own** `_botRepath` / `_botFollowPath`, driven with
+an agent that points at `player.pos` — build 1189's technique. So there is no second pathfinder to disagree
+with the first, and the player inherits build 1200's two storeys and its dirty-patch re-sampling for free.
+
+**A hop sets the JUMP PRESS BUFFER**, not velocity. The nav grid marks a cell walkable within jump reach, so
+a route legitimately contains hops; `_jumpBufT = JUMP_BUF` is exactly what the jump key does, so it goes
+through build 1160's coyote, buffer and cooldown gates rather than behind their backs.
+
+### Every giving-up exit CANCELS
+
+Arrival, a stall, no usable route, a throwing follow, the game ending. **A bot beelines when the grid fails
+and the player must not** — beelining is how you walk into the wall the grid was routing you around. The
+stall check is what covers a door closed across the route, a prop rolled into it, or a step the hop could not
+clear: no real progress for 0.9 s and the route is abandoned rather than pushed at forever.
+
+Three more decisions: a click on something the world **answers** is not also a move order (that priority is
+what a point-and-click player expects, and `_propClick` already reports which happened); **any** manual input
+takes control straight back, because a route that fights the keys is worse than no route; and the steer sits
+**above** the freeze lines, so a pause or a loading level stops the walk without throwing the route away.
+
+Off by default, always-assigned on both loaders (1400), and the editor control is **disabled** without the
+free cursor rather than present and inert (1338) — there is no pointer to click the ground with otherwise.
+
+### Measured live, through the real handler and the real frame loop
+
+```
+                 armed   moved   still routing
+click (0,10)      yes    11.19       yes
+same click, OFF   no      0.00       no        <- the control
+click again       yes    11.20       yes       <- returns
+
+a key press       route on -> OFF
+a clickable prop  opened=1, and NO move order
+the sky           not armed
+```
+
+### The probe lied four times, and the last one was my own state
+
+| # | it reported | why |
+|---|---|---|
+| 1 | the first two clicks refuse | the **nav grid was not built yet** — correct behaviour, and a completely different reason from the one under test, so the ON/OFF control was comparing two refusals |
+| 2 | "NEVER BUILT" while a later row walked 11.8 units | a contradiction, so the poll was wrong — not the engine |
+| 3 | still "NEVER BUILT" | I blamed the return shape and changed it. That was not it either |
+| 4 | — | **`safeExitPointerLock()` pauses the game**, and a paused frame loop never builds the grid. I had created the state I was waiting to leave |
+
+Row 2 is the one worth keeping: *a readout that contradicts another readout in the same run is an
+instrument fault, and chasing the engine instead costs a cycle.* The wait now keeps the game unpaused, and
+prints **NEVER BUILT — every row below is measuring that** if it times out, so the failure can never be read
+as a finding.
+
+Two pins moved (1468, 1479), both quoting the exact text of the mousedown line this build changed. 1468's
+intent is an ordering — the modal gate before the trigger — and it is asserted against the source rather
+than a window that has to keep growing.
+
 ## The cursor says what is clickable (build 1480)
 
 Build 1479 gave the world an On-click trigger and **left the affordance out**, stating it as not done. In a

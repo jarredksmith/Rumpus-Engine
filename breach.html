@@ -552,6 +552,33 @@
     display: block; height: 100%; width: 100%; border-radius: 2px; transform: scaleX(0);
     background: var(--accent); transform-origin: left center;
   }
+  /* build 1485: the CROSSHAIR says what is clickable, which is the answer build 1480 named and declined to
+     invent — "a click cue for a view that has no cursor is a different feature". Builds 1479/1480 gave the
+     world an On-click trigger and a hover cue, and the cue was gated on a FREE pointer, so in first person —
+     the engine's default view — a clickable prop was completely undiscoverable while clicking it worked fine.
+
+     A RING, not a recolour, because the arms carry their colour as an inline literal (a creator may author
+     any hex) and recolouring them would mean rebuilding the reticle's innerHTML on a hover — per frame, at
+     the one moment the player is trying to aim. The ring is one element, built once with the reticle, and
+     switched by a class.
+
+     It is deliberately painted for `style:'none'` TOO. The ring is not a reticle: it can never appear unless
+     the player is looking at something the level itself made clickable, so it cannot clutter a screen a
+     creator wanted clean — and a no-reticle level with clickable props otherwise has no affordance at all.
+
+     `clickHotAim`, not `clickHot`, and that distinction is load-bearing: the ring sits at SCREEN CENTRE, and
+     screen centre is only where the hit was resolved when the pointer is LOCKED. With a free cursor the hit
+     was resolved under the POINTER, so a ring at the centre would point at the wrong thing. The class says
+     where the answer came from rather than what the setting says, which is why it is not `body.freeCursor`. */
+  #crosshair .xhHot {
+    position: absolute; left: 50%; top: 50%; width: 150%; height: 150%;
+    transform: translate(-50%,-50%);
+    border: 2px solid var(--accent); border-radius: 50%;
+    opacity: 0; transition: opacity .12s var(--ease-out);
+    box-shadow: 0 0 6px var(--accent);
+    pointer-events: none;
+  }
+  body.clickHotAim #crosshair .xhHot { opacity: .95; }
   #crosshair::before, #crosshair::after { display:none; }   /* crosshair is built in JS now (configurable) */
   #crosshair .dot {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
@@ -14846,9 +14873,177 @@ function _propClick(e){
    The cue is the CURSOR, not an outline: it costs nothing to render, needs no new UI, and is the shape
    every player already knows. An outline or a highlight is a bigger visual decision and is deliberately
    not taken here. */
+/* build 1481: CLICK TO MOVE. Build 1467's request was "point-click type NAVIGATION"; that build delivered
+   the cursor and 1479/1480 made the world answer it, and the player still could not be told where to walk —
+   the defining verb of a point-and-click adventure, an ARPG and an RTS.
+
+   It supplies the WISH VECTOR and nothing else. Gravity, collision, slopes, water, crouch, the speed
+   multipliers and build 1171's acceleration model are all downstream of `wish` and are untouched, which is
+   what makes this small rather than a second movement system.
+
+   The route is the ENGINE'S OWN nav grid through the bots' own `_botRepath`/`_botFollowPath`, driven with a
+   shim that points at `player.pos` — build 1189's technique. So there is no second pathfinder to disagree
+   with the first, and the player inherits build 1200's two storeys and its dirty-patch re-sampling for
+   free. */
+const CM_ARRIVE = 0.55;      // close enough to have arrived, in metres
+const CM_STALL = 0.9;        // seconds of no real progress before the route is abandoned
+const CM_STALL_DIST = 0.25;  // ...and what counts as progress over that window
+const _cmAgent = { pos:null, path:null, pathI:0, pathT:0, pathGoalX:0, pathGoalZ:0 };
+const _cmDir = new THREE.Vector3();
+const _cmRay = new THREE.Raycaster();
+const _cmV2 = new THREE.Vector2();
+let _cmGoalX = 0, _cmGoalZ = 0, _cmGoalY = 0, _cmOn = false, _cmStallT = 0, _cmLastX = 0, _cmLastZ = 0;
+function _cmEnabled(){
+  /* It needs a pointer to click the ground WITH, so it rides the free cursor rather than becoming a second
+     answer to the same question. */
+  return !!(typeof gameCfg!=='undefined' && gameCfg && gameCfg.clickMove && gameCfg.freeCursor);
+}
+function _cmCancel(){ _cmOn = false; _cmAgent.path = null; }
+function _cmGoTo(x, z, y){
+  if(!_cmEnabled()) return false;
+  if(typeof navNearestWalkable!=='function' || !NAV.built) return false;
+  if(navNearestWalkable(x, z, y) < 0) return false;   // nowhere walkable there: refuse rather than shuffle
+  _cmGoalX = x; _cmGoalZ = z; _cmGoalY = y;
+  _cmAgent.pos = player.pos; _cmAgent.path = null; _cmAgent.pathT = 0;
+  _cmOn = true; _cmStallT = 0; _cmLastX = player.pos.x; _cmLastZ = player.pos.z;
+  try{ _botRepath(_cmAgent, x, z, y); }catch(err){ _cmCancel(); return false; }
+  return true;
+}
+/* Returns the direction to walk this frame, or null. Every exit that gives up CANCELS, so a route can never
+   outlive its usefulness and quietly steer the player into a wall for the rest of the match. */
+function _cmSteer(dt){
+  if(!_cmOn || !_cmEnabled()) return null;
+  if(!(typeof gameOn!=='undefined' && gameOn)){ _cmCancel(); return null; }
+  _cmAgent.pos = player.pos;
+  const dx = _cmGoalX - player.pos.x, dz = _cmGoalZ - player.pos.z;
+  if(Math.hypot(dx, dz) <= CM_ARRIVE){ _cmCancel(); return null; }
+  /* A path that stops making progress is abandoned rather than pushed at forever — a door closed across the
+     route, a physics prop rolled into it, or a step the hop could not clear. */
+  _cmStallT += dt;
+  if(_cmStallT >= CM_STALL){
+    if(Math.hypot(player.pos.x-_cmLastX, player.pos.z-_cmLastZ) < CM_STALL_DIST){ _cmCancel(); return null; }
+    _cmStallT = 0; _cmLastX = player.pos.x; _cmLastZ = player.pos.z;
+  }
+  let wp = null;
+  try{ wp = _botFollowPath(_cmAgent, _cmGoalX, _cmGoalZ, dt, _cmGoalY); }catch(err){ _cmCancel(); return null; }
+  /* No usable route: a bot beelines here, and the player must NOT — beelining is how you walk into the wall
+     the grid was routing you around. */
+  if(!wp){ _cmCancel(); return null; }
+  /* The nav grid marks a cell walkable within JUMP reach, so a route legitimately contains hops. Setting the
+     press buffer is exactly what the jump key does, so it goes through build 1160's own coyote, buffer and
+     cooldown gates rather than writing velocity behind their backs. */
+  if(wp.jump) _jumpBufT = JUMP_BUF;
+  const wx = wp.x - player.pos.x, wz = wp.z - player.pos.z;
+  const L = Math.hypot(wx, wz); if(L < 1e-4){ return null; }
+  return _cmDir.set(wx/L, 0, wz/L);
+}
+function _cmClickGround(e){
+  if(!_cmEnabled()) return false;
+  const cv = renderer && renderer.domElement; if(!cv) return false;
+  if(document.pointerLockElement) return false;   // no free pointer, nothing to aim at the ground with
+  const r = cv.getBoundingClientRect(); if(!r.width || !r.height) return false;
+  _cmV2.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  _cmRay.setFromCamera(_cmV2, camera);
+  _cmRay.far = CM_REACH;
+  let hits;
+  try{ hits = _cmRay.intersectObjects(_cmTargets(), true); }catch(err){ return false; }
+  const hit = _firstSolidHit(hits); if(!hit) return false;   // build 1236: an undrawn surface is not a floor
+  /* build 1484: the cue fires at the point the player actually pointed at, in the colour that says whether
+     it worked — so a refused click stops being indistinguishable from one the game never heard. A click
+     that hit NOTHING gets no cue, because there is no point in space to put one at. */
+  const ok = _cmGoTo(hit.point.x, hit.point.z, hit.point.y);
+  _cmMarkAt(hit.point.x, hit.point.y, hit.point.z, ok);
+  return ok;
+}
+const CM_REACH = 400;   // a click-to-move destination is wherever the camera can see, unlike a click ON something
+const _cmTgt = [];
+function _cmTargets(){
+  _cmTgt.length = 0;                                   // reused, never rebuilt per click (build 1168)
+  if(typeof floor!=='undefined' && floor) _cmTgt.push(floor);
+  if(typeof colliders!=='undefined') for(const c of colliders){ if(c) _cmTgt.push(c); }
+  return _cmTgt;
+}
+/* ---- build 1484: THE DESTINATION SAYS SOMETHING BACK -----------------------------------------------
+   Build 1481 shipped click-to-move and left the feedback out, which makes a REFUSED click and an IGNORED
+   click identical: the player points at a wall face or a spot the nav grid has nothing walkable near, and
+   absolutely nothing happens. That is build 1147's "nothing happened", and 1310/1348's rule that a product
+   must not stay silent about its own answer.
+
+   So every click that lands on a real surface gets a cue, and the two answers LOOK DIFFERENT: a ping in the
+   level's own accent that then HOLDS at the destination while you walk, or a red ping that does not hold.
+   A refusal that looked like a success would be worse than no cue at all.
+
+   THE RING IS THE ARRIVAL RADIUS. Its held size is `CM_ARRIVE` exactly, so the marker is not a decoration
+   at the destination — it is a drawing of where "arrived" means, and it cannot drift from the number that
+   decides it.
+
+   Four things it deliberately is not:
+     * NOT A LIGHT. The scene's light count must never change during play (636/977/1153/1155).
+     * NOT ALLOCATED PER CLICK — one mesh, built lazily and reused for the life of the page (1168).
+     * NOT LIT. A destination has to read in an unlit corner, which is build 1411's argument for the sign.
+     * NOT A RAYCAST TARGET. Its own raycast is neutralised, the `nocollide` convention (1093), so it can
+       never become the thing a later click resolves to.
+   Being `transparent` it is swept out of the AO/velocity G-buffers by `_aoNoDepthMat` for free — the rule
+   builds 1126/1128/1152/1158/1285 arrived at six times, satisfied here by construction rather than by a
+   seventh naming. */
+const CM_PING_S = 0.42;        // seconds of expanding ring
+const CM_PING_FROM = 0.6;      // ...as multiples of the held size
+const CM_PING_TO = 3.0;
+const CM_MARK_UP = 0.06;       // stood off the floor by PROUD, so a flat ring cannot z-fight it (levelgen)
+const CM_DENY_COL = 0xff4d6d;  // a warning colour, never the level's accent: 1469's close-button rule
+let _cmMark = null, _cmPingT = 0, _cmPingOk = false, _cmMarkPhase = 0;
+function _cmMarkMesh(){
+  try{
+    if(!_cmMark){
+      const g = new THREE.RingGeometry(0.62, 1, 40); g.rotateX(-Math.PI/2);
+      const m = new THREE.MeshBasicMaterial({ color:CM_DENY_COL, transparent:true, opacity:0,
+                                              depthWrite:false, side:THREE.DoubleSide });
+      _cmMark = new THREE.Mesh(g, m);
+      _cmMark.frustumCulled = false; _cmMark.renderOrder = 3; _cmMark.visible = false;
+      _cmMark.raycast = function(){};
+    }
+    /* re-seated rather than assumed: a level swap tears the scene down, and a marker left parented to the
+       old one is a cue nobody will ever see again */
+    if(_cmMark.parent !== scene) scene.add(_cmMark);
+  }catch(err){ _cmMark = null; }
+  return _cmMark;
+}
+function _cmMarkCol(){
+  /* the level's own accent, so a themed level's destination is themed too (1469) */
+  try{ const h = (typeof hudCfg!=='undefined' && hudCfg && hudCfg.accent) || DEFAULT_HUD.accent;
+       return parseInt(String(h).replace('#',''), 16); }catch(err){ return 0x38f5b5; }
+}
+function _cmMarkAt(x, y, z, ok){
+  const m = _cmMarkMesh(); if(!m) return;
+  m.position.set(x, y + CM_MARK_UP, z);
+  m.material.color.setHex(ok ? _cmMarkCol() : CM_DENY_COL);
+  _cmPingT = CM_PING_S; _cmPingOk = !!ok; _cmMarkPhase = 0;
+}
+function _cmMarkTick(dt){
+  const m = _cmMark; if(!m) return;
+  /* never while authoring: the creator is placing things, not walking to them */
+  if(typeof editorOpen!=='undefined' && editorOpen){ m.visible = false; return; }
+  let vis = false;
+  if(_cmPingT > 0){
+    _cmPingT = Math.max(0, _cmPingT - dt);
+    const t = 1 - (_cmPingT / CM_PING_S);
+    m.scale.setScalar(CM_ARRIVE * (CM_PING_FROM + (CM_PING_TO - CM_PING_FROM) * t));
+    m.material.opacity = Math.max(0, 1 - t);
+    vis = true;
+  } else if(_cmPingOk && _cmOn){
+    /* the HOLD, and only for a route that is still live — arriving takes the marker with it, which is the
+       arrival cue and needs no second one */
+    _cmMarkPhase += dt * 5;
+    m.scale.setScalar(CM_ARRIVE);
+    m.material.opacity = 0.30 + 0.16 * (0.5 + 0.5 * Math.sin(_cmMarkPhase));
+    vis = true;
+  }
+  m.visible = vis;
+}
 const CLK_HOVER_EVERY = 4;    // frames between hover raycasts — 15 Hz is imperceptible from 60 for a cursor
 const CLK_SCAN_EVERY  = 30;   // frames between "does this level have anything clickable at all"
-let _clkAny = false, _clkTick = 0, _clkHot = false, _clkMx = -1, _clkMy = -1;
+let _clkAny = false, _clkTick = 0, _clkHot = false, _clkHotAim = false, _clkMx = -1, _clkMy = -1;
+let _clkTarget = null;   // build 1486: WHICH prop is hot, so the label can name it
 /* The same seven states the mousedown gate names. They are two expressions rather than one because that
    gate also governs the grab, ADS and the action binds, and is not purely about clicks — `test-1480`
    asserts they name the same set, so they cannot drift into a cursor that lies. */
@@ -14858,10 +15053,40 @@ function _clkBlocked(){
     || (typeof duelDead!=='undefined' && duelDead) || (typeof invOpen!=='undefined' && invOpen)
     || (typeof _modalOpen!=='undefined' && _modalOpen));
 }
-function _clkSetHot(v){
-  if(v === _clkHot) return;   // a class write only on a CHANGE — this runs every frame of every session
-  _clkHot = v;
-  try{ if(document.body) document.body.classList.toggle('clickHot', v); }catch(err){}
+/* build 1485: `aim` says the hit was resolved through SCREEN CENTRE (a locked pointer), which is the only
+   case in which a cue drawn at screen centre points at the thing that answered. One writer of both classes,
+   so the cursor cue and the reticle cue can never come to different conclusions. */
+/* ---- build 1486: THE HOVERED THING HAS A NAME ------------------------------------------------------
+   Builds 1480 and 1485 answer "is this clickable" — a cursor, then a reticle ring. Neither answers WHAT it
+   is, and in a point-and-click level that is the other half of the affordance: every adventure ever shipped
+   names the object under the pointer. The proximity prompt has named things since build 696 ("E Talk to
+   Bob"), and a clickable prop, which can be answered from up to CLICK_RANGE away, had nothing.
+
+   THE PROMPT IS ONE ELEMENT WITH ONE WRITER. `checkProximity` owns `#prompt` — it sets the text and it is
+   the thing that hides it — so this label is produced THERE, as the branch that runs when proximity has
+   nothing of its own. A second writer would be this file's most-repeated defect, and on an element that
+   blinks between two answers it would be visible on the first frame.
+
+   PROXIMITY WINS, and that ordering is the decision rather than a fallback: standing at a lever whose E
+   prompt is live, the actionable verb is the one at arm's reach. The hover label is what fills the gap when
+   there is no such verb.
+
+   It names the CLICK, never the interact key, because they are different verbs on different devices — and a
+   prop can be both, in which case walking up to it correctly swaps the label to the E prompt. */
+function _clkHoverLabel(){
+  if(!_clkHot || !_clkTarget) return '';
+  const u = _clkTarget.userData || {};
+  /* the prop's own authored name, which the outliner already shows — a level that named its props gets a
+     real label for free, and one that did not gets an honest generic rather than "undefined" */
+  const nm = (typeof u.name === 'string') ? u.name.trim() : '';
+  return nm ? ('<b>CLICK</b> ' + _creditEsc(nm)) : '<b>CLICK</b>';
+}
+function _clkSetHot(v, aim){
+  const a = !!v && !!aim;
+  if(v === _clkHot && a === _clkHotAim) return;   // a class write only on a CHANGE — this runs every frame
+  _clkHot = v; _clkHotAim = a;
+  try{ if(document.body){ document.body.classList.toggle('clickHot', v);
+                          document.body.classList.toggle('clickHotAim', a); } }catch(err){}
 }
 function _clkAnyClickable(){
   if(typeof propModels==='undefined') return false;
@@ -14874,17 +15099,22 @@ function _clkAnyClickable(){
   return false;
 }
 function _clkHoverTick(){
-  /* Captured pointer = no cursor to change. The crosshair is already the aim, and a click cue for a view
-     that has no cursor is a different feature with a different answer (a crosshair state, or the interact
-     prompt), deliberately not invented here. */
-  if(typeof document==='undefined' || document.pointerLockElement || _clkBlocked()
-     || !(typeof gameOn!=='undefined' && gameOn)){ _clkSetHot(false); return; }
+  /* build 1485: a captured pointer no longer returns. `_clkResolve` has always rayed through screen centre
+     when locked — so the ANSWER was available the whole time and only the cue was missing, which is why this
+     is a class rather than a second resolver. */
+  if(typeof document==='undefined' || _clkBlocked()
+     || !(typeof gameOn!=='undefined' && gameOn)){ _clkTarget = null; _clkSetHot(false); return; }
+  const _locked = !!document.pointerLockElement;
   _clkTick++;
   if(_clkTick % CLK_SCAN_EVERY === 1) _clkAny = _clkAnyClickable();   // re-asked, so a prop spawned at run
-  if(!_clkAny){ _clkSetHot(false); return; }                          // time gets its cue within half a second
+  if(!_clkAny){ _clkTarget = null; _clkSetHot(false); return; }                          // time gets its cue within half a second
   if(_clkTick % CLK_HOVER_EVERY) return;
-  if(_clkMx < 0){ _clkSetHot(false); return; }   // the pointer has not been seen yet
-  _clkSetHot(!!_clkResolve(_clkMx, _clkMy));
+  /* only a FREE pointer has to have been seen — a locked one ignores the coordinates entirely */
+  if(!_locked && _clkMx < 0){ _clkTarget = null; _clkSetHot(false); return; }
+  /* build 1486: the resolver already returns the PROP; keeping it is what lets the prompt name the thing,
+     and it comes from the same call rather than a second raycast that could disagree */
+  _clkTarget = _clkResolve(_clkMx, _clkMy);
+  _clkSetHot(!!_clkTarget, _locked);
 }
 function fireSignals(o, when){
   const sigs = o && o.userData && o.userData.signals; if(!sigs || !sigs.length) return;
@@ -22376,7 +22606,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
 // the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
 // crushed red channel survives the restaging.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, airDash:0, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'img/tex/floor-concrete-n.png', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'img/tex/wall-panels-n.png', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, airDash:0, airJumps:0, wallJump:0, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x69645f, floorRough:0.95, floorMetal:0.1, floorTex:'img/tex/floor-concrete.png', floorTexN:'img/tex/floor-concrete-n.png', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x61727d, wallRough:0.8, wallMetal:0.2, wallTex:'img/tex/wall-panels.png', wallTexN:'img/tex/wall-panels-n.png', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:true, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0, skyCloud:0.35, skyCloudScale:1 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -22648,6 +22878,69 @@ const JUMP_CUT_MIN = 0.1;   // build 1301: the shortest tap hop, so the setting 
    rebinding conflict: the slide already requires `player.onGround`, so the airborne press has been dead
    input since build 910. Slide on the ground, dash in the air is one verb expressed by state — the
    Titanfall/Apex idiom — and a creator who rebinds slide moves both together, which is what they mean. */
+/* ---- build 1482: THE DOUBLE JUMP (build 1301's remaining verb) ------------------------------------
+   Build 1301 named four it deliberately left — double jump, wall jump, dash, air-dash — and 1463 took the
+   air dash. This is the most standard of the rest, and it takes 1463's shape for 1463's reason.
+
+   OFF BY DEFAULT, and that IS the compatibility question answered: every gap, ledge and jump puzzle in
+   every level ever authored was measured against a player with ONE jump. A second that existed by default
+   would make a fraction of them trivial and would let a player leave arenas their author had sealed.
+   `airJumps` is the COUNT of extra mid-air jumps, so 0 means off and one field both enables and tunes it —
+   exactly `jumpCut`'s and `airDash`'s shape, and exactly their argument.
+
+   IT IS THE JUMP KEY. No new bind, no key to teach, no rebinding conflict, and a creator who rebinds jump
+   moves both together — which is what they mean.
+
+   IT NEEDS NO ARM WINDOW, unlike the dash. `onGround` flickers false mid-stride (builds 926/1160/1222), and
+   the dash had to guard against stealing a buffered ground slide on those frames — but build 1160's COYOTE
+   is refreshed on every grounded frame, so a flicker still satisfies the ground branch and the air branch's
+   `_coyoteT <= 0` cannot fire there. The guard was already in the engine; this verb just had to ask for it.
+
+   `jumpCut` (build 1301) applies for free: it cuts a RISE, and does not care which jump caused it. */
+/* ---- build 1483: THE WALL JUMP (the last of build 1301's four) ------------------------------------
+   1463 took the air dash, 1482 the double jump. Same shape, same reason: `wallJump` is the push-off SPEED,
+   so 0 means off and is every level ever authored, and it is the JUMP KEY.
+
+   THE WALL IS FOUND WITH `clearAt`, which is the engine's OWN "does the body fit here" test — the one
+   `moveHorizontal` uses. So the wall this pushes off is exactly the wall that stops you walking, rather
+   than a second opinion from a raycast that could disagree with the collision that put you there. It also
+   inherits `noCol` (build 1324) for free: decoration is not a wall.
+
+   THE PUSH KEEPS THE TANGENT. Setting the whole horizontal velocity would BRAKE a player moving fast along
+   the wall — build 1361's defect, one verb along. Only the component INTO the wall is replaced.
+
+   NO TWO IN A ROW OFF THE SAME WALL. Without it a single wall is an infinite ladder, which would let a
+   player leave arenas their author had sealed — the exact thing 1463 and 1482 are off-by-default to avoid.
+   Touching the ground, a ledge, or a wall facing a different way re-arms it.
+
+   A SHAFT WITH WALLS ON BOTH SIDES HAS NO PUSH DIRECTION and is deliberately not a chimney climb: the
+   opposing probes cancel, and picking a side would be inventing an answer. That is its own verb. */
+const WALL_JUMP_MIN = 3;        // below this it is a verb the player presses and cannot feel
+const WALL_JUMP_MAX = 30;
+const WALL_PROBE_N = 8;         // compass directions sampled around the body
+const WALL_REACH = 0.35;        // how far past the body radius a wall still counts as touchable
+const WALL_SAME_DOT = 0.7;      // ~45 degrees: near enough to the last one to be "the same wall"
+let WALL_JUMP = 0;              // live value from worldCfg; 0 = the pre-1483 engine, byte for byte
+let _wallNx = 0, _wallNz = 0, _wallHas = false;
+/* The direction to push AWAY from whatever the body is touching, or null. Averaging the outward normals of
+   every blocked probe means an inside corner pushes out along the diagonal, which is what a player expects
+   there and what a single-ray probe cannot do. */
+function _wallPush(feetY){
+  if(typeof clearAt!=='function' || typeof player==='undefined') return null;
+  const R = (player.radius || 0.8) + WALL_REACH;
+  let nx = 0, nz = 0, hits = 0;
+  for(let i = 0; i < WALL_PROBE_N; i++){
+    const a = (i / WALL_PROBE_N) * Math.PI * 2, sx = Math.sin(a), sz = Math.cos(a);
+    if(!clearAt(player.pos.x + sx*R, player.pos.z + sz*R, feetY)){ nx -= sx; nz -= sz; hits++; }
+  }
+  if(!hits) return null;
+  const L = Math.hypot(nx, nz);
+  if(L < 1e-3) return null;   // opposing walls cancel: a shaft is not a wall to push off
+  return { x: nx/L, z: nz/L };
+}
+const AIR_JUMP_MAX = 3;         // past this it is a novelty rather than a verb, and a level file is untrusted
+let AIR_JUMPS = 0;              // live value derived from worldCfg; 0 = the pre-1482 engine, byte for byte
+let _airJumpsUsed = 0;
 const AIR_DASH_T = 0.16;        // how long gravity is suspended: the difference between a dash and a nudge
 const AIR_DASH_MIN = 4;         // an authored speed below this is a tap, not a dash — clamped up so the verb always reads
 let AIR_DASH = 0;               // live value derived from worldCfg; 0 = the pre-1463 engine, byte for byte
@@ -22747,6 +23040,14 @@ function applyWorldCfg(){
      the player presses and cannot feel, which is worse than no verb. */
   { const _ad = +(worldCfg.airDash == null ? DEFAULT_WORLD.airDash : worldCfg.airDash);
     AIR_DASH = (isFinite(_ad) && _ad > 0) ? Math.max(AIR_DASH_MIN, Math.min(60, _ad)) : 0; }
+  /* build 1482: same shape and the same 1329 trap — 0 is OFF and must survive `||`-style defaulting, so it
+     is tested against null explicitly. Floored to a whole number, because half an extra jump is nothing. */
+  { const _aj = +(worldCfg.airJumps == null ? DEFAULT_WORLD.airJumps : worldCfg.airJumps);
+    AIR_JUMPS = (isFinite(_aj) && _aj > 0) ? Math.max(1, Math.min(AIR_JUMP_MAX, Math.floor(_aj))) : 0; }
+  /* build 1483: the same shape and the same 1329 trap for the third time — 0 is OFF and must survive
+     `||`-style defaulting, so the default is reached by an explicit null test. */
+  { const _wj = +(worldCfg.wallJump == null ? DEFAULT_WORLD.wallJump : worldCfg.wallJump);
+    WALL_JUMP = (isFinite(_wj) && _wj > 0) ? Math.max(WALL_JUMP_MIN, Math.min(WALL_JUMP_MAX, _wj)) : 0; }
   // arena size — rebuild floor/grid/walls only when it changes; coalesce rapid changes (slider drag)
   // into one rebuild per frame so dragging stays smooth.
   worldCfg.arena = Math.max(15, Math.min(2000, worldCfg.arena == null ? DEFAULT_WORLD.arena : +worldCfg.arena));   // build 827: up to 2000 (a 4 km course) for racing-scale worlds; the flat floor/walls scale free and the nav grid stays bounded
@@ -27901,7 +28202,7 @@ const CROSSHAIR_STYLES = ['classic','cross','dot','circle','tee','none'];
 // land on one path only. One function now; `test-1400` proves the copies are gone by count.
 function _applyGameCfg(g){
   if(!g) return;
- gameCfg.mode = g.mode||'random'; gameCfg.winWaves = g.winWaves||0; gameCfg.upgrades = g.upgrades !== false; gameCfg.objective = g.objective||'eliminate'; gameCfg.surviveSecs = g.surviveSecs!=null ? g.surviveSecs : 120; gameCfg.raceLaps = g.raceLaps!=null ? g.raceLaps : 3; gameCfg.raceBots = g.raceBots!=null ? g.raceBots : 3; gameCfg.raceBotSkill = g.raceBotSkill!=null ? g.raceBotSkill : 0.85; gameCfg.extractHold = g.extractHold!=null ? g.extractHold : 5; gameCfg.extractRadius = g.extractRadius!=null ? g.extractRadius : 3.5; gameCfg.bossWave = g.bossWave!=null ? g.bossWave : 5; gameCfg.wavesText = (typeof g.wavesText==='string') ? g.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!g.noRespawn; gameCfg.unarmed = !!g.unarmed; gameCfg.startWeapon = (typeof g.startWeapon==='string' && _canStartWith(g.startWeapon)) ? g.startWeapon : 'rifle'; gameCfg.allowPickup = g.allowPickup!==false; gameCfg.flashlight = !!g.flashlight; gameCfg.flashCfg = _sanitizeFlash(g.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof g.goalText==="string") ? g.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!g.respawnOnDeath; gameCfg.winText = (typeof g.winText==="string") ? g.winText.slice(0,240) : ""; gameCfg.loseText = (typeof g.loseText==="string") ? g.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!g.ragdoll; gameCfg.view = (g.view==='top'||g.view==='side'||g.view==='chase') ? g.view : 'fps'; gameCfg.viewDist = g.viewDist!=null ? +g.viewDist : 0; gameCfg.viewAxis = (g.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +g.viewYaw||0; gameCfg.viewTilt = (g.viewTilt!=null) ? +g.viewTilt : null; gameCfg.viewHeight = +g.viewHeight||0; gameCfg.viewRoll = +g.viewRoll||0; gameCfg.viewOrbit = !!g.viewOrbit; gameCfg.chaseCursorAim = !!g.chaseCursorAim; gameCfg.freeCursor = !!g.freeCursor;   /* build 1467 */ gameCfg.enemyMods = _sanitizeEnemyMods(g.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+ gameCfg.mode = g.mode||'random'; gameCfg.winWaves = g.winWaves||0; gameCfg.upgrades = g.upgrades !== false; gameCfg.objective = g.objective||'eliminate'; gameCfg.surviveSecs = g.surviveSecs!=null ? g.surviveSecs : 120; gameCfg.raceLaps = g.raceLaps!=null ? g.raceLaps : 3; gameCfg.raceBots = g.raceBots!=null ? g.raceBots : 3; gameCfg.raceBotSkill = g.raceBotSkill!=null ? g.raceBotSkill : 0.85; gameCfg.extractHold = g.extractHold!=null ? g.extractHold : 5; gameCfg.extractRadius = g.extractRadius!=null ? g.extractRadius : 3.5; gameCfg.bossWave = g.bossWave!=null ? g.bossWave : 5; gameCfg.wavesText = (typeof g.wavesText==='string') ? g.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!g.noRespawn; gameCfg.unarmed = !!g.unarmed; gameCfg.startWeapon = (typeof g.startWeapon==='string' && _canStartWith(g.startWeapon)) ? g.startWeapon : 'rifle'; gameCfg.allowPickup = g.allowPickup!==false; gameCfg.flashlight = !!g.flashlight; gameCfg.flashCfg = _sanitizeFlash(g.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof g.goalText==="string") ? g.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!g.respawnOnDeath; gameCfg.winText = (typeof g.winText==="string") ? g.winText.slice(0,240) : ""; gameCfg.loseText = (typeof g.loseText==="string") ? g.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!g.ragdoll; gameCfg.view = (g.view==='top'||g.view==='side'||g.view==='chase') ? g.view : 'fps'; gameCfg.viewDist = g.viewDist!=null ? +g.viewDist : 0; gameCfg.viewAxis = (g.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +g.viewYaw||0; gameCfg.viewTilt = (g.viewTilt!=null) ? +g.viewTilt : null; gameCfg.viewHeight = +g.viewHeight||0; gameCfg.viewRoll = +g.viewRoll||0; gameCfg.viewOrbit = !!g.viewOrbit; gameCfg.chaseCursorAim = !!g.chaseCursorAim; gameCfg.freeCursor = !!g.freeCursor; gameCfg.clickMove = !!g.clickMove;   /* build 1467 · 1481 */ gameCfg.enemyMods = _sanitizeEnemyMods(g.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(g.spawnRegion){ const _sr=g.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; }
   // ---- build 1400: the five that were written and never read -----------------------------------------
   // ALWAYS ASSIGNED, defaulting when absent — that is what stops the leak. A field that is only assigned
@@ -27911,6 +28212,7 @@ function _applyGameCfg(g){
   gameCfg.fallDamage  = _dmgRuleFrom(g.fallDamage,  24, 1.4);
   gameCfg.crushDamage = _dmgRuleFrom(g.crushDamage,  7, 2.2);
   gameCfg.freeCursor  = !!g.freeCursor;   /* build 1467: always assigned, never "if present" — build 1400's rule, or it LEAKS from the previous level */
+  gameCfg.clickMove   = !!g.clickMove;    /* build 1481, same rule */
   if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass();
   gameCfg.crosshair   = _crosshairFrom(g.crosshair);
   if(typeof applyCrosshair==='function') try{ applyCrosshair(gameCfg.crosshair); }catch(e){}
@@ -34432,9 +34734,16 @@ function checkProximity(){
     } else {
       prompt.innerHTML = `SUPPLY CACHE — <b>${_uk}</b> Open`;
     }
-    prompt.style.display='block';
+    prompt.style.display='block'; prompt.dataset.hover = '';
   } else {
-    prompt.style.display='none';
+    /* build 1486: with nothing at arm's reach, the prompt names whatever the player is POINTING at. Same
+       element, same writer, and proximity has already had its say by the time we get here.
+       The `hover` flag is not decoration: on touch this element is TAPPABLE and its tap calls `interact()`,
+       which is the wrong verb for a click target and would be a dead tap — the exact "nothing happened" this
+       run of builds exists to remove. It says which kind of prompt is on screen so the tap can decline. */
+    const _hl = _clkHoverLabel();
+    if(_hl){ prompt.innerHTML = _hl; prompt.style.display='block'; prompt.dataset.hover = '1'; }
+    else { prompt.style.display='none'; prompt.dataset.hover = ''; }
   }
 }
 
@@ -35429,7 +35738,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1480 · 2026-08-10';
+const BUILD_VERSION = 'build 1487 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35931,7 +36240,9 @@ addEventListener('mousedown', e=>{
   /* It does NOT swallow the shot, and that is the decision rather than an oversight: a prop you can no
      longer shoot, with nothing on screen saying so, is the surprise that cannot be undone from the editor.
      A level that wants pure point-and-click authors no weapon, which is how this engine already says that. */
-  if(e.button===0) _propClick(e);
+  /* build 1481: a click on something the world answers is NOT also a move order — that priority is what a
+     point-and-click player expects, and `_propClick` already reports which happened. */
+  if(e.button===0){ if(!_propClick(e)) _cmClickGround(e); }
   if(e.button===0){ if(heldProp){ throwHeld(); return; } firing=true; }
   else if(e.button===1){ e.preventDefault(); grabAction(); }   // middle-click (scroll-wheel push): grab / drop
   else if(e.button===2) ads = true;   // right-click: aim down sights
@@ -35988,7 +36299,7 @@ addEventListener('contextmenu', e=>{
     const up=()=>{ off(); b.classList.remove('on'); };
     b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); };
   const tap=(id,fn)=>{ const b=document.getElementById(id); if(!b) return; b.addEventListener('pointerdown', e=>{ fn(); e.preventDefault(); }); };
-  { const pr=document.getElementById('prompt'); if(pr) pr.addEventListener('pointerdown', e=>{ if(isTouch){ if(typeof interact==='function') interact(); e.preventDefault(); } }); }   // tap the "E" prompt to use it
+  { const pr=document.getElementById('prompt'); if(pr) pr.addEventListener('pointerdown', e=>{ if(isTouch && pr.dataset.hover !== '1'){ if(typeof interact==='function') interact(); e.preventDefault(); } }); }   // tap the "E" prompt to use it
   // Fire button doubles as a look surface: hold to fire AND drag the same thumb to keep aiming.
   (function(){
     const fire=document.getElementById('tFire'); if(!fire) return;
@@ -38628,7 +38939,10 @@ function applyCrosshair(cfg){
   const col = (!cfg.color || cfg.color==='accent') ? 'var(--accent)' : cfg.color;
   const size = Math.max(4, +cfg.size||24), th = Math.max(1, +cfg.thickness||2), gap = Math.max(0, +cfg.gap||0);
   el.style.width = size+'px'; el.style.height = size+'px';
-  if(cfg.style==='none'){ el.innerHTML=''; return; }
+  /* build 1485: the hover ring rides every style, including `none` — see the CSS for why. It carries no
+     `--xh-bloom` term, so it holds its size while the arms breathe with the spread (1219). */
+  const hotRing = '<div class="xhHot"></div>';
+  if(cfg.style==='none'){ el.innerHTML = hotRing; return; }
   const arm = Math.max(0, size/2 - gap);
   const ln = 'position:absolute;background:'+col+';box-shadow:0 0 6px '+col+';';
   // build 1219: each arm offsets outward by --xh-bloom (set per frame from the live spread), so the centre
@@ -38648,7 +38962,7 @@ function applyCrosshair(cfg){
     const ds = Math.max(2, th+2);
     html += '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:'+ds+'px;height:'+ds+'px;background:#fff;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.6)"></div>';
   }
-  el.innerHTML = html;
+  el.innerHTML = html + hotRing;
 }
 
 // ---------- Minimap ----------
@@ -41561,6 +41875,11 @@ function loop(){
     if(keys[BINDS.right]) wish.add(right);
     if(keys[BINDS.left]) wish.sub(right);
   }
+  /* build 1481: click-to-move supplies the wish when the player is not steering. ANY manual input takes
+     control back immediately — a route that fights the keys is worse than no route. It sits ABOVE the freeze
+     lines below, so a pause, a loading level or a warmup stops the walk without throwing the route away. */
+  if(wish.lengthSq() > 1e-6){ if(_cmOn) _cmCancel(); }
+  else { const _cmd = _cmSteer(dt); if(_cmd){ wish.copy(_cmd); moveScale = 1; } }
   if(pvpMode() && duelDead){ wish.set(0,0,0); moveScale=0; }   // frozen until respawn
   if(_levelLoaderActive){ wish.set(0,0,0); moveScale=0; }   // frozen while the level is still loading
   if(matchWarmup>0){ wish.set(0,0,0); moveScale=0; }   // frozen during the pre-match GENERATING/countdown (no pre-positioning advantage)
@@ -41639,7 +41958,12 @@ function loop(){
      `_dashUsed` is CLEARED on the ground rather than set on landing, because `onGround` flickers
      mid-stride (builds 926/1160/1222) — a landing EDGE would miss the refund on the frames it blinks.
      It is also why no run-reset is needed: the first grounded frame of a fresh deploy refunds it. */
-  if(player.onGround || _ledge){ _dashUsed = false; _airT = 0; } else _airT += dt;
+  /* build 1482 rides this line for build 1463's reason, restated because it is the whole of why it is a
+     CLEAR rather than a landing edge: `onGround` flickers mid-stride, so an edge would miss the refund on
+     the frames it blinks. A ledge grab refunds both, because a hang IS ground contact by every other rule
+     in this file — and it is also why no run-reset is needed, since the first grounded frame of a fresh
+     deploy refunds them. */
+  if(player.onGround || _ledge){ _dashUsed = false; _airJumpsUsed = 0; _wallHas = false; _airT = 0; } else _airT += dt;
   if(_dashT > 0) _dashT -= dt;
   if(AIR_DASH > 0 && _slideBufT > 0 && !_dashUsed && _airT >= AIR_DASH_ARM && !player.onGround && !_ledge && !sliding
      && !drivingCar && !mountedTurret && !_onLadder && !duelDead && gameOn && !editorOpen && !shopOpen
@@ -41720,6 +42044,43 @@ function loop(){
   if(player.onGround) _coyoteT = COYOTE_T; else if(_coyoteT>0) _coyoteT -= dt;
   if(_jPressed) _jumpBufT = JUMP_BUF; else if(_jumpBufT>0) _jumpBufT -= dt;
   if(!_ledge && _jumpBufT>0 && (player.onGround || _coyoteT>0) && (player.jumpCd||0)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret){ player.vel.y = JUMP; player.onGround=false; _coyoteT=0; _jumpBufT=0; sliding=false; player.jumpCd=JUMP_CD; SFX.jump(); }
+  /* build 1483: the wall jump sits BETWEEN the ground jump and the air jump, so a wall is preferred over
+     spending an air jump — which is what a player next to one means — while a grounded press is still
+     always the ordinary jump. It costs no air jump, and the same-wall rule is what keeps that honest. */
+  else if(WALL_JUMP > 0 && !_ledge && _jumpBufT>0 && !player.onGround && _coyoteT<=0
+     && (player.jumpCd||0)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret && !_onLadder
+     && !drivingCar && !duelDead && gameOn && !editorOpen && !shopOpen
+     && (function(){
+          const _wp = _wallPush(player.pos.y - EYE);
+          if(!_wp) return false;
+          /* the same wall twice in a row is an infinite ladder up a single face */
+          if(_wallHas && (_wp.x*_wallNx + _wp.z*_wallNz) > WALL_SAME_DOT) return false;
+          _wallNx = _wp.x; _wallNz = _wp.z; _wallHas = true;
+          player.vel.y = JUMP;
+          /* Keep the tangent and LIFT the component into the wall to the authored speed — max(), never
+             set(), which is build 1463's own decision for the dash: a push must never BRAKE someone already
+             leaving faster than it (build 1361's defect, one verb along) and must still deliver the full
+             speed from a standstill. Caught by the test asserting the intent while the code did the other
+             thing. */
+          const _d = player.vel.x*_wp.x + player.vel.z*_wp.z;
+          const _add = Math.max(0, WALL_JUMP - _d);
+          player.vel.x += _wp.x*_add;
+          player.vel.z += _wp.z*_add;
+          return true;
+        })()){
+    _jumpBufT=0; sliding=false; player.jumpCd=JUMP_CD; SFX.jump();
+  }
+  /* build 1482: the air jump, as an `else if` so a grounded press is ALWAYS the ordinary jump and that
+     branch stays byte-identical. `_coyoteT<=0` is what makes it genuinely airborne (see the note at
+     AIR_JUMP_MAX). `!_onLadder` is the one guard the ground branch does not carry, and the asymmetry is
+     deliberate: jumping OFF a ladder is a ground-class jump and stays, while an extra mid-air jump while
+     still attached to one is a hover, not a verb. It SETS vel.y rather than adding, so a falling player
+     gets a real recovery jump instead of a nudge — which is what a double jump is for. */
+  else if(AIR_JUMPS > 0 && !_ledge && _jumpBufT>0 && !player.onGround && _coyoteT<=0 && _airJumpsUsed < AIR_JUMPS
+     && (player.jumpCd||0)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret && !_onLadder
+     && !drivingCar && !duelDead && gameOn && !editorOpen && !shopOpen){
+    player.vel.y = JUMP; _airJumpsUsed++; _jumpBufT=0; sliding=false; player.jumpCd=JUMP_CD; SFX.jump();
+  }
   // ---- build 1301: VARIABLE JUMP HEIGHT (gameplay audit F6) --------------------------------------------
   // "The jump is one assignment with no release handling. Every jump is exactly 2.82 m. Rumpus advertises a
   // side-scroll mode with a lane lock — a 2.5D platformer where you cannot tap for a short hop is missing
@@ -42170,6 +42531,7 @@ function loop(){
   updateLogic(dt);      // logic graph timers/delays/repeats (host/solo)
   updateHudWidgets();   // build 1058: custom HUD widgets mirror the logic variables (all modes)
   _clkHoverTick();      // build 1480: the cursor says what is clickable — throttled, and free entirely on a level with none
+  _cmMarkTick(dt);      // build 1484: and the ground says whether it heard the click
   updateTriggerZones(dt);   // build 1072: trigger volumes -> logic events (host/solo)
   updateChests(dt);
   checkProximity();   // runs in all modes; in duel it only considers trigger-animation props
@@ -45227,7 +45589,7 @@ function serializeLevel(){
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
     animCuts: (Object.keys(animCuts).length ? _sanAnimCuts(animCuts) : undefined),   /* build 1336: undefined when unused, so a level with no slices does not grow a dead key. Sanitized on the way OUT as well as in, so nothing out-of-range can enter a share code (1191's rule). */
-    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim, freeCursor: !!gameCfg.freeCursor },   /* build 1467 */   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim, freeCursor: !!gameCfg.freeCursor, clickMove: !!gameCfg.clickMove },   /* build 1467 · 1481 */   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -48073,6 +48435,43 @@ function levelIssues(){
         issues.push(owner ? _issueAt(msg, ()=>[owner]) : msg);
       }
     }
+    /* build 1487: A CONTROL THAT FIRES AN EVENT NOBODY HEARS. Build 1402 gave the `emit` verb this exact
+       report and named, in its own entry, the three things it did not cover: "everything else that fires an
+       event (a HUD button, a trigger zone, an action bind) names a fixed event per control and keeps calling
+       `logicEvent` directly". Those three are the ones a player can PRESS, WALK INTO and TRIGGER — a dead
+       button is the "nothing happened" builds 1147, 1484 and 1486 exist to remove, and it is silent.
+
+       It asks `_lgEventHeard`, which is 1402's own predicate, so the panel and the run-time report can never
+       come to different answers about the same name.
+
+       No interpolation to worry about, unlike the modal check beside it: `emit` computes its name (1402) and
+       these three do not — `_hwFire`, the countdown and `fireAction` each pass their field straight through —
+       so the question is decidable for every one of them.
+
+       A BLANK name is deliberately not reported. All three sites guard on truthiness, so a blank fires
+       nothing at all rather than firing into the void, and a half-authored control is a work in progress
+       rather than a defect. */
+    {
+      const dead = new Map();                       // event name -> what fires it
+      const want = (name, what) => {
+        const nm = String(name==null?'':name).trim();
+        if(!nm || (typeof _lgEventHeard==='function' && _lgEventHeard(nm))) return;
+        if(!dead.has(nm)) dead.set(nm, []);
+        const a = dead.get(nm); if(a.length < 4) a.push(what);
+      };
+      if(typeof hudWidgets!=='undefined' && Array.isArray(hudWidgets))
+        for(const w of hudWidgets){ if(w && w.kind==='button')
+          want(w.event, 'the HUD button \u201c'+String(w.label||w.id||'').slice(0,40)+'\u201d'); }
+      if(typeof triggerZones!=='undefined' && Array.isArray(triggerZones))
+        for(const z of triggerZones){ if(z) want(z.ev, 'a trigger zone'); }
+      if(typeof actionBinds!=='undefined' && Array.isArray(actionBinds))
+        for(const a of actionBinds){ if(a) want(a.event, 'an action bind'); }
+      let shown = 0;
+      for(const [nm, who] of dead){
+        if(++shown > 6){ issues.push('\u2026and '+(dead.size-6)+' more control'+(dead.size-6>1?'s':'')+' firing an event nothing listens for.'); break; }
+        issues.push(who.join(', ')+' fire'+(who.length>1?'':'s')+' the event \u201c'+nm+'\u201d, but no "On event" node listens for it \u2014 using it will do nothing. Add an On event node named \u201c'+nm+'\u201d in the logic graph, or clear the field.');
+      }
+    }
     // build 1166: a Sketchfab model with no recorded attribution is a LICENSING exposure, not a cosmetic one \u2014
     // Sketchfab downloadable models are typically CC-BY, and CC-BY is only satisfied if the credit ships.
     // (Models placed through the in-editor search always carry one; this catches hand-pasted sketchfab: urls.)
@@ -48659,7 +49058,7 @@ function renderEditorFields(){
     };
     { const b=subSec('Movement','move',false);
       slider(b,'Walk speed','walk',4,60,1); slider(b,'Run speed','run',4,100,1); slider(b,'Crouch speed','crouch',1,40,1);
-      slider(b,'Jump','jump',0,30,0.5); slider(b,'Tap hop','jumpCut',0.1,1,0.05); slider(b,'Air dash','airDash',0,40,1);   /* build 1463: the dash SPEED — 0 is OFF, which is every level authored before it. Pressed on the slide key while airborne, once per jump. */ slider(b,'Launch power','launchPower',0.25,4,0.25); slider(b,'Gravity','grav',5,80,1);   /* build 1301: Tap hop — how much of the jump a TAP keeps (height goes as the square, so 0.5 is a quarter-height hop). 1 = every jump is full height, the pre-1301 engine. */
+      slider(b,'Jump','jump',0,30,0.5); slider(b,'Tap hop','jumpCut',0.1,1,0.05); slider(b,'Air jumps','airJumps',0,3,1); slider(b,'Wall jump','wallJump',0,30,1); slider(b,'Air dash','airDash',0,40,1);   /* build 1463: the dash SPEED — 0 is OFF, which is every level authored before it. Pressed on the slide key while airborne, once per jump. */ slider(b,'Launch power','launchPower',0.25,4,0.25); slider(b,'Gravity','grav',5,80,1);   /* build 1301: Tap hop — how much of the jump a TAP keeps (height goes as the square, so 0.5 is a quarter-height hop). 1 = every jump is full height, the pre-1301 engine. */
       slider(b,'Eye height','eyeHeight',0.4,20,0.05);   // build 702/703: first-person camera height (up to 20m)
       hint(b,'','1px 0 2px').textContent='Crouch: hold Ctrl (R3 on a controller). Eye height sets the first-person camera level (1.7 = default; up to 20m for a tall/overhead view). View only — collision is unchanged. Gravity change affects props on next Deploy.'; }
     { const b=subSec('Lighting','light',true);
@@ -49618,6 +50017,16 @@ function renderEditorFields(){
         const fcSp=document.createElement('span'); fcSp.innerHTML='<b>Free mouse cursor</b> \u2014 point and click';
         fcRow.appendChild(fcCb); fcRow.appendChild(fcSp); bPly.appendChild(fcRow);
         hint(bPly,'','0 0 4px').textContent='The mouse is never captured, so the player keeps a real cursor: HUD buttons, signs and menus are clickable, and the character still aims and shoots at it. Point-and-click adventures, tycoons, card games and RTS-style levels need this. Not offered in first person, where the mouse IS the camera.';
+        /* build 1481: the NAVIGATION half of the same request. Indented under the free cursor and disabled
+           without it, because there is no pointer to click the ground with otherwise (build 1338's rule: a
+           control whose consequence is absent is one nobody can use on purpose). */
+        const cmRow=document.createElement('label'); cmRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0 2px 18px;cursor:pointer;';
+        const cmCb=document.createElement('input'); cmCb.type='checkbox'; cmCb.checked=!!gameCfg.clickMove; cmCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+        cmCb.disabled=!gameCfg.freeCursor; if(cmCb.disabled) cmRow.style.opacity='0.5';
+        cmCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.clickMove=cmCb.checked; _levelDirty=true; };
+        const cmSp=document.createElement('span'); cmSp.innerHTML='<b>Click to move</b> \u2014 walk to where you click';
+        cmRow.appendChild(cmCb); cmRow.appendChild(cmSp); bPly.appendChild(cmRow);
+        hint(bPly,'','0 0 6px 18px').textContent='Clicking the ground walks the character there along the level\u2019s own navigation mesh \u2014 around walls, up steps, onto a second storey. Clicking something the world answers (a prop with an On-click signal) does that INSTEAD of moving. Any WASD or stick input takes control straight back, and a route that stops making progress is abandoned rather than pushed at.';
       }
       if(_curView==='top'||_curView==='side'){
         // build 1084: the camera is derived, not placed — so give the creator a way to SEE it

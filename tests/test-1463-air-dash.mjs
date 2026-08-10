@@ -19,7 +19,10 @@ const CONSTS = ['AIR_DASH_T', 'AIR_DASH_MIN', 'AIR_DASH_ARM']
   .map(k => `const ${k} = ${extractConst(k, src)};`).join('\n');
 
 // the dash is inline in the frame loop, so it is sliced between two anchors that both must be found
-const A = src.indexOf('  if(player.onGround || _ledge){ _dashUsed = false; _airT = 0; } else _airT += dt;');
+// build 1482 joined this refund line (the double jump is cleared on the same ground contact, for the
+// same reason), so the anchor is the STATEMENT it opens rather than its exact contents — a slice whose
+// anchor quotes a whole line is a slice against that line's neighbours.
+const A = src.indexOf('  if(player.onGround || _ledge){ _dashUsed = false;');
 const B = src.indexOf('  if(sliding){', A);
 assert(A > 0, 'the dash block was found');
 assert(B > A && (B - A) < 3000, '...and its end anchor, close enough that the slice is the block');
