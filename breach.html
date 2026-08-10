@@ -14846,6 +14846,91 @@ function _propClick(e){
    The cue is the CURSOR, not an outline: it costs nothing to render, needs no new UI, and is the shape
    every player already knows. An outline or a highlight is a bigger visual decision and is deliberately
    not taken here. */
+/* build 1481: CLICK TO MOVE. Build 1467's request was "point-click type NAVIGATION"; that build delivered
+   the cursor and 1479/1480 made the world answer it, and the player still could not be told where to walk —
+   the defining verb of a point-and-click adventure, an ARPG and an RTS.
+
+   It supplies the WISH VECTOR and nothing else. Gravity, collision, slopes, water, crouch, the speed
+   multipliers and build 1171's acceleration model are all downstream of `wish` and are untouched, which is
+   what makes this small rather than a second movement system.
+
+   The route is the ENGINE'S OWN nav grid through the bots' own `_botRepath`/`_botFollowPath`, driven with a
+   shim that points at `player.pos` — build 1189's technique. So there is no second pathfinder to disagree
+   with the first, and the player inherits build 1200's two storeys and its dirty-patch re-sampling for
+   free. */
+const CM_ARRIVE = 0.55;      // close enough to have arrived, in metres
+const CM_STALL = 0.9;        // seconds of no real progress before the route is abandoned
+const CM_STALL_DIST = 0.25;  // ...and what counts as progress over that window
+const _cmAgent = { pos:null, path:null, pathI:0, pathT:0, pathGoalX:0, pathGoalZ:0 };
+const _cmDir = new THREE.Vector3();
+const _cmRay = new THREE.Raycaster();
+const _cmV2 = new THREE.Vector2();
+let _cmGoalX = 0, _cmGoalZ = 0, _cmGoalY = 0, _cmOn = false, _cmStallT = 0, _cmLastX = 0, _cmLastZ = 0;
+function _cmEnabled(){
+  /* It needs a pointer to click the ground WITH, so it rides the free cursor rather than becoming a second
+     answer to the same question. */
+  return !!(typeof gameCfg!=='undefined' && gameCfg && gameCfg.clickMove && gameCfg.freeCursor);
+}
+function _cmCancel(){ _cmOn = false; _cmAgent.path = null; }
+function _cmGoTo(x, z, y){
+  if(!_cmEnabled()) return false;
+  if(typeof navNearestWalkable!=='function' || !NAV.built) return false;
+  if(navNearestWalkable(x, z, y) < 0) return false;   // nowhere walkable there: refuse rather than shuffle
+  _cmGoalX = x; _cmGoalZ = z; _cmGoalY = y;
+  _cmAgent.pos = player.pos; _cmAgent.path = null; _cmAgent.pathT = 0;
+  _cmOn = true; _cmStallT = 0; _cmLastX = player.pos.x; _cmLastZ = player.pos.z;
+  try{ _botRepath(_cmAgent, x, z, y); }catch(err){ _cmCancel(); return false; }
+  return true;
+}
+/* Returns the direction to walk this frame, or null. Every exit that gives up CANCELS, so a route can never
+   outlive its usefulness and quietly steer the player into a wall for the rest of the match. */
+function _cmSteer(dt){
+  if(!_cmOn || !_cmEnabled()) return null;
+  if(!(typeof gameOn!=='undefined' && gameOn)){ _cmCancel(); return null; }
+  _cmAgent.pos = player.pos;
+  const dx = _cmGoalX - player.pos.x, dz = _cmGoalZ - player.pos.z;
+  if(Math.hypot(dx, dz) <= CM_ARRIVE){ _cmCancel(); return null; }
+  /* A path that stops making progress is abandoned rather than pushed at forever — a door closed across the
+     route, a physics prop rolled into it, or a step the hop could not clear. */
+  _cmStallT += dt;
+  if(_cmStallT >= CM_STALL){
+    if(Math.hypot(player.pos.x-_cmLastX, player.pos.z-_cmLastZ) < CM_STALL_DIST){ _cmCancel(); return null; }
+    _cmStallT = 0; _cmLastX = player.pos.x; _cmLastZ = player.pos.z;
+  }
+  let wp = null;
+  try{ wp = _botFollowPath(_cmAgent, _cmGoalX, _cmGoalZ, dt, _cmGoalY); }catch(err){ _cmCancel(); return null; }
+  /* No usable route: a bot beelines here, and the player must NOT — beelining is how you walk into the wall
+     the grid was routing you around. */
+  if(!wp){ _cmCancel(); return null; }
+  /* The nav grid marks a cell walkable within JUMP reach, so a route legitimately contains hops. Setting the
+     press buffer is exactly what the jump key does, so it goes through build 1160's own coyote, buffer and
+     cooldown gates rather than writing velocity behind their backs. */
+  if(wp.jump) _jumpBufT = JUMP_BUF;
+  const wx = wp.x - player.pos.x, wz = wp.z - player.pos.z;
+  const L = Math.hypot(wx, wz); if(L < 1e-4){ return null; }
+  return _cmDir.set(wx/L, 0, wz/L);
+}
+function _cmClickGround(e){
+  if(!_cmEnabled()) return false;
+  const cv = renderer && renderer.domElement; if(!cv) return false;
+  if(document.pointerLockElement) return false;   // no free pointer, nothing to aim at the ground with
+  const r = cv.getBoundingClientRect(); if(!r.width || !r.height) return false;
+  _cmV2.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  _cmRay.setFromCamera(_cmV2, camera);
+  _cmRay.far = CM_REACH;
+  let hits;
+  try{ hits = _cmRay.intersectObjects(_cmTargets(), true); }catch(err){ return false; }
+  const hit = _firstSolidHit(hits); if(!hit) return false;   // build 1236: an undrawn surface is not a floor
+  return _cmGoTo(hit.point.x, hit.point.z, hit.point.y);
+}
+const CM_REACH = 400;   // a click-to-move destination is wherever the camera can see, unlike a click ON something
+const _cmTgt = [];
+function _cmTargets(){
+  _cmTgt.length = 0;                                   // reused, never rebuilt per click (build 1168)
+  if(typeof floor!=='undefined' && floor) _cmTgt.push(floor);
+  if(typeof colliders!=='undefined') for(const c of colliders){ if(c) _cmTgt.push(c); }
+  return _cmTgt;
+}
 const CLK_HOVER_EVERY = 4;    // frames between hover raycasts — 15 Hz is imperceptible from 60 for a cursor
 const CLK_SCAN_EVERY  = 30;   // frames between "does this level have anything clickable at all"
 let _clkAny = false, _clkTick = 0, _clkHot = false, _clkMx = -1, _clkMy = -1;
@@ -27901,7 +27986,7 @@ const CROSSHAIR_STYLES = ['classic','cross','dot','circle','tee','none'];
 // land on one path only. One function now; `test-1400` proves the copies are gone by count.
 function _applyGameCfg(g){
   if(!g) return;
- gameCfg.mode = g.mode||'random'; gameCfg.winWaves = g.winWaves||0; gameCfg.upgrades = g.upgrades !== false; gameCfg.objective = g.objective||'eliminate'; gameCfg.surviveSecs = g.surviveSecs!=null ? g.surviveSecs : 120; gameCfg.raceLaps = g.raceLaps!=null ? g.raceLaps : 3; gameCfg.raceBots = g.raceBots!=null ? g.raceBots : 3; gameCfg.raceBotSkill = g.raceBotSkill!=null ? g.raceBotSkill : 0.85; gameCfg.extractHold = g.extractHold!=null ? g.extractHold : 5; gameCfg.extractRadius = g.extractRadius!=null ? g.extractRadius : 3.5; gameCfg.bossWave = g.bossWave!=null ? g.bossWave : 5; gameCfg.wavesText = (typeof g.wavesText==='string') ? g.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!g.noRespawn; gameCfg.unarmed = !!g.unarmed; gameCfg.startWeapon = (typeof g.startWeapon==='string' && _canStartWith(g.startWeapon)) ? g.startWeapon : 'rifle'; gameCfg.allowPickup = g.allowPickup!==false; gameCfg.flashlight = !!g.flashlight; gameCfg.flashCfg = _sanitizeFlash(g.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof g.goalText==="string") ? g.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!g.respawnOnDeath; gameCfg.winText = (typeof g.winText==="string") ? g.winText.slice(0,240) : ""; gameCfg.loseText = (typeof g.loseText==="string") ? g.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!g.ragdoll; gameCfg.view = (g.view==='top'||g.view==='side'||g.view==='chase') ? g.view : 'fps'; gameCfg.viewDist = g.viewDist!=null ? +g.viewDist : 0; gameCfg.viewAxis = (g.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +g.viewYaw||0; gameCfg.viewTilt = (g.viewTilt!=null) ? +g.viewTilt : null; gameCfg.viewHeight = +g.viewHeight||0; gameCfg.viewRoll = +g.viewRoll||0; gameCfg.viewOrbit = !!g.viewOrbit; gameCfg.chaseCursorAim = !!g.chaseCursorAim; gameCfg.freeCursor = !!g.freeCursor;   /* build 1467 */ gameCfg.enemyMods = _sanitizeEnemyMods(g.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+ gameCfg.mode = g.mode||'random'; gameCfg.winWaves = g.winWaves||0; gameCfg.upgrades = g.upgrades !== false; gameCfg.objective = g.objective||'eliminate'; gameCfg.surviveSecs = g.surviveSecs!=null ? g.surviveSecs : 120; gameCfg.raceLaps = g.raceLaps!=null ? g.raceLaps : 3; gameCfg.raceBots = g.raceBots!=null ? g.raceBots : 3; gameCfg.raceBotSkill = g.raceBotSkill!=null ? g.raceBotSkill : 0.85; gameCfg.extractHold = g.extractHold!=null ? g.extractHold : 5; gameCfg.extractRadius = g.extractRadius!=null ? g.extractRadius : 3.5; gameCfg.bossWave = g.bossWave!=null ? g.bossWave : 5; gameCfg.wavesText = (typeof g.wavesText==='string') ? g.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!g.noRespawn; gameCfg.unarmed = !!g.unarmed; gameCfg.startWeapon = (typeof g.startWeapon==='string' && _canStartWith(g.startWeapon)) ? g.startWeapon : 'rifle'; gameCfg.allowPickup = g.allowPickup!==false; gameCfg.flashlight = !!g.flashlight; gameCfg.flashCfg = _sanitizeFlash(g.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof g.goalText==="string") ? g.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!g.respawnOnDeath; gameCfg.winText = (typeof g.winText==="string") ? g.winText.slice(0,240) : ""; gameCfg.loseText = (typeof g.loseText==="string") ? g.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!g.ragdoll; gameCfg.view = (g.view==='top'||g.view==='side'||g.view==='chase') ? g.view : 'fps'; gameCfg.viewDist = g.viewDist!=null ? +g.viewDist : 0; gameCfg.viewAxis = (g.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +g.viewYaw||0; gameCfg.viewTilt = (g.viewTilt!=null) ? +g.viewTilt : null; gameCfg.viewHeight = +g.viewHeight||0; gameCfg.viewRoll = +g.viewRoll||0; gameCfg.viewOrbit = !!g.viewOrbit; gameCfg.chaseCursorAim = !!g.chaseCursorAim; gameCfg.freeCursor = !!g.freeCursor; gameCfg.clickMove = !!g.clickMove;   /* build 1467 · 1481 */ gameCfg.enemyMods = _sanitizeEnemyMods(g.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(g.spawnRegion){ const _sr=g.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; }
   // ---- build 1400: the five that were written and never read -----------------------------------------
   // ALWAYS ASSIGNED, defaulting when absent — that is what stops the leak. A field that is only assigned
@@ -27911,6 +27996,7 @@ function _applyGameCfg(g){
   gameCfg.fallDamage  = _dmgRuleFrom(g.fallDamage,  24, 1.4);
   gameCfg.crushDamage = _dmgRuleFrom(g.crushDamage,  7, 2.2);
   gameCfg.freeCursor  = !!g.freeCursor;   /* build 1467: always assigned, never "if present" — build 1400's rule, or it LEAKS from the previous level */
+  gameCfg.clickMove   = !!g.clickMove;    /* build 1481, same rule */
   if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass();
   gameCfg.crosshair   = _crosshairFrom(g.crosshair);
   if(typeof applyCrosshair==='function') try{ applyCrosshair(gameCfg.crosshair); }catch(e){}
@@ -35429,7 +35515,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1480 · 2026-08-10';
+const BUILD_VERSION = 'build 1481 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35931,7 +36017,9 @@ addEventListener('mousedown', e=>{
   /* It does NOT swallow the shot, and that is the decision rather than an oversight: a prop you can no
      longer shoot, with nothing on screen saying so, is the surprise that cannot be undone from the editor.
      A level that wants pure point-and-click authors no weapon, which is how this engine already says that. */
-  if(e.button===0) _propClick(e);
+  /* build 1481: a click on something the world answers is NOT also a move order — that priority is what a
+     point-and-click player expects, and `_propClick` already reports which happened. */
+  if(e.button===0){ if(!_propClick(e)) _cmClickGround(e); }
   if(e.button===0){ if(heldProp){ throwHeld(); return; } firing=true; }
   else if(e.button===1){ e.preventDefault(); grabAction(); }   // middle-click (scroll-wheel push): grab / drop
   else if(e.button===2) ads = true;   // right-click: aim down sights
@@ -41561,6 +41649,11 @@ function loop(){
     if(keys[BINDS.right]) wish.add(right);
     if(keys[BINDS.left]) wish.sub(right);
   }
+  /* build 1481: click-to-move supplies the wish when the player is not steering. ANY manual input takes
+     control back immediately — a route that fights the keys is worse than no route. It sits ABOVE the freeze
+     lines below, so a pause, a loading level or a warmup stops the walk without throwing the route away. */
+  if(wish.lengthSq() > 1e-6){ if(_cmOn) _cmCancel(); }
+  else { const _cmd = _cmSteer(dt); if(_cmd){ wish.copy(_cmd); moveScale = 1; } }
   if(pvpMode() && duelDead){ wish.set(0,0,0); moveScale=0; }   // frozen until respawn
   if(_levelLoaderActive){ wish.set(0,0,0); moveScale=0; }   // frozen while the level is still loading
   if(matchWarmup>0){ wish.set(0,0,0); moveScale=0; }   // frozen during the pre-match GENERATING/countdown (no pre-positioning advantage)
@@ -45227,7 +45320,7 @@ function serializeLevel(){
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
     animCuts: (Object.keys(animCuts).length ? _sanAnimCuts(animCuts) : undefined),   /* build 1336: undefined when unused, so a level with no slices does not grow a dead key. Sanitized on the way OUT as well as in, so nothing out-of-range can enter a share code (1191's rule). */
-    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim, freeCursor: !!gameCfg.freeCursor },   /* build 1467 */   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim, freeCursor: !!gameCfg.freeCursor, clickMove: !!gameCfg.clickMove },   /* build 1467 · 1481 */   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -49618,6 +49711,16 @@ function renderEditorFields(){
         const fcSp=document.createElement('span'); fcSp.innerHTML='<b>Free mouse cursor</b> \u2014 point and click';
         fcRow.appendChild(fcCb); fcRow.appendChild(fcSp); bPly.appendChild(fcRow);
         hint(bPly,'','0 0 4px').textContent='The mouse is never captured, so the player keeps a real cursor: HUD buttons, signs and menus are clickable, and the character still aims and shoots at it. Point-and-click adventures, tycoons, card games and RTS-style levels need this. Not offered in first person, where the mouse IS the camera.';
+        /* build 1481: the NAVIGATION half of the same request. Indented under the free cursor and disabled
+           without it, because there is no pointer to click the ground with otherwise (build 1338's rule: a
+           control whose consequence is absent is one nobody can use on purpose). */
+        const cmRow=document.createElement('label'); cmRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0 2px 18px;cursor:pointer;';
+        const cmCb=document.createElement('input'); cmCb.type='checkbox'; cmCb.checked=!!gameCfg.clickMove; cmCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+        cmCb.disabled=!gameCfg.freeCursor; if(cmCb.disabled) cmRow.style.opacity='0.5';
+        cmCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.clickMove=cmCb.checked; _levelDirty=true; };
+        const cmSp=document.createElement('span'); cmSp.innerHTML='<b>Click to move</b> \u2014 walk to where you click';
+        cmRow.appendChild(cmCb); cmRow.appendChild(cmSp); bPly.appendChild(cmRow);
+        hint(bPly,'','0 0 6px 18px').textContent='Clicking the ground walks the character there along the level\u2019s own navigation mesh \u2014 around walls, up steps, onto a second storey. Clicking something the world answers (a prop with an On-click signal) does that INSTEAD of moving. Any WASD or stick input takes control straight back, and a route that stops making progress is abandoned rather than pushed at.';
       }
       if(_curView==='top'||_curView==='side'){
         // build 1084: the camera is derived, not placed — so give the creator a way to SEE it

@@ -490,6 +490,75 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## Click to move (build 1481)
+
+Build 1467's request, quoted in its own entry, was *"point-click type **navigation**"*. That build delivered
+the cursor; 1479 and 1480 made the world answer it. The player still could not be told where to **walk** —
+which is the defining verb of a point-and-click adventure, an ARPG and an RTS.
+
+### It supplies the WISH VECTOR and nothing else
+
+Gravity, collision, slopes, water, crouch, every speed multiplier and build 1171's acceleration model all sit
+**downstream** of `wish` and are untouched. That is what makes this small rather than a second movement
+system, and it is asserted as an absence: `_cmSteer` never names velocity, position, `onGround` or the ground
+query.
+
+### One pathfinder, driven by a shim
+
+The route is the engine's own nav grid through the **bots' own** `_botRepath` / `_botFollowPath`, driven with
+an agent that points at `player.pos` — build 1189's technique. So there is no second pathfinder to disagree
+with the first, and the player inherits build 1200's two storeys and its dirty-patch re-sampling for free.
+
+**A hop sets the JUMP PRESS BUFFER**, not velocity. The nav grid marks a cell walkable within jump reach, so
+a route legitimately contains hops; `_jumpBufT = JUMP_BUF` is exactly what the jump key does, so it goes
+through build 1160's coyote, buffer and cooldown gates rather than behind their backs.
+
+### Every giving-up exit CANCELS
+
+Arrival, a stall, no usable route, a throwing follow, the game ending. **A bot beelines when the grid fails
+and the player must not** — beelining is how you walk into the wall the grid was routing you around. The
+stall check is what covers a door closed across the route, a prop rolled into it, or a step the hop could not
+clear: no real progress for 0.9 s and the route is abandoned rather than pushed at forever.
+
+Three more decisions: a click on something the world **answers** is not also a move order (that priority is
+what a point-and-click player expects, and `_propClick` already reports which happened); **any** manual input
+takes control straight back, because a route that fights the keys is worse than no route; and the steer sits
+**above** the freeze lines, so a pause or a loading level stops the walk without throwing the route away.
+
+Off by default, always-assigned on both loaders (1400), and the editor control is **disabled** without the
+free cursor rather than present and inert (1338) — there is no pointer to click the ground with otherwise.
+
+### Measured live, through the real handler and the real frame loop
+
+```
+                 armed   moved   still routing
+click (0,10)      yes    11.19       yes
+same click, OFF   no      0.00       no        <- the control
+click again       yes    11.20       yes       <- returns
+
+a key press       route on -> OFF
+a clickable prop  opened=1, and NO move order
+the sky           not armed
+```
+
+### The probe lied four times, and the last one was my own state
+
+| # | it reported | why |
+|---|---|---|
+| 1 | the first two clicks refuse | the **nav grid was not built yet** — correct behaviour, and a completely different reason from the one under test, so the ON/OFF control was comparing two refusals |
+| 2 | "NEVER BUILT" while a later row walked 11.8 units | a contradiction, so the poll was wrong — not the engine |
+| 3 | still "NEVER BUILT" | I blamed the return shape and changed it. That was not it either |
+| 4 | — | **`safeExitPointerLock()` pauses the game**, and a paused frame loop never builds the grid. I had created the state I was waiting to leave |
+
+Row 2 is the one worth keeping: *a readout that contradicts another readout in the same run is an
+instrument fault, and chasing the engine instead costs a cycle.* The wait now keeps the game unpaused, and
+prints **NEVER BUILT — every row below is measuring that** if it times out, so the failure can never be read
+as a finding.
+
+Two pins moved (1468, 1479), both quoting the exact text of the mousedown line this build changed. 1468's
+intent is an ordering — the modal gate before the trigger — and it is asserted against the source rather
+than a window that has to keep growing.
+
 ## The cursor says what is clickable (build 1480)
 
 Build 1479 gave the world an On-click trigger and **left the affordance out**, stating it as not done. In a
