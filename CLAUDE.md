@@ -490,6 +490,47 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The hypothesis was mostly wrong, and the probe said so (build 1470)
+
+The reasoning after 1469: build 665's GLOBAL variables live on `#hud`, and four HUD elements are not
+descendants of it — the dialogue box and the goal banner are built in JS on `document.body`, and the interact
+prompt and the grab hint are markup siblings. So the accent, the fonts and the panel opacity must all be
+falling through to the engine's `:root` defaults there. A whole mechanism was written for it: a derived
+`stray = !hud.contains(dom)` test and a `_hudGlobalVars(el)` stamp, with the two lazily-built elements asking
+for the theme on creation.
+
+**Measured, with the stamp removed so the run reproduces build 1469 exactly:**
+
+```
+                         dialogue border         speaker   panel bg               dialogue font
+build 1469         rgba(255,204,51,0.4)  <- GOLD    gold    rgba(6,12,15,0.32)     Rajdhani
+build 1470         rgba(255,204,51,0.4)             gold    rgba(6,12,15,0.32)     Orbitron
+ammo panel (control, INSIDE #hud)                                                  Orbitron / Orbitron
+```
+
+**Build 701 had already done three-fifths of it** — it mirrors `--hud-panel-op`, `--accent` and
+`--accent-rgb` onto `<body>` for exactly this reason, and names these four elements in its comment while
+doing it. The accent already arrived. The opacity already arrived.
+
+**What it left behind is the two FONTS**, and that is the entire defect: a level that chose Orbitron got
+Orbitron on every panel inside the HUD and the engine's Rajdhani on the box its NPCs speak out of, on the
+objective banner, on the interact prompt and on the grab hint. Invisible until a creator changes the font,
+because the fallback is the engine's own — the same reason 1469's `--display-font` bug survived.
+
+So the build is **two lines added to build 701's mirror**, and the mechanism written first was thrown away.
+A second writer beside that mirror is two implementations of one thing, which is the defect this file
+records more than any other.
+
+**Safe by check, not by assumption.** A body-level mirror is only safe if nothing else reads these
+variables. Every rule in the stylesheet that does is either inside `#hud` or one of those four elements —
+`test-1470` extracts them and asserts it — so the editor's own chrome is untouched, and it reads `--ui-font`,
+which this build never writes. That is the scoping argument 1469 rested on, kept intact.
+
+**The lesson is the ratio.** The hypothesis was plausible, specific, and named a real structural fact
+(`#hud`-scoped variables, elements outside it). It was still 60% wrong, and the only thing that established
+which 40% was real was a before/after in one session with a control that stayed put. *Reading the code told
+me where to look; it did not tell me what was already fixed there.*
+
 ## The theme stopped at the edge of the HUD (build 1469)
 
 The last of the five things asked for in one message from play: *"more customizable controls for creators

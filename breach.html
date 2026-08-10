@@ -7339,6 +7339,14 @@ function applyHudCfg(){
   body.style.setProperty('--hud-panel-op', String(c.panelOp));
   body.style.setProperty('--accent', c.accent);
   body.style.setProperty('--accent-rgb', _hexToRgbTriplet(c.accent));
+  /* build 1470: 701 mirrored THREE of the global set and stopped, and the two FONTS are the two it left —
+     so a level that chose Orbitron got Orbitron on every panel inside #hud and Rajdhani on the box its NPCs
+     speak out of, on the objective banner, on the interact prompt and on the grab hint. It is invisible
+     until a creator changes the font, which is why it survived: the fallback is the engine's own.
+     Every consumer of these two is either inside #hud or one of those four, so this reaches nothing else —
+     in particular the editor's own chrome, which reads --ui-font and is untouched. */
+  body.style.setProperty('--hud-font', "'"+c.uiFont+"'");
+  body.style.setProperty('--hud-display-font', "'"+c.displayFont+"'");
   for(const s of ['angular','rounded','square']) body.classList.toggle('hud-shape-'+s, c.shape===s);
   body.classList.toggle('hud-noborder', !c.border);
   for(const k of HUD_TOGGLES) body.classList.toggle('hud-hide-'+k, !!(c.hide && c.hide[k]));
@@ -35144,7 +35152,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1469 · 2026-08-10';
+const BUILD_VERSION = 'build 1470 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
