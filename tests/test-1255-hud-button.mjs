@@ -113,7 +113,9 @@ assert(/el\.style\.pointerEvents='auto'; el\.style\.cursor='pointer';/.test(src)
 assert(/el\.onclick=\(ev\)=>\{ ev\.preventDefault\(\); ev\.stopPropagation\(\); _hwFire\(w\); \};/.test(src),
   'clicking fires — and the click never reaches the world behind it');
 assert(/if\(vis && w\.kind==='button'\) _btnVis=true;/.test(src), 'the frame pass tracks whether any button is VISIBLE (show-when gates the menu)');
-assert(/_hwSyncCursor\(_btnVis && \(typeof gameOn!=='undefined' && gameOn\)/.test(src), 'and drives the cursor from it');
+/* build 1468: an open modal frees the mouse too, whether or not it happens to contain a button — but a
+   VISIBLE BUTTON is still what this build put there, and it is still a term of the same one call. */
+assert(/_hwSyncCursor\(\(_btnVis \|\|[^)]*\) && \(typeof gameOn!=='undefined' && gameOn\)/.test(src), 'and drives the cursor from it');
 assert(/if\(!hudWidgets\.length\)\{[\s\S]{0,120}?_hwSyncCursor\(false\); return; \}/.test(src), 'a level with no widgets releases the claim too');
 assert(/if\(typeof hudWidgets!=='undefined'\) for\(const w of hudWidgets\)\{ if\(w && w\.kind==='button' && w\.event\) set\.add/.test(src),
   'a button’s event name joins the graph’s known events — On event autocompletes what you just authored');

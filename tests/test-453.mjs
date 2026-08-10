@@ -9,7 +9,7 @@ assert(/const hint=\(h, html, margin\)=>\{ const d=document\.createElement\('div
 assert(/function renderInvItems\(host\)\{/.test(src), 'renderInvItems is a standalone function (no closure over editor locals)');
 
 // (2) eliminated players cannot fire. Both the input gate and shoot() itself check duelDead.
-assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\) return;/.test(src), 'mousedown is ignored while eliminated');
+assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\b[^)]*\) return;/.test(src), 'mousedown is ignored while eliminated');
 const sh = extractFunction('shoot');
 assert(/if\(duelDead\) return;/.test(sh), 'shoot() bails out while eliminated (covers a latched trigger)');
 

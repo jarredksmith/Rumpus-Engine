@@ -69,7 +69,9 @@ assert(/updateHudWidgets\(\);   \/\/ build 1058: custom HUD widgets mirror the l
   'the frame loop drives them right after the logic graph');
 assert(/e\.lb\.textContent=t;/.test(src) && !/hwLb[^]{0,200}innerHTML/.test(src),
   'labels render via textContent only — no markup injection from imported levels');
-assert(/const vis=!w\.when \|\| \(\+logicVars\[w\.when\]\|\|0\)!==0;/.test(src),
+/* build 1468 put a MODAL gate in front of this one; the `show when` term is byte-identical and still
+   decides on its own for any widget that is not in a modal, which is every widget authored before 1468. */
+assert(/\(!w\.when \|\| \(\+logicVars\[w\.when\]\|\|0\)!==0\)/.test(src),
   "'show when' gates visibility on a logic variable being non-zero");
 assert(/pointer-events:none;z-index:4;/.test(src), 'the widget layer never eats clicks');
 assert(/NET\.conns\[cid\]\.send\(\{t:'hudv', v\}\)/.test(src), 'the host mirrors the watched variables to clients');

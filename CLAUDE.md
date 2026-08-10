@@ -490,6 +490,108 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A modal is a named group of HUD widgets (build 1468)
+
+Asked for from play, the fourth item of a five-part request: *"ways to create custom modals that can be
+triggered open"*. Build 1467 had just given the player a real mouse cursor, so a menu finally had something
+to be clicked with.
+
+**It is not a parallel system, and that is the whole build.** Every part of a menu already existed — text,
+bars, timers, buttons that fire a named logic event (1255), images for card faces and panel frames (1260),
+per-widget anchor/offset/size/colour, a sanitizer, the level file, the editor panel. What was missing was the
+three things that turn a set of widgets into a MODAL:
+
+- one name that opens and closes them **together**,
+- a **backdrop** that separates them from the world,
+- and a world that **stops taking your clicks** while they are up.
+
+So it is ONE field on a widget (`modal`) and ONE world verb. A parallel modal object would have meant a
+second sanitizer, a second serializer, a second editor panel and a second renderer — four places to drift
+from the widget system that already does all of it.
+
+### Two gates, and the compatibility argument is that the first one is opt-in
+
+```js
+const vis = (w.modal ? _modalOpen===w.modal : true) && (!w.when || (+logicVars[w.when]||0)!==0);
+```
+
+A widget with no modal name **has no first gate at all**, so every widget in every level ever saved is
+byte-identical — executed across three modal states rather than asserted. And the two gates COMPOSE, which is
+the design rather than a side effect: the modal decides whether the menu is up, `show when` still decides each
+row within it, so one shelf of a shop can read SOLD OUT while the shop is open.
+
+### Three refusals, because the failure mode is unrecoverable
+
+A modal that opens onto nothing is a **dimmed world the player cannot dismiss** — the worst outcome this verb
+has, and the first one a creator hits by mistyping a name. An unnamed modal, and a name no widget carries,
+each open nothing, send nothing, and are REPORTED by name through build 1214's channel. A **CLOSE is never
+refused**: closing has to work even for a modal that has no members, or a typo becomes permanent.
+
+### Four decisions worth keeping
+
+- **The backdrop sits at z-index 3 against the widget host's 4**, or the menu would be behind its own dimmer.
+  It takes the pointer, it is built once rather than per frame, and it is a property of PLAY — never shown in
+  the editor or over the pause menu, re-checked every frame so opening the editor over a modal clears it.
+- **An open modal frees the mouse whether or not it contains a button.** Build 1255 tied the cursor to a
+  visible button; a panel you cannot point at is not a menu, so `_btnVis || _modalOpen` drives the one call.
+- **The world refuses clicks through the gate the shop and the inventory already use**, not a new one — and a
+  trigger already HELD when the menu opens is dropped, because the mousedown gate only stops the next shot.
+- **`who:'actor'` opens it for the one player who tripped the trigger**, which is what a shop terminal in a
+  co-op level means; the default reaches everyone, and a client applies the identical payload through the
+  identical function. The wire test is `msg.md != null`, because the empty name is CLOSE and a truthiness
+  test would make a modal impossible to shut on anybody but the host.
+
+### Measured live, with an ordinary HUD widget as the control in every row
+
+```
+                       hudScore  shopTtl  shopBuy  soldOut   backdrop  z   cursor    firing
+before, nothing open     shown   hidden   hidden   hidden      none    -   captured   no
+after OPEN               shown   SHOWN    SHOWN    hidden      yes    3/4  FREE       no
+...then sold=1           shown   shown    shown    SHOWN       yes    3/4  free       no
+after SHUT               shown   hidden   hidden   hidden      none    -   captured   no
+
+a click, modal OPEN -> firing false        a click, modal CLOSED -> firing true   <- the control
+a HELD trigger      -> true, then false and the latch with it
+the BUY button inside the modal            -> logicVars.bought 1
+blank name / bad name / real name / hide   -> '' / '' / 'shop' / ''   with 2 reported in Level Check
+a deploy                                   -> 'shop' -> '', backdrop gone
+```
+
+Row three is the composition, measured: `soldOut` sits **inside** the open modal and stays hidden until its
+own `show when` passes — one shelf sold out while the shop is open.
+
+**The control is what makes it a finding.** `hudScore` never moves in any condition — if the modal's widgets
+appeared and the ordinary one changed too, the measurement would be the rebuild rather than the gate.
+
+### Still open, and stated rather than implied
+
+**A modal does not PAUSE the world**, and that is a decision with a reason: `paused` early-returns the frame
+loop, so `updateHudWidgets` would stop running and `_hwFire` returns on it — a paused modal is a frozen,
+unclickable one. Pausing properly needs a freeze that is not `paused`, which is its own build. What this one
+does instead is stop the world taking your clicks, which is what "modal" has to mean before it can mean
+anything else.
+
+**A modal widget is hidden while you author it**, exactly as a `show when` widget already is — the creator
+blanks the field to lay it out and puts the name back. Consistent with the existing precedent rather than a
+novelty beside it, and the hint says so rather than leaving it to be discovered.
+
+### Seven pins moved, and FOUR of them were one line quoted verbatim
+
+1058, 1255 and 1277 are the ordinary kind: `show when` is still asserted as its own term beside the new gate,
+a visible button is still asserted as a term of the one cursor call, and the verb count went 31 to 32.
+
+The other four (376, 453, 455, 66) all quoted **the same input gate**, character for character —
+`if(shopOpen || editorOpen || paused || mapOpen || duelDead || invOpen) return;` — to assert four different
+things: that firing is blocked while the map is open, while eliminated, while the inventory is up, and while
+paused. Every one of those four statements is still TRUE; all four broke because a sixth condition joined the
+list. **A pin that quotes a whole condition is a pin against the condition's neighbours, not against what it
+says** — the same trap this file records for whole lists, whole literals and character budgets, in its
+narrowest form yet: one added `||` term costs four harnesses. They assert membership now.
+
+**A backtick inside page code for the SIXTEENTH time** — and for the second build running, `tools/probe/lint.mjs`
+named the file and line before node ever ran it. The habit that fixes it is running the lint after the last
+edit, not before the first.
+
 ## The gizmo snaps (build 1146)
 
 The transform gizmo moved, rotated and scaled in raw continuous mouse units. Nothing in the product could
