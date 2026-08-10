@@ -17,6 +17,13 @@ const fns = extractFunction('_sanitizeLogic', src) + '\n'
   + extractFunction('logicEvent', src) + '\n'
   + extractFunction('logicStart', src) + '\n'
   + extractFunction('_lgPulse', src) + '\n'
+  /* build 1474: updateLogic now ticks the countdowns, so this rig needs them — LIFTED from source
+     rather than restated, because a rig that restates the thing under test keeps passing against a
+     stale copy (this file's own rule, three lines below). */
+  + 'const LG_TIMER_MAX = ' + extractConst('LG_TIMER_MAX', src) + ';\n'
+  + 'let _lgCountdowns = Object.create(null);\n'
+  + extractFunction('_lgTimerStart', src) + '\n'
+  + extractFunction('_lgTimerTick', src) + '\n'
   + extractFunction('updateLogic', src) + '\n';
 function makeEnv(graph){
   const calls = { actions:[], toasts:[], won:0, lost:0 };

@@ -13394,6 +13394,7 @@ function _lgEmit(name){
 }
 function logicStart(){       // a match begins: fresh state, seed the repeating timers, fire 'start'
   logicVars={}; logicLists={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;   /* build 1269 */
+  _lgCountdowns=Object.create(null);   /* build 1474: a countdown is MATCH state, like every timer beside it */
   if(typeof _lgPropVarClear==='function') _lgPropVarClear();   /* build 1461: per-prop values are MATCH state, like logicVars */
   if(typeof _persistSeed==='function') _persistSeed();       // build 1075: carried values come back before anything runs
   if(typeof _trigState!=='undefined') _trigState.length=0;   // build 1072: trigger volumes re-arm with the match (once-only fires again on a retry)
@@ -13581,6 +13582,21 @@ function _lgPulse(id, pin){
       if(st.c>=Math.max(1,Math.round(_lgNum(p.target||1)))){ if(p.hold!==true) st.c=0; _lgFollow(id,0); }   // out 0: target reached (auto-resets unless held)
       break; }
     case 'delay': { _lgTimers.push({ at:Math.max(0.05,_lgNum(p.sec||1)), node:id, kind:'delay' }); break; }
+    case 'timer': {   /* build 1474 */
+      const key=_lgVarKey(String(_lgName(p.tvar)||'').trim().slice(0,24));
+      if(!key){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A Countdown node has no variable to count into.'); break; }
+      const md=(p.tmode==='stop'||p.tmode==='add') ? p.tmode : 'start';
+      if(md==='stop'){ delete _lgCountdowns[key]; logicVars[key]=0; }
+      else if(md==='add'){
+        const T=_lgCountdowns[key];
+        /* ADD to a timer that is not running STARTS one. The alternative is a node that silently does
+           nothing depending on invisible state, which is the harder of the two to debug by a distance. */
+        if(T){ T.left=Math.max(0, Math.min(86400, T.left + _lgNum(p.tsec||0))); logicVars[key]=Math.round(T.left*100)/100; }
+        else _lgTimerStart(key, _lgNum(p.tsec||0), '');
+      }
+      else _lgTimerStart(key, _lgNum(p.tsec||0), _lgName(p.tev));
+      _lgFollow(id,0);
+      break; }
     case 'repeat': { const N=Math.max(1,Math.min(100,Math.round(_lgNum(p.times||1)))), gap=Math.max(0,_lgNum(p.gap||0));
       if(gap<=0){ for(let i=0;i<N;i++){ logicVars['#i']=i; _lgFollow(id,1); } _lgFollow(id,0); }   // out 1 each pass (#i = index), out 0 when done
       else { st.left=N; st.i=0; _lgTimers.push({ at:0.001, node:id, kind:'repeat', gap }); }
@@ -13669,11 +13685,43 @@ function _lgPulse(id, pin){
     default: break;   // start / event / interval / onkill / onwave / onspot / onhurt are entries — they only ever FIRE, never receive
   }
 }
+/* build 1474: one countdown per VARIABLE, which is also its identity — "the timer that fills `left`". A
+   creator never names a timer separately from the thing they read, and two timers writing one variable is
+   not a case anybody wants. */
+const LG_TIMER_MAX = 24;
+let _lgCountdowns = Object.create(null);
+function _lgTimerStart(key, sec, ev){
+  if(Object.keys(_lgCountdowns).length >= LG_TIMER_MAX && !(key in _lgCountdowns)){
+    if(typeof _noteLogicFailure==='function') _noteLogicFailure('More than '+LG_TIMER_MAX+' countdowns are running at once; \u201c'+key+'\u201d was not started.');
+    return;
+  }
+  _lgCountdowns[key] = { left:Math.max(0, Math.min(86400, +sec||0)), ev:String(ev==null?'':ev).trim().slice(0,60) };
+  logicVars[key] = Math.round(_lgCountdowns[key].left*100)/100;
+}
+function _lgTimerTick(dt){
+  for(const key in _lgCountdowns){
+    const T=_lgCountdowns[key];
+    T.left -= dt;
+    if(T.left <= 0){
+      /* delete BEFORE firing: the event is free to start this very timer again, and clearing afterwards
+         would throw the restart away — the same ordering build 1391's reset needed. */
+      delete _lgCountdowns[key];
+      logicVars[key] = 0;
+      if(T.ev && typeof logicEvent==='function') logicEvent(T.ev);
+    } else {
+      logicVars[key] = Math.round(T.left*100)/100;   /* 2dp, so `==` in a Branch can ever be true (1352) */
+    }
+  }
+}
 function updateLogic(dt){
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   if(!gameOn || (typeof editorOpen!=='undefined' && editorOpen)) return;
   if(!logicGraph.nodes.length) return;
   _lgBudget=0; _lgWarned=false;   // a fresh pulse budget every frame
+  /* build 1474: countdowns tick on the frame's own dt, so they stop while paused, while a cutscene runs and
+     while the editor is open — which is the correctness a hand-rolled `read time` countdown cannot have,
+     because `time` is wall-clock seconds since deploy and keeps running through all three. */
+  _lgTimerTick(dt);
   for(let i=_lgTimers.length-1;i>=0;i--){
     const T=_lgTimers[i]; T.at-=dt; if(T.at>0) continue;
     if(T.kind==='interval'){
@@ -14070,6 +14118,16 @@ const LG_DEFS = {
   branch:   { t:'Branch',          cat:'fl', ins:['in'], outs:['true','false'], params:[{k:'a',l:'A',w:56,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['==','!=','<','<=','>','>=']},{k:'b',l:'B',w:56,listId:'lgVarList'}] },
   counter:  { t:'Counter',         cat:'fl', ins:['in','reset'], outs:['reached','each'], params:[{k:'target',l:'target',w:40}] },
   delay:    { t:'Delay',           cat:'fl', ins:['in'], outs:['then'],  params:[{k:'sec',l:'sec',w:40}] },
+  /* build 1474: a COUNTDOWN. `interval` repeats and `delay` waits once; neither counts DOWN, so every timed
+     booth was five nodes of arithmetic over `read time` plus two scratch variables — which is literally what
+     build 1403's own shooting range had to do. Its output is a logic VARIABLE, which is the whole design:
+     the HUD's timer widget (1058) binds to it, Branch compares it, the expression evaluator reads it, the
+     per-player `name@` scoping (1231) applies to it and the host already mirrors it to clients (1287). */
+  timer:    { t:'Countdown',       cat:'fl', ins:['in'], outs:['\u25b6'], params:[
+    {k:'tmode',l:'',w:88,sel:[['start','Start'],['stop','Stop'],['add','Add time']]},
+    {k:'tvar',l:'into',w:76,listId:'lgVarList'},
+    {k:'tsec',l:'sec',w:40,ifv:['tmode',['start','add']]},
+    {k:'tev',l:'at zero fire',w:88,ifv:['tmode','start'],listId:'lgEvtList'}] },
   repeat:   { t:'Repeat',          cat:'fl', ins:['in'], outs:['done','each (#i)'], params:[{k:'times',l:'times',w:40},{k:'gap',l:'gap s',w:40}] },
   random:   { t:'Random',          cat:'fl', ins:['in'], outs:['A','B','C','D'], params:[{k:'w0',l:'A%',w:32},{k:'w1',l:'B%',w:32},{k:'w2',l:'C%',w:32},{k:'w3',l:'D%',w:32}] },
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
@@ -14114,6 +14172,7 @@ function _lgVarOptions(){   // build 1060: every variable name in play — from 
     if(n.type==='setvar'||n.type==='addvar'||n.type==='math'||n.type==='read') addName(q.name);   // build 1169
     if(n.type==='branch'){ addName(q.a); addName(q.b); }
     if(n.type==='toast'||n.type==='do') addRefs(q.text);
+    if(n.type==='timer') addName(q.tvar);   /* build 1474: a countdown's variable is a variable */
   }
   if(typeof hudWidgets!=='undefined' && hudWidgets) for(const w of hudWidgets){ addName(w.value); addName(w.max); addName(w.when); addRefs(w.label); }
   for(const t of ['#x','#z','#hp','#hpf','#pid','#team']) set.add(t);   // build 1221: the event payload tokens, always offered so onkill/onhurt/onspot graphs discover them; build 1231: the player identity pair (triggers + onkill)
@@ -35211,7 +35270,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1473 · 2026-08-10';
+const BUILD_VERSION = 'build 1474 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

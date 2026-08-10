@@ -490,6 +490,55 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A countdown in the logic graph (build 1474)
+
+`interval` repeats and `delay` waits once. **Neither counts DOWN** — so every timed booth was five nodes of
+arithmetic over `read time` plus two scratch variables, which is literally what build 1403's own shooting
+range had to do to run a twenty-second round. A county fair is a row of them.
+
+**Its output is a logic VARIABLE, and that is the design rather than a detail.** The HUD's timer widget
+(1058) binds to it, Branch compares it, the expression evaluator reads it, build 1231's per-player `name@`
+scoping applies to it, and the host already mirrors it to clients (1287). One node replaces the five, and
+nothing downstream needed a line.
+
+### The hand-rolled version was also WRONG, in a way you would not notice until you shipped
+
+`read time` is wall-clock seconds since deploy, so a countdown built from it **keeps running while the game
+is paused, while a cutscene plays, and while the creator is in the editor.**
+
+**But the correction to my own claim is the more useful half.** The probe first called `updateLogic` BY HAND
+while `paused` and watched it count straight down — because `updateLogic` never looks at `paused`. **The
+frame loop does**, returning on shop / upgrade pick / map / inventory / solo-pause long before it reaches
+the call. So the claim is about the loop and is pinned there — and in multiplayer nothing freezes the world
+for one player, so a countdown correctly keeps running there. Stated rather than claimed away.
+
+### Executed frame by frame
+
+- writes the full time **immediately**, so a widget reads `0:20` on the first frame rather than `0:00`;
+- lands on **exactly 0** at 20 / 30 / 60 / 144 fps and after a 9.5-second hitch, never a small negative;
+- fires its event **once** and never twice, and the variable stays at 0 rather than counting into negatives;
+- **can be restarted from inside that event** — the entry is deleted *before* the fire, the same ordering
+  build 1391's reset needed;
+- `ADD` extends a running countdown and **starts one that is not running**, because a node that silently
+  does nothing depending on invisible state is by a distance the harder of the two to debug;
+- bounded at 24 with the refusal reported through build 1214's channel, and restarting one already at the
+  cap is correctly not a new one.
+
+Measured live on a real booth: `20 → 15 → 0` with the HUD reading `0:20 / 0:15 / 0:00`, `ended` set once,
+the countdown gone from the live set, and a deploy clearing it — against a control that ran 120 frames with
+nothing started and read `null`.
+
+### Two rigs needed feeding, and one of them found a real mistake
+
+`test-1027` evaluates `updateLogic` in a constructed scope, so it was handed `_lgTimerTick` **lifted from
+source** rather than restated (that file's own rule, three lines above where it landed). And `test-1060`
+crashed — because I had added the timer's variable name as a **second, unguarded** walk over
+`logicGraph.nodes` beside the existing guarded one. It belongs *inside* that loop, which is where it is now:
+**a second walk over a thing that is already being walked is both a bug and a smell.**
+
+One pin moved (1028's palette↔runtime parity, 25 → 26 node types) — the guard that exists for exactly this,
+doing its job.
+
 ## A modal is usable on a phone (build 1473)
 
 Two defects in a feature two builds old, **both invisible on a desktop**.
