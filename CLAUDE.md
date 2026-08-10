@@ -490,6 +490,67 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The modal was invisible while you built it (build 1477)
+
+Build 1468 made a modal a **stack of widgets** gated on `_modalOpen`, and build 1471 has `toggleEditor`
+close any open modal. So every widget in a modal was **invisible for the whole time a creator was authoring
+it** — and build 1476 had just given them a layering control they could not see the effect of.
+
+**The engine said so itself.** Build 1468's own hint read:
+
+> *"a widget in a modal is hidden while you author — blank this field to lay it out, then put the name back."*
+
+That is eighteen edits for a nine-widget shop, and the moment the name goes back you can no longer check the
+layering. **A workaround the product instructs you to perform is a missing feature.**
+
+`_hwPrevModal` is a picker in the HUD panel; the visibility gate answers it instead of `_modalOpen` while the
+layout editor is on screen.
+
+Four decisions:
+
+- **It is read behind the `hudPreview` body class**, which is the SAME signal build 969 already keys on for
+  the touch buttons. One answer in the file to *"is the layout editor on screen"*, rather than two that can
+  disagree — and it is what makes the leak structurally impossible rather than merely unlikely.
+- **`show when` is bypassed there too**, for the reason 969 wrote down at its own site: *"the layout editor
+  shows everything so you can arrange it."* You cannot arrange a widget you cannot see, and in an editor
+  session `logicVars` holds whatever the last play run happened to leave.
+- **The backdrop stays play-only**, unchanged from 1468 — so the level shows through while you place things
+  over it. Stated in the hint rather than left to be noticed.
+- **It is a VIEW, not a setting.** No undo snapshot, no `_levelDirty`, never serialized, unknown to the
+  sanitizer. Typing a modal name now *previews* it, so the widget does not vanish at the moment a creator
+  most needs to see it.
+
+### Measured live, with a control that returns
+
+Three widgets: a play-HUD score, a `BUY` button in the modal `shop`, and a `show when hasKey` text with no
+such variable set.
+
+```
+                 hp     buy    gated   dirty  backdrop  saved
+editor, none    true   false   true    false   false    false
+editor, shop    true   TRUE    true    false   false    false
+editor, none    true   false   true    false   false    false    <- returns exactly
+play            true   false   FALSE     -     (see below)
+play + open     true   TRUE    false     -     true
+```
+
+Two rows carry the argument. `gated` is **true in the editor and false in play** — the 969 bypass doing
+exactly what it says, with the real gate back in force the moment the editor closes. And the `play` row is
+taken with **`_hwPrevModal` deliberately left set to `shop`**: with it cleared that row could not tell a
+working gate from a broken one, and a check whose fixture cannot produce the failure is not evidence (1422).
+
+### Two pins moved, and both were the traps this file already records
+
+`test-1468` sliced the gate by a **character budget** (`indexOf('const vis=') + 120`) and the statement grew
+onto a second line, pushing the `show when` clause past the end with the assertion still true — 1149's trap,
+again. Worse, the rig beside it **restated** the expression in a `new Function`, so its twelve executed cases
+would have gone on passing against a stale copy of the very thing under test. Both are fixed the same way:
+lift the real statement and drive its **play branch**, which makes those twelve cases test the shipped code
+rather than a paraphrase of it.
+
+The third was an assertion **on the defect** — it pinned the words *"blank this field to lay it out"*. Its
+intent (the field explains how to author with it) is unchanged and is finally true.
+
 ## The widgets could not be restacked (build 1476)
 
 `_hwRebuild` appends widgets in **array order** into one absolutely positioned host with no z-index of their

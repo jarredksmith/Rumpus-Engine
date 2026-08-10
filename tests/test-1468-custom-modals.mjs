@@ -38,13 +38,20 @@ const src = gameSource();
 // visible in exactly the conditions it was visible in before this build.
 {
   const upd = extractFunction('updateHudWidgets', src);
-  const line = upd.slice(upd.indexOf('const vis='), upd.indexOf('const vis=') + 120);
-  assert(/w\.modal \? _modalOpen===w\.modal : true/.test(line), 'the modal gate is first...');
-  assert(/!w\.when \|\| \(\+logicVars\[w\.when\]\|\|0\)!==0/.test(line),
+  // build 1477 moved this pin twice, both for reasons this file records as traps. The slice was scoped by a
+  // CHARACTER COUNT (+120) and the gate grew a preview branch onto a second line, pushing the `show when`
+  // clause past the end with the assertion still true. And the rig below RESTATED the expression, so its
+  // twelve executed cases would have gone on passing against a stale copy of the very thing under test.
+  // Both are fixed the same way: lift the real statement, and drive its PLAY branch.
+  const stmt = upd.match(/const vis=[\s\S]*?!==0\)\);/);
+  assert(stmt, 'the visibility gate is found');
+  assert(/w\.modal \? _modalOpen===w\.modal : true/.test(stmt[0]), 'the modal gate is there...');
+  assert(/!w\.when \|\| \(\+logicVars\[w\.when\]\|\|0\)!==0/.test(stmt[0]),
     '...and build 1058\'s `show when` test is byte-identical beside it, so the two compose');
 
-  const vis = new Function('w', '_modalOpen', 'logicVars',
-    'return (w.modal ? _modalOpen===w.modal : true) && (!w.when || (+logicVars[w.when]||0)!==0);');
+  const _visFn = new Function('_hwPrev', '_hwPrevModal', 'w', '_modalOpen', 'logicVars',
+    stmt[0] + ' return vis;');
+  const vis = (w, open, lv) => _visFn(false, '', w, open, lv);   // false = the PLAY branch, which is the subject
 
   // a pre-1468 widget: the modal state cannot touch it, in either direction
   for (const open of ['', 'shop', 'pause']) {
@@ -297,8 +304,11 @@ const src = gameSource();
   assert(/none \\u2014 always on the HUD/.test(src), '...whose placeholder says what leaving it blank means');
   assert(/opens and closes together, over a dimmed backdrop/.test(src),
     '...and a hint naming what the group buys');
-  assert(/blank this field to lay it out/.test(src),
-    '...including the authoring papercut it shares with `show when`, stated rather than left to be discovered');
+  // This pinned the WORKAROUND — "blank this field to lay it out, then put the name back" — which is to say
+  // it was an assertion on the defect. Build 1477 gave the editor a modal preview, so the field names the
+  // control instead. The intent (the field explains how to author with it) is unchanged and now true.
+  assert(/Use the Preview picker above to lay it out\./.test(src),
+    '...including how to lay the modal out, which is now a control rather than a workaround');
 }
 
 done('build 1468 (asked for from play): CREATOR-AUTHORED MODALS the logic graph can trigger open. "Even ways to create custom modals that can be triggered open." A modal is a NAMED GROUP OF HUD WIDGETS rather than a parallel system — every part of a menu already existed (text, bars, timers, buttons that fire a logic event, images for card faces and panel frames, per-widget anchor/offset/size/colour, a sanitizer, the level file, the editor panel), and what was missing was the three things that make a group of widgets a MODAL: one name that opens and closes them together, a backdrop that separates them from the world, and a world that stops taking your clicks while they are up. So it is ONE field on a widget and ONE world verb, which is also the compatibility argument: a widget with no modal name has no first gate at all, so every widget in every level ever saved is byte-identical — executed here across three modal states rather than asserted. The two gates COMPOSE, and that is the design: the modal decides whether the menu is up, `show when` still decides each row within it, so one shelf of a shop can be sold out while the shop is open. Three refusals, because a modal that opens onto nothing is a dimmed world the player cannot dismiss — the worst outcome this verb has and the first one a creator hits by mistyping: an unnamed modal, and a name no widget carries, each open nothing, send nothing and are REPORTED by name through build 1214\'s channel; a CLOSE is never refused, because closing must work even for a modal that has no members. The path from the node to the handler is WALKED rather than pinned at both ends (build 1277), the signal row exists in the same build that adds the dropdown entry (build 1406\'s rule, applied on the way in rather than a build later), and `who:\'actor\'` opens it for the one player who tripped the trigger — what a shop terminal in a co-op level means — without also opening it for the host');
