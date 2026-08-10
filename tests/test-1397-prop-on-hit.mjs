@@ -97,8 +97,13 @@ const src = gameSource();
 
 // ------------------------------------------------------------------------ the door ----
 {
-  assert(/\['destroyed','On destroyed'\],\['damaged','On hit'\],\['interacted','On E'\],\['contact','On object placed'\]/.test(src),
+  // build 1479 added `On click` and broke this by quoting the WHOLE list to assert one thing about it
+  // — the whole-list trap this file records. It asserts MEMBERSHIP and ADJACENCY now, which is what it
+  // always meant: On hit sits beside On destroyed, the trigger it is most easily confused with.
+  assert(/\['destroyed','On destroyed'\],\['damaged','On hit'\]/.test(src),
     'the editor offers it, next to the event it is most easily confused with');
+  for(const t of ["'interacted','On E'", "'contact','On object placed'"])
+    assert(src.indexOf('['+t+']') > 0, 'and the other triggers are all still offered: ' + t);
   assert(/\['emit','\\u2192 Logic event'\]/.test(src),
     'and the bridge to the graph it composes with is the one that was already there (build 1027)');
   for (const t of ['#x', '#z', '#hp', '#hpf'])

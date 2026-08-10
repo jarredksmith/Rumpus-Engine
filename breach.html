@@ -14477,7 +14477,7 @@ function _lgRenderNode(n){
 //     signal can actually be edited. A card that looked editable here and was not would be worse than
 //     nothing.
 const SIG_MIRROR_MAX = 60;         // a card each; past this the panel is a wall, not a view
-const _SIG_WHEN_LABEL = { destroyed:'destroyed', interacted:'E pressed', contact:'object placed' };
+const _SIG_WHEN_LABEL = { destroyed:'destroyed', interacted:'E pressed', contact:'object placed', clicked:'clicked' };
 function _lgSigMirror(){
   const out = [];
   const props = (typeof propModels!=='undefined' && propModels) ? propModels : [];
@@ -14786,6 +14786,48 @@ function _propCtx(o){
   return { x: +(o.position.x).toFixed(2), z: +(o.position.z).toFixed(2), hp: +hp.toFixed(2),
            hpf: mx > 0 ? +Math.max(0, Math.min(1, hp / mx)).toFixed(2) : 0 };
 }
+/* build 1479: ON CLICK. Build 1467 gave the player a real mouse cursor and 1468 gave them clickable HUD
+   buttons — and NOTHING IN THE WORLD answered a click. A prop could trigger on being destroyed, hit, walked
+   up to and pressed E, or having something placed on it; a point-and-click adventure, a tycoon where you
+   click a building, a card game whose cards are props and an RTS all need the one trigger that was missing.
+
+   The ray goes through the CURSOR: the real pointer when it is free, screen centre when it is captured,
+   which is where the player is pointing in either case and needs no new state. It fires LOCALLY, exactly
+   like `interacted` — a click is a local player action, and it inherits that trigger's authority model and
+   `_applySignalAction`'s own routing rather than inventing a second one.
+
+   60 units: far enough to click anything you can read at a glance, short enough that a stray click across a
+   whole arena is not an interaction. */
+const CLICK_RANGE = 60;
+const _clkRay = new THREE.Raycaster();
+const _clkV2 = new THREE.Vector2();
+function _propClick(e){
+  if(typeof propModels==='undefined' || !propModels.length) return false;
+  const cv = renderer && renderer.domElement; if(!cv) return false;
+  /* Pointer-locked means the crosshair IS the cursor, so the ray goes through screen centre; free (build
+     1467) means the event's own coordinates are the truth. */
+  let nx = 0, ny = 0;
+  if(!document.pointerLockElement){
+    const r = cv.getBoundingClientRect(); if(!r.width || !r.height) return false;
+    nx = ((e.clientX - r.left) / r.width) * 2 - 1;
+    ny = -((e.clientY - r.top) / r.height) * 2 + 1;
+  }
+  _clkV2.set(nx, ny);
+  _clkRay.setFromCamera(_clkV2, camera);
+  _clkRay.far = CLICK_RANGE;
+  let hits;
+  try{ hits = _clkRay.intersectObjects(propModels.filter(Boolean), true); }catch(err){ return false; }
+  /* build 1236's rule: nothing the renderer does not draw may answer a click either — an invisible
+     collision volume inside a GLB is not a thing the player can see to click. */
+  const hit = _firstSolidHit(hits); if(!hit) return false;
+  let o = hit.object;
+  while(o && propModels.indexOf(o) < 0) o = o.parent;
+  if(!o) return false;
+  const sg = o.userData && o.userData.signals;
+  if(!Array.isArray(sg) || !sg.some(x => x && x.when === 'clicked')) return false;
+  try{ _lgPropEvent(o, 'clicked', _propCtx(o)); }catch(err){}
+  return true;
+}
 function fireSignals(o, when){
   const sigs = o && o.userData && o.userData.signals; if(!sigs || !sigs.length) return;
   for(const s of sigs){
@@ -14794,7 +14836,9 @@ function fireSignals(o, when){
     // but any inventory item). Checked on the player who triggered it (E / destroy). Consume it if asked.
     if(s.needItem){
       if(typeof hasItem!=='function' || !hasItem(s.needItem)){
-        if(when==='interacted'){ const nm=((typeof invCatalog!=='undefined' && invCatalog[s.needItem] && invCatalog[s.needItem].name) || 'item'); if(typeof flashToast==='function') flashToast('LOCKED — NEEDS '+String(nm).toUpperCase()); if(typeof SFX!=='undefined' && SFX.deny) SFX.deny(); }
+        /* build 1479: a click is the same class of deliberate player action as E, so it gets the same
+           answer — silence would read as the prop being broken rather than locked. */
+        if(when==='interacted' || when==='clicked'){ const nm=((typeof invCatalog!=='undefined' && invCatalog[s.needItem] && invCatalog[s.needItem].name) || 'item'); if(typeof flashToast==='function') flashToast('LOCKED — NEEDS '+String(nm).toUpperCase()); if(typeof SFX!=='undefined' && SFX.deny) SFX.deny(); }
         continue;
       }
       if(s.needConsume && typeof takeItem==='function') takeItem(s.needItem);
@@ -35327,7 +35371,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1478 · 2026-08-10';
+const BUILD_VERSION = 'build 1479 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35823,6 +35867,10 @@ addEventListener('mousedown', e=>{
   if(shopOpen || editorOpen || paused || mapOpen || duelDead || invOpen || _modalOpen) return;   // no actions while eliminated, while the inventory is open, or while a custom modal is up (build 1468)
   { const _m=(e.button===1)?'mouse3':(e.button===3)?'mouse4':(e.button===4)?'mouse5':'';   // build 1071: actions can claim the middle/side buttons
     if(_m){ const _ai=actionForInput(actionBinds, _m); if(_ai>=0){ e.preventDefault(); fireAction(_ai); return; } } }
+  /* It does NOT swallow the shot, and that is the decision rather than an oversight: a prop you can no
+     longer shoot, with nothing on screen saying so, is the surprise that cannot be undone from the editor.
+     A level that wants pure point-and-click authors no weapon, which is how this engine already says that. */
+  if(e.button===0) _propClick(e);
   if(e.button===0){ if(heldProp){ throwHeld(); return; } firing=true; }
   else if(e.button===1){ e.preventDefault(); grabAction(); }   // middle-click (scroll-wheel push): grab / drop
   else if(e.button===2) ads = true;   // right-click: aim down sights
@@ -48230,7 +48278,7 @@ function buildSignalsUI(sgBody, store, rerender, opts){
   const sigs = store.signals || (store.signals=[]);
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
-    r.appendChild(mkSel([['destroyed','On destroyed'],['damaged','On hit'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));   /* build 1397: On hit — a target that can report a shot without having to be destroyed by it */
+    r.appendChild(mkSel([['destroyed','On destroyed'],['damaged','On hit'],['interacted','On E'],['clicked','On click'],['contact','On object placed']], s.when, v=>{ s.when=v; }));   /* build 1397: On hit — a target that can report a shot without having to be destroyed by it \u00b7 build 1479: On click — the mouse finally reaches the world */
     r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view']], s.do, v=>{ s.do=v; }));
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag (or: this)'; ti.value=s.target||'';
     if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagListThis'); }

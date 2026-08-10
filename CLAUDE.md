@@ -490,6 +490,84 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## Nothing in the world answered a click (build 1479)
+
+Asked for from play, one message after asking how to build a modal and how to test point-and-click: *"There
+needs to be an 'on click' signal option."*
+
+Verified. A prop could trigger on `destroyed`, `damaged` (On hit), `interacted` (On E) and `contact` — and
+**that is all**. Build 1467 gave the player a real mouse cursor and 1468 gave them clickable HUD buttons, so
+the pointer existed and the world could not hear it. A point-and-click adventure, a tycoon where you click a
+building, a card game whose cards are props and an RTS are all built on the one trigger that was missing.
+
+### The ray goes through the cursor, whatever the cursor is
+
+The real pointer when it is free, **screen centre when it is captured** — which is where the player is
+pointing in either case, and needs no new state. Bounded at a named `CLICK_RANGE = 60`: far enough to click
+anything you can read at a glance, short enough that a stray click across a whole arena is not an
+interaction. Resolved recursively and walked **up** to the prop that owns the mesh, like every other
+consumer, with build 1236's rule carried over so an invisible collision volume inside a GLB cannot answer a
+click — it is not a thing the player can see to click.
+
+### It is a peer of On E, not of On hit
+
+`destroyed` and `damaged` are host-gated because they are consequences of the SIMULATION. A click is a
+**local player action**, so it fires locally exactly as `interacted` always has, inheriting that trigger's
+authority model and `_applySignalAction`'s own routing rather than a second one beside it. It carries the
+prop payload, so `#here` and `#self` resolve in a click chain — which `interacted` does not do.
+
+A click at a locked prop says **LOCKED — NEEDS X**, through build 706's existing gate: silence would read as
+the prop being broken rather than locked.
+
+### It does NOT swallow the shot, and that is the decision
+
+A prop you can no longer shoot, with nothing on screen saying so, is the surprise a creator cannot undo from
+the editor. A level that wants pure point-and-click authors no weapon, which is how this engine already says
+that. A prop with **no** On-click signal is silent, so every level ever saved is byte-identical.
+
+### Measured live, and the layout IS the experiment
+
+The clickable prop is placed **off-centre** and a non-clickable one **dead ahead**, so the two cursor modes
+cannot give the same answer.
+
+```
+                             ray       fired   shot still fires
+CAPTURED  aimed at it       clicky       1          yes
+CAPTURED  aimed away,
+          clicked ON it     plain        0          yes    <- the coordinates are IGNORED when locked
+FREE      clicked clicky    clicky       1          yes
+FREE      clicked plain     plain        0          yes    <- the control
+FREE      clicky again      clicky       1          yes    <- returns
+          the sky            —           0
+          through a modal    —           0                 <- the gate
+          after it closes   clicky       1          yes    <- returns
+```
+
+Row 2 is the one that carries the captured case: **the same click coordinates as row 3**, resolving to a
+different prop and firing nothing. And `shot still fires` in every row is the stated decision, measured.
+
+### The probe was wrong five times, and every null looked like the feature
+
+| # | it reported | why |
+|---|---|---|
+| 1 | nothing fires, `firing:false` | `firing` was read AFTER the mouseup that clears it |
+| 2 | nothing fires | the pointer was **captured**, so by design the ray ignored where I clicked |
+| 3 | the handler never runs | `safeExitPointerLock()` trips the pointerlockchange **pause** — a different state from the one the feature runs in |
+| 4 | the ray resolves the wrong prop | the fixture was inside the stock level's 59 props (**build 1323**) |
+| 5 | the right prop, still nothing | the emit field is **`text`**, not the `n` I invented |
+
+Plus a sixth: the captured rows missed because the fixture sits **outside the arena**, where there is no
+ground — the player falls between round trips, so a camera posed in a previous eval is metres below the one
+the ray is cast from. **Build 1345's rule: know who else writes what you are setting.** Aiming and clicking
+are one eval now, and each row reports **which prop the ray reached**, so a null says *why* rather than only
+that nothing happened.
+
+### Two pins moved, both the whole-list trap
+
+`test-1397` and `test-242` each quoted the entire `when` dropdown to assert one thing about it — that On hit
+sits beside On destroyed, and that the two dropdowns exist. Both statements are still true; both broke on one
+added entry. They assert membership and adjacency now.
+
 ## A modal can freeze the world (build 1478)
 
 Build 1468 shipped modals and wrote down the half it could not do:
