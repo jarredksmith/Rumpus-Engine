@@ -490,6 +490,45 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## Ten builds of new state, and all of it survives the file (probe pass, after build 1470)
+
+Builds 1461-1470 each added state and not one had been through `serializeLevel -> restoreLevel`: per-prop
+variables, the air dash, six new HUD toggles, the free cursor, the `modal` field on a widget, four menu
+colours and the font mirror. That is the shape this repo keeps losing data to — 1398, 1400, 1401, 1406 and
+1427 were all in-memory features that worked until you pressed Save.
+
+`tools/probe/recent-builds-roundtrip.mjs` authors every field at a **non-default** value (a field that
+happens to equal its default cannot tell a working loader from a missing one), RESETS everything to a
+distinctive "the loader never ran" state, reloads through the real loader, and then plays the result.
+**Nothing is broken; no engine change was needed.**
+
+```
+cleared first    widgets 0 · view fps · free false · dash 0 · menuBg #0b141a · zones 0/0/0
+after reload     4 widgets with hudScore:- shopTtl:fairShop shopBuy:fairShop soldOut:fairShop
+                 button event BUY · inner `show when` sold · 3 modal members
+                 hides boss,buffs,hitmark,marker,minimap,reload
+                 menu #1a1206 #6b4f16 #f4e3b8 #9c8a5e · Orbitron/Teko · rounded · 0.42 · border false
+                 body --hud-font 'Orbitron'    <- build 1470's mirror, through the file
+                 view top · freeCursor true · airDash 9
+                 water flow 1.1/2.4/1.7 · fx haste 17 both · death zone back
+stability        byte-identical across three save cycles (15,646 chars)
+PLAYED           the modal opens from a RELOADED graph over RELOADED widgets — backdrop up, cursor freed,
+                 the inner `show when` row still correctly hidden, reload bar and minimap hidden by the
+                 reloaded toggles
+```
+
+**The one deliberate absence is the interesting row.** Build 1461's per-prop values read **0** after the
+load and the string `pv` appears nowhere in the file — they are MATCH state, like `logicVars`, and a level
+that carried them would resurrect a shot-up shooting gallery on every open. Asserted as an absence rather
+than assumed.
+
+### What it found instead: a modal has no way out
+
+Not a serialization defect — a design gap the round trip made obvious. A creator authoring a modal must wire
+a button to a logic event to a `modal hide` node, three steps, for the single most universal action a menu
+has. Forget any one of them and the player is standing in a dimmed screen with no way back — **which is
+exactly the failure build 1468's three refusals exist to prevent, arriving through the other door.**
+
 ## The hypothesis was mostly wrong, and the probe said so (build 1470)
 
 The reasoning after 1469: build 665's GLOBAL variables live on `#hud`, and four HUD elements are not
