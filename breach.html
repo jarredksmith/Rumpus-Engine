@@ -13778,6 +13778,10 @@ function _sanitizeHudWidgets(a){
       value:String(w.value==null?'':w.value).slice(0,24).trim(),
       max:String(w.max==null?'':w.max).slice(0,24).trim(),
       when:String(w.when==null?'':w.when).slice(0,24).trim(),
+      /* build 1475: a timer widget had ONE format, `M:SS`, and it CEILED — so a movement course that ran in
+         12.34 s displayed 0:13, a second ahead of reality and rounded the wrong way, and 12.01 s and 12.99 s
+         read identically. `mmss` is unchanged and stays the default, so no level that exists moves. */
+      tfmt:(w.tfmt==='sec'||w.tfmt==='sec1'||w.tfmt==='sec2')?w.tfmt:'mmss',
       event:String(w.event==null?'':w.event).slice(0,60).trim(),   /* build 1255: the logic event a BUTTON fires */
       modal:String(w.modal==null?'':w.modal).slice(0,24).trim(),    /* build 1468: '' = an ordinary HUD widget, forever; a name puts it in that modal */
       img:_hwSafeUrl(w.img),                                        /* build 1260: art — the widget on 'image', the backdrop on every other kind */
@@ -13938,7 +13942,18 @@ let _hwRev=0, _hwHost=null, _hwBuiltRev=-1, _hwEls=[], _hwVars=[], _hwSent='', _
 const _HW_POS={ tl:['top:12px;left:12px;',''], tc:['top:12px;left:50%;','translateX(-50%) '], tr:['top:12px;right:12px;',''],
   ml:['top:50%;left:12px;','translateY(-50%) '], mr:['top:50%;right:12px;','translateY(-50%) '],
   bl:['bottom:86px;left:12px;',''], bc:['bottom:86px;left:50%;','translateX(-50%) '], br:['bottom:86px;right:12px;',''] };
-function _hwFmtTimer(sec){ sec=Math.max(0, Math.ceil(+sec||0)); return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0'); }
+function _hwFmtTimer(sec, fmt){
+  const v=Math.max(0, +sec||0);
+  /* the decimal forms TRUNCATE rather than round, in both directions of travel: a stopwatch that reads
+     12.35 when 12.34 has elapsed is ahead of the run, and a countdown that reads 0.01 when it is already
+     over is a lie about a race the player just lost. Truncation is the only reading that is never ahead. */
+  if(fmt==='sec')  return String(Math.floor(v))+'s';
+  if(fmt==='sec1') return (Math.floor(v*10)/10).toFixed(1)+'s';
+  if(fmt==='sec2') return (Math.floor(v*100)/100).toFixed(2)+'s';
+  /* M:SS keeps its CEIL, which is the countdown convention — "1 second left" until there is really none —
+     and is what every level authored before build 1475 already shows. */
+  const t=Math.ceil(v); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
+}
 // build 1287: a HUD per-player name resolves against MY id, deliberately NOT through _lgVarKey.
 // _lgVarKey keys on _lgCtx.pid — "the player this event is about" — which is the right question inside a
 // graph pulse and the wrong one here: the HUD draws every frame, outside any event, where _lgCtx.pid is
@@ -13961,7 +13976,7 @@ function _hwText(w){
   // build 1287: the `@` class the toast node has accepted since 1231, resolved through _hwVarKey (above).
   // Without it a widget bound to `coins@` matched nothing and rendered the literal text; with the mirror
   // below fixed too, it now shows THIS player's value. A co-op shop or scoreboard needed both halves.
-  if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (_hwInterp(w.label)+' '+t) : t; }
+  if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value), w.tfmt); return w.label ? (_hwInterp(w.label)+' '+t) : t; }
   return _hwInterp(w.label);
 }
 /* build 1411: lifted out of _hwText so the world SIGN can share it. A sign renders outside any event,
@@ -35270,7 +35285,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1474 · 2026-08-10';
+const BUILD_VERSION = 'build 1475 · 2026-08-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45614,7 +45629,7 @@ function renderHudPanel(){
       const card=document.createElement('div'); card.style.cssText='border:1px solid rgba(var(--accent-rgb),0.18);border-radius:6px;padding:6px 7px;margin:5px 0;display:flex;flex-direction:column;gap:4px;';
       const l1=document.createElement('div'); l1.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;';
       l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar'],['button','Button'],['image','Image']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
-      const lab=inp(w.label, w.kind==='timer'?'label (before the M:SS)':'label \u2014 {var} shows live', 150, v=>{ w.label=v.slice(0,80); }); lab.style.flex='1'; l1.appendChild(lab);
+      const lab=inp(w.label, w.kind==='timer'?'label (before the time)':'label \u2014 {var} shows live', 150, v=>{ w.label=v.slice(0,80); }); lab.style.flex='1'; l1.appendChild(lab);
       const del=document.createElement('button'); del.textContent='\u2715'; del.title='Remove widget'; del.style.cssText='padding:1px 7px;font-size:11px;flex:0 0 auto;'; del.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudWidgets.splice(i,1); commitW(); renderHudPanel(); };
       l1.appendChild(del); card.appendChild(l1);
       if(w.kind==='button'){   /* build 1255 */
@@ -45631,6 +45646,10 @@ function renderHudPanel(){
         l2.appendChild(document.createTextNode(w.kind==='timer'?'seconds variable':'value variable'));
         l2.appendChild(inp(w.value,'e.g. time',80, v=>{ w.value=v.trim().slice(0,24); }, 'lgVarList'));
         if(w.kind==='bar'){ l2.appendChild(document.createTextNode('max')); l2.appendChild(inp(w.max,'100 or a variable',90, v=>{ w.max=v.trim().slice(0,24); }, 'lgVarList')); }
+        /* build 1475: a course timed to the hundredth and a round counted down in minutes are the same
+           widget, and `M:SS` can only say one of them. */
+        if(w.kind==='timer'){ l2.appendChild(document.createTextNode('as'));
+          l2.appendChild(selI([['mmss','M:SS  (1:05)'],['sec','seconds  (65s)'],['sec1','tenths  (65.4s)'],['sec2','hundredths  (65.43s)']], w.tfmt||'mmss', v=>{ w.tfmt=v; })); }
         card.appendChild(l2);
       }
       { /* build 1260: art on any widget — the picture on an Image, the backdrop on everything else */

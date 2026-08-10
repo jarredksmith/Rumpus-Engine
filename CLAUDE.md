@@ -490,6 +490,44 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The timer widget could not read a race (build 1475)
+
+`_hwFmtTimer` had ONE format, `M:SS`, and it **ceiled**. So a movement course that ran in 12.34 seconds
+displayed `0:13` — a whole second **ahead of reality**, rounded the wrong way — and 12.01 s and 12.99 s read
+identically. Build 1474 had just made countdowns first-class and store two decimal places; the widget threw
+all of them away.
+
+```
+value     mmss (was, and still is)   sec     sec1      sec2
+12.34            0:13                12s    12.3s    12.34s
+12.99            0:13                12s    12.9s    12.99s
+0.999            0:01                 0s     0.9s     0.99s
+65.43            1:06                65s    65.4s    65.43s
+```
+
+### The decimal forms TRUNCATE, and that is the decision
+
+A stopwatch that reads 12.35 when 12.34 has elapsed is **ahead of the run**. A countdown that reads 0.01
+when it is already over is a lie about a race the player just lost. Truncation is the only reading that is
+never ahead, in either direction of travel — measured across ~1200 samples that the shown value is never
+above the true one and never more than one step below it, and that the hundredths reading is monotone as
+the value falls.
+
+Trailing zeros are kept (`12.0s`, `12.50s`) so a stopwatch does not jitter between `12.4` and `12.40`.
+
+### `M:SS` keeps its ceil, and that is also the decision
+
+Ceil is the **countdown convention** — "one second left" until there really is none — and it is what every
+level authored before this build already shows. It is proven byte-identical against a restated copy of the
+pre-1475 function across 18 values plus six kinds of junk input, and an unknown format falls back to it
+rather than blanking the widget.
+
+Measured live on the real HUD element, and on a real three-second countdown read at hundredths as it fell:
+`3.00s → 2.33s → 1.33s → 0.00s`, with the shown value never once ahead of the true one and the end-of-race
+event firing at zero.
+
+Zero pins moved.
+
 ## A countdown in the logic graph (build 1474)
 
 `interval` repeats and `delay` waits once. **Neither counts DOWN** — so every timed booth was five nodes of
