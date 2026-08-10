@@ -5,7 +5,11 @@ const src = gameSource();
 
 // --- gizmo plumbing: read + write the selected zone's position ---
 const gsp = extractFunction('getSelPos');
-assert(/editorActive==='audiozones'\)\{ return \(selAudioZone>=0 && audioZoneMarkers\[selAudioZone\]\)\?audioZoneMarkers\[selAudioZone\]\.position:null; \}/.test(gsp), 'getSelPos returns the selected audio zone marker');
+/* build 1466: this quoted the per-type line, and that line is gone — the zone type used to be written
+   out by hand in five places and the last three each named six of the eight, which is how water zones and
+   effect zones ended up selectable but un-draggable. What it means is asserted against the derived form. */
+assert(/const _zd = ZONE_EDIT\[editorActive\];/.test(gsp) && /_zd\.markers\(\) \|\| \[\]\)\[_i\]/.test(gsp),
+  'getSelPos returns the selected audio zone marker');
 const ssp = extractFunction('setSelPos');
 /* build 1326: the per-type branch became ZONE_EDIT + _zoneMove, which also writes Y and repaints through
    the table's own refresh/panel hooks. */
@@ -14,8 +18,8 @@ assert(/audiozones: \{ list:\(\)=>audioZones[\s\S]{0,200}refresh:\(\)=>refreshAu
 
 // --- the gizmo turns on for a selected audio zone, move-only ---
 const ug = extractFunction('updateGizmo');
-assert(/\(editorActive==='audiozones'&&selAudioZone>=0\)/.test(ug), 'a selected audio zone is movable');
-assert(/editorActive==='audiozones'\) mode='translate'/.test(ug), 'audio zones use the move (translate) handle only');
+assert(/const _zsel = ZONE_EDIT\[editorActive\] \? \(ZONE_EDIT\[editorActive\]\.sel\(\) >= 0\) : false;/.test(ug), 'a selected audio zone is movable');
+assert(/if\(ZONE_EDIT\[editorActive\]\) mode='translate';/.test(ug), 'audio zones use the move (translate) handle only');
 
 // --- the panel can select a zone to grab its handle ---
 const panel = extractFunction('renderAudioZonesPanel');

@@ -137,8 +137,12 @@ const tick = (states) => {
 assert(/<div id="reloadBar" class="hidden"><span><\/span><\/div>/.test(html), 'the bar is in the markup, hidden');
 assert(html.indexOf('id="crosshair"') < html.indexOf('id="reloadBar"'),
   '...as a sibling of the crosshair, which is what centres it');
-assert(/body\.hud-hide-crosshair #crosshair, body\.hud-hide-crosshair #reloadBar,/.test(html),
-  'and a player who turned the reticle off gets a clean centre — the bar goes with it');
+/* build 1465: this pinned the WELD — the bar shared the crosshair's hide rule, which made "keep the
+   reticle, lose the bar" unsayable, and that was the thing creators asked for. What it was really
+   guarding is that the bar CAN be hidden, and it now has its own toggle to do it with. */
+assert(/body\.hud-hide-reload\s+#reloadBar/.test(html), 'the reload bar can be switched off');
+assert(!/body\.hud-hide-crosshair\s+#reloadBar/.test(html),
+  '...on its OWN toggle: hiding the crosshair no longer takes the bar with it');
 assert(/#reloadBar > span \{[^}]*transform-origin: left center;/.test(html.replace(/\n/g, ' ')),
   'it grows from the left rather than the middle');
 assert(/#reloadBar \{[^}]*pointer-events: none;/.test(html.replace(/\n/g, ' ')),

@@ -1,4 +1,4 @@
-import { gameSource, html, extractFunction, assert, done } from './harness.mjs';
+import { gameSource, html, extractFunction, assert, done, extractConst } from './harness.mjs';
 const src = gameSource();
 // build 701: the objective banner (#goalBanner) and the NPC dialogue box (#dialogue) are now full, separate HUD
 // elements — size / position / opacity / tint / font + show-hide, and their panel chrome follows the HUD theme.
@@ -6,7 +6,11 @@ const src = gameSource();
 // --- registered as two separate HUD elements + toggles ---
 assert(/\{ k:'goal',      sel:'#goalBanner',label:'Objective banner',text:true \}/.test(src), 'the objective banner is a HUD element');
 assert(/\{ k:'dlg',       sel:'#dialogue',  label:'NPC dialogue',    text:true \}/.test(src), 'the NPC dialogue is a HUD element');
-assert(/const HUD_TOGGLES = \['minimap','score','wave','ammo','health','crosshair','killfeed','prompt','grab','goal','dlg'\];/.test(src), 'both have show/hide toggles');
+/* build 1465: this quoted the WHOLE array literal, so it broke the day the set grew with every part of
+   what it meant still true — the whole-list trap this file records under builds 519/928/1073/1412. What
+   it asserts is MEMBERSHIP. */
+const _TOG = new Function('return ' + extractConst('HUD_TOGGLES', src))();
+for(const k of ['goal','dlg']) assert(_TOG.includes(k), 'has a show/hide toggle: ' + k);
 assert(/goal:'Objective banner', dlg:'NPC dialogue'/.test(src), 'both have toggle labels');
 
 // --- CSS consumes the per-element transform/opacity/tint/font vars ---

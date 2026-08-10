@@ -7,7 +7,16 @@ assert(/<div id="chatBox"><div id="chatLog"><\/div><input id="chatInput"/.test(h
 assert(/if\(e\.code===BINDS\.chat && NET\.mode!=='off' && gameOn/.test(src) && /chat:'KeyT'/.test(src), 'T keybind (rebindable) wired + gated to multiplayer + play');
 
 // pause guard: releasing the lock for chat must NOT open the pause menu
-assert(/&& !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !\(typeof _hwCursorFree!=='undefined' && _hwCursorFree\)\) openPause\(\);/.test(src), 'pointerlock pause not guarded by chatOpen');
+/* build 1467: the free cursor joined this condition, so a pin quoting the WHOLE line broke with every
+   part of what it meant still true — the whole-line trap this file records under builds 519/928/1073/1412.
+   What each of these means is asserted as MEMBERSHIP of the guard. */
+{
+  const h = src.slice(src.indexOf("document.addEventListener('pointerlockchange'"),
+                      src.indexOf("document.addEventListener('pointerlockchange'") + 1400);
+  assert(/openPause\(\)/.test(h), 'pointerlock pause not guarded by chatOpen');
+  for(const g of ['chatOpen', 'mapOpen', 'invOpen', 'shopOpen', 'paused', 'choosingUpgrade', '_hwCursorFree', '_cursorFreeNow'])
+    assert(h.includes(g), '...unless ' + g + ' says the cursor was released on purpose');
+}
 
 // send routing: host broadcasts to all conns; client sends to the host; always shows locally
 const send = extractFunction('sendChat');

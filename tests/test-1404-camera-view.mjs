@@ -134,7 +134,9 @@ function rig(opts) {
   assert(/if\(m && !m\.parent\)\{\s*list = ov\.mounts = _viewMountsFor\(ov\.tag\);/.test(f),
     'a mount destroyed mid-round is re-resolved by tag rather than held as a dead object (build 1410: the ' +
     'whole bank is re-resolved, since the destroyed one has to leave the cycle as well as the frame)');
-  assert(/if\(!m\)\{ _viewOv = null; return; \}/.test(f),
+  /* build 1467: the branch gained a call that re-evaluates the free cursor for the new view. What this
+     asserts — a missing tag DROPS the override — is unchanged. */
+  assert(/if\(!m\)\{ _viewOv = null;[\s\S]{0,120}?return; \}/.test(f),
     '...and if the tag is gone entirely the override DROPS, so the player returns to the level\'s own ' +
     'camera instead of staring at wherever the last frame left them');
   // build 1168: this runs every frame

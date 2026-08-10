@@ -1646,6 +1646,138 @@ value exactly.
 engine HOLDS, not what you asked it to hold. And #1/#3 are build 1124's rule for the third time in this
 session — know what is in the frame before attributing anything to it.
 
+## A free mouse cursor (build 1467)
+
+Asked for from play: *"maybe a gameplay that allows point-click type navigation (which isn't possible today
+as the mouse is always the camera control) so that on-screen elements could be clicked."*
+
+**The obvious reading is wrong, and checking that is what shaped the build.** It is not merely that the
+mouse is the camera in FIRST PERSON. The twin-stick, top-down and ARPG views already draw a cursor — but
+`_vcX += e.movementX` accumulates it from **pointer-locked deltas**, so there was no OS pointer in *any*
+view and no DOM element was clickable anywhere in play. Build 1255 had to release the lock by hand just to
+make one HUD button work, and then whitelist itself out of the pause-on-unlock handler to stop that pausing
+the game.
+
+Free cursor: never take the lock, drive the same `_vcX/_vcY` the aim already reads from the **real** pointer
+position, show a real cursor. The aim ray, the crosshair, the body facing and the shot origin are all
+untouched, because every one of them reads `_vcX/_vcY` and always did.
+
+Measured live, the same level with the setting off as the control at every step:
+
+```
+tryPointerLock reaches requestPointerLock   captured 1 · FREE 0 · free-but-first-person 1
+the pointer maps onto the aim cursor        (320,180)->(0,0)  (480,90)->(160,-90)  (10,10)->(-310,-170)
+   ...while the captured control            (-310,-170) -> (-310,-170), unmoved
+body class / canvas cursor                  top+free: freeCursor, crosshair · fps+free: none · returns
+```
+
+Four decisions:
+- **ONE refusal, inside `tryPointerLock`.** Chat close, shop close, inventory close, the upgrade pick,
+  deploy and the canvas click all re-lock; the one that got forgotten would swallow the cursor mid-game.
+- **It requires a cursor view, and that is the definition rather than a limitation.** In first person the
+  mouse IS the head, so "free the mouse" and "first person" are contradictory requests. The control is
+  absent there rather than present and inert (build 1348).
+- **The class follows the VIEW, not the setting**, because build 1404's view verb can turn a first-person
+  level top-down mid-match — and it drops a lock it happens to be holding, so the mouse is free *then*.
+- **Always assigned, never "if present"** (build 1400), or it leaks from the previous level.
+
+### One honest non-measurement, recorded as such
+
+The probe's `elementFromPoint` + synthetic-click check passes in **both** conditions, because neither
+models pointer lock — the DOM hit-test does not care that the user has no cursor. So it is **not evidence**,
+and the thing that actually decides whether a player can click is whether the pointer is captured, which the
+lock test measures. Reported rather than quietly presented as a green row.
+
+Three fixture faults on the way, all invented names (the widget field is `event` not `ev`; `setvar` takes
+`{name, value}`; `_hwEls` holds **records**, not elements) — and the probe lint caught the fifteenth
+backtick-in-page-code at the exact line, which is the first time it has paid for itself before a wasted run.
+
+**Seven pins moved.** Six quoted the pointerlock-pause condition or the game block's closing brace whole and
+broke when a term joined; each asserts MEMBERSHIP of the guard now.
+
+## A clicked zone gets a gizmo and a panel, not just a selection (build 1466)
+
+Reported from play **after build 1464 claimed this closed**: *"Still no way to select, drag, or delete a
+water zone, a waterfall, or an effect zone by clicking on it. You still have to navigate to the world menu
+and scroll to the bottom."*
+
+**The zone type was written out by hand in FIVE places, and I fixed two of them and shipped.**
+
+| | what it decides | fixed |
+|---|---|---|
+| the resolver | what a clicked object BELONGS to | 1326 |
+| the raycast list | what can be HIT at all | 1464 |
+| the post-pick chain | what to DO with the pick | **1466** |
+| `movable` | whether the selection grows HANDLES | **1466** |
+| `getSelPos` | where those handles GO | **1466** |
+
+The last three each named **six of the eight**, and the two missing were water zones and effect zones —
+exactly what the report says. The pick chain has a generic tail (`else if(picked)`) that sets
+`editorActive` and re-renders, so those two really *were* being selected. What the tail never does is call
+`revealZoneTool` — so the World tab's section never opens — or `updateGizmo` — so there are **no drag
+handles**. A selection you cannot see and cannot drag is not a selection.
+
+### The measurand was the actual fault
+
+1464's probe asserted `editorActive === type`. The generic tail satisfies that, so it read HIT for all
+eight and I believed it. **A creator does not care whether a variable holds an index.** The probe now
+measures the gizmo and the revealed panel, and drags and deletes each zone through the real paths:
+
+```
+type          select  gizmo  panel   drag  delete
+all eight       true   true   true   true    true      (a prop as the control)
+```
+
+Getting there took three rounds, because each fix exposed the next list: the branch landed and the gizmo
+was still absent (`movable`), then `movable` passed and the gizmo still hid itself (`getSelPos` returned
+null). Every one was the same shape.
+
+**And DRAG read false for all eight on its first run** — a failed control, and it was me calling
+`_zoneMoveTo`, which does not exist. The real one is `_zoneMove(type, v)`. Build 1427/1429's
+invented-name trap, third time this session.
+
+**Twelve pins moved across seven files**, every one quoting a per-type line this build collapsed, and every
+intent preserved and widened from "these five zone types" to "every zone type".
+
+## Five more HUD elements can be switched off (build 1465)
+
+Asked for from play: *"I want HUD control over the reload loading bar, not every creator will want that"* —
+and more generally, *"as much customization as possible for creators to build the games they want and not
+feel stuck because of the limited options for on-screen elements."*
+
+The machinery was already right. `HUD_TOGGLES` is the ONE place a toggle is declared, and the sanitizer,
+the class applier and the editor's checkbox list all iterate it — so a new entry needs a CSS rule and a
+label and nothing else. What was wrong was the **set**, and one entry in particular.
+
+**The reload bar was welded to the CROSSHAIR's toggle.** Build 1450 put it under the reticle and shared
+the reticle's hide rule, with a comment saying so — which made *"keep the crosshair, lose the bar"*, the
+exact thing asked for, unsayable, and the reverse too. Now:
+
+```
+             crosshair   reload bar
+both            block       block
+bar off only    block       NONE      <- the pairing that could not be said
+xhair off only  NONE        block     <- and the reverse
+```
+
+Five new toggles: the reload bar, the hit marker, the power-up timers, the boss health bar and build
+1412's objective markers. **14 of 16 verified live** through the real `applyHudCfg` on rendered elements,
+on → none → back with the toggle off as the control at each step. The two unverified are hosts this
+session never built (the marker host and the dialogue panel are created lazily); their rules are pinned.
+
+### Three instrument faults, each of which made a working toggle look broken
+
+- **`.hidden` is `display:none !important`** and beats a plain inline display, so every at-rest element
+  read as hidden whatever the toggle did — and four of these are hidden at rest by design (the bar only
+  shows *during* a reload).
+- **The objective banner is opacity-driven, not display** (build 701, so it never reflows) — display is
+  simply the wrong measurand for it.
+- **It carries a 0.4 s transition**, and `getComputedStyle` during one returns the INTERPOLATED value. Read
+  0 ms after the class change it reports the old opacity, which made a toggle that works perfectly read as
+  dead *while the body demonstrably carried its class*.
+
+Three pins moved (542, 545, 1450). 1450's was pinning the weld itself.
+
 ## Every zone can be clicked (build 1464)
 
 Reported from play: *"Not all zones can be clicked on in the editor to get control with their gizmos.

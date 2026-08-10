@@ -21,7 +21,11 @@ assert(/function addFireZone\(\)/.test(src) && /function removeFireZone\(i\)/.te
 // flame visuals (flicker + warm light) + gizmo move
 assert(/function buildFireZoneGroup\(z, sel\)/.test(src) && /const FIRE_COLS = \[0xff7a1a, 0xffb020, 0xff3a0a\]/.test(src), 'fire zones build flickering flame tongues');
 assert(/function _animateFire\(g, tms, dt\)/.test(src), 'flames are animated each frame');
-assert(/\(editorActive==='firezones'&&selFireZone>=0\)/.test(src), 'gizmo can move a selected fire zone');
+/* build 1466: this quoted the per-type line, and that line is gone — the zone type used to be written
+   out by hand in five places and the last three each named six of the eight, which is how water zones and
+   effect zones ended up selectable but un-draggable. What it means is asserted against the derived form. */
+assert(/const _zsel = ZONE_EDIT\[editorActive\] \? \(ZONE_EDIT\[editorActive\]\.sel\(\) >= 0\) : false;/.test(src)
+  && /\bfirezones:\s*\{/.test(src), 'gizmo can move a selected fire zone');
 /* build 1326: six near-identical zone drag branches became one table-driven _zoneMove that also writes Y. */
 assert(/firezones:  \{ list:\(\)=>fireZones/.test(src) && /_zoneMove\(editorActive, v\)/.test(src), 'dragging writes back the fire-zone position');
 assert(/z\.y = \+Math\.max\(0, v\.y - terr\)/.test(src), '...in all three axes now');
