@@ -490,6 +490,78 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The manual grew six chapters, and the guard grew teeth (docs pass, after build 1490)
+
+The request was *"update the help documentation with all of the new features — as thorough as possible,
+including examples and step-by-step how tos for everything."* Six chapters, all of them systems that had
+shipped in the last 250 builds with **no documentation at all**:
+
+| chapter | what it covers |
+|---|---|
+| **Interfaces** | the five widget kinds, stacking order, timer formats, the Countdown node, modals as menus, with a working shop and a working time trial |
+| **Campaigns & doorways** | `Go to level`, arrival tags, `keep gear`, and exactly what crosses a threshold |
+| **Sides** | Friendly, and the four factions |
+| **Room & Path tools** | the whole shell with its openings; wires that sag and rails that stay level |
+| **Motion, comfort & accessibility** | the eight per-device sliders and the colour-vision correction |
+| **Level check** | what each row means and why it is worth running before publishing — it was cross-referenced eight times and documented nowhere |
+| **Recipes** | a shooting range, a movement course, an NPC room, a fairground — end to end |
+
+Plus a **What's new (1254–1490)** index, the prop controls the destruction table was missing (Shootable
+target, what unticking Breakable really means, No collision, signs, parenting, per-prop values), the six
+logic nodes the palette table never listed (Math, Expression, Read game stat, List, Countdown, Only once),
+the six world verbs it never listed (Objective marker, Camera view, the prop lifecycle, Spawn prefab, Set
+prop value, Open/close a modal), and `docs/REFERENCE.md` brought from build 1252 to 1490.
+
+### The guard is what made it safe, and it caught four inventions
+
+`test-1488`'s manual-truth check went from **13 claimed control labels to 32**, and it found four names I
+had written that do not exist: *"Fire a logic event"* (the verb is `→ Logic event`), *"Show a message"* (the
+node is `Show message`), *"On trigger"* (there is no such node — a trigger zone fires a NAMED EVENT and an
+`On event` node catches it), and *"Needs signals"* (the field has no label, only the sentence *"different
+sender(s) before it reacts"*). Every one reads perfectly plausibly in prose. **Documentation invents control
+names at roughly the rate code invents identifiers**, and the same guard catches both.
+
+Two widenings, each of which the check needed to be worth having:
+
+- **It reads the WHOLE FILE, not `gameSource()`.** The comfort panel, the pause menu and every static
+  control are MARKUP — checking only the largest `<script>` made the guard structurally blind to them, and
+  it reported four real labels as missing the moment they were claimed.
+- **It now covers `docs/REFERENCE.md` too**, one-directionally: the reference is not required to *mention*
+  a control, only to be right about the ones it does. It also asserts the file's own "verified against build
+  N" header is **not older than the newest build the file documents** — that header said 1252 while the body
+  had been maintained to 1446, which is exactly the stale-claim shape this whole check exists to catch.
+
+### The guard caught its own author's invention, one build late
+
+Build 1490's hint — written *by me*, hours earlier — told creators that point-and-click is offered "in Third
+person once **Aim at cursor** is on". **There is no control called Aim at cursor.** The checkbox is
+`ARPG cursor aim`. The manual and `docs/REFERENCE.md` then both said it, because they were written by reading
+the engine hint. That is the propagation path worth naming: **a name invented in an ENGINE STRING becomes a
+documentation error by being copied out of it**, and the docs guard cannot catch it, because at that moment
+the label really is in `breach.html`.
+
+The manual also pointed at the wrong TAB for those switches (`Player ▸ View & camera`), which is the same
+mistake the reported bug came from — `bPly` hangs off `#edGame`, the **Gameplay** tab, and the user's own
+words had said so. Both are fixed and both labels are now claimed.
+
+**And `test-1490` caught the rename before the suite did**, because it pins that hint by content. It now
+asserts the REAL name *and* that no string anywhere in the engine invents the other one — pinning an invented
+label in both directions is the only form that survives someone copying it back in.
+
+### Do not edit the tree while the suite is running
+
+A mid-run `run-all` reported `1226/1227, 1 FAILED` with a bare `harness.mjs:28` stderr and no assertion
+message. The harness was reading `breach.html` while a python edit script was rewriting it. It passes in
+isolation and the clean re-run is green. **A partially-written source file reads as a harness crash, not as a
+test failure** — check the clock before believing one.
+
+### What was already true and did not need writing
+
+Worth recording so it is not re-derived: the manual's **Values that carry over** table was *wrong* rather
+than missing — it said the value carries "only when the level is cleared", which build 1415 changed and 1416
+changed again. Fixing a stale sentence took one edit and was worth more than a new page. Read the existing
+chapter before adding one beside it.
+
 ## A control that enables another must repaint it (build 1490)
 
 Reported from play: *"I noticed an issue with the move to mouse click option. It was finnicky in the gameplay

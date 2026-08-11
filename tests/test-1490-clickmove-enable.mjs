@@ -62,7 +62,12 @@ assert(neg > 0, 'the NEGATED gate exists — the case where the controls are abs
 assert(pos > neg, 'and the hint explaining where they went comes BEFORE the block it explains');
 const hintTxt = src.slice(neg, pos);
 assert(/is offered in Top-down and Side-scroll/.test(hintTxt), 'the hint names the views that do offer it');
-assert(/Aim at cursor/.test(hintTxt), 'and the third-person switch that turns it on');
+/* the switch's REAL name. The first version of this hint said "Aim at cursor", which is not a control this
+   engine has — the checkbox is "ARPG cursor aim" — and the manual and docs/REFERENCE.md then both said it,
+   because they were written by reading this hint. An invented name in an engine string propagates outward,
+   so it is pinned in both directions. */
+assert(/ARPG cursor aim/.test(hintTxt), 'and the third-person switch that turns it on, by its real name');
+assert(!/Aim at cursor/.test(src), 'and no string in the engine invents a control called "Aim at cursor"');
 assert(/On click<\/i> prop signals work in every view/.test(hintTxt),
   'and does not leave a first-person creator thinking On-click is unavailable to them');
 
