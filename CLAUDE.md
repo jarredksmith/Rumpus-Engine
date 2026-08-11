@@ -490,6 +490,55 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## One flag was answering two questions (build 1489)
+
+Found while writing the manual, which is the point worth keeping: documenting a UI forces you to enumerate it,
+and enumerating it is how you discover it does not agree with itself.
+
+The prop signal editor used `_isWorldVerb` for **both** *"hide the target-tag box"* and *"show the parameter
+row"*. Those are different questions, and two verbs answer them differently:
+
+- **`view` (1404) and `marker` (1412) were offered and unconfigurable.** They take no tag and DO have
+  parameters, so they got a useless tag box and no way to say WHICH camera or WHICH place.
+- **Ten verbs were missing from the dropdown entirely** — `marker`, `modal`, `showprop`, `hideprop`,
+  `moveprop`, `delprop`, `resetprop`, `pushprop`, `spawnprop`, `setpropvar` — though `SIG_KEYS` serialized
+  them, `_applyWorldAction` applied them, and the interaction-booth probe had already proved a `do:'modal'`
+  prop signal works end to end. So *"click this door to open that gate"* needed a detour through the graph.
+
+Asked separately both answers are obvious, and some verbs are **both** (move/push/set-value act on a tag AND
+take a place) — which the single flag could not express at all, and which is why those ten had nowhere to go.
+
+### The guard written against this defect contained it
+
+`test-1406` pinned that the `view` ROW EXISTS. Nothing pinned that it is ever RENDERED — build 1277's
+two-ends-of-a-wire defect **inside the test written to prevent it**, for the second time in this file. Its
+`VERBLESS` exemption list was also hand-kept, which is 1406's own recorded lesson; both sets are now read out
+of the engine, and it additionally asserts the dropdown offers **everything the graph's Do node offers**, so
+the two doors cannot drift again.
+
+### The first draft injected editor UI into the runtime
+
+`if(s.do==='modal'){` exists in **both** `_sigWorldRow` (the editor) and `_applyWorldAction` (the runtime).
+My anchor matched the runtime, so `sel(...)`/`lab(...)`/`txt(...)`/`return wr` landed there — **every modal
+signal would have thrown on its first fire.** The modal and `setpropvar` rows already existed (1468/1461);
+only three verbs actually needed one.
+
+Two things caught it, and neither was reading the diff: `_sigWorldRow` did not contain the branches I had
+just "added" to it, and `test-1406`'s row check failed for exactly the verbs that had gone astray. **A phrase
+anchor is only as good as that phrase is unique** — recorded under build 1422 for prose, and here for code.
+
+### Not verified in a browser, and stated rather than implied
+
+`test-1489` executes the two predicates, both render lines, the dropdown contents, the graph-parity property
+and that the runtime builds no DOM — 116 checks. The live probe was **removed rather than shipped**: it could
+not get the Signals fold to render its verb select headlessly (21 selects present, none carrying the verb
+options), so every row read identically, and a probe whose rows do not discriminate is worse than none. What
+is unverified is narrow — that a creator SEES the new entries — and the browser pass is one selection away.
+
+Six pins moved (1074 ×2, 1404, 1406 ×2, 1472) plus a rig fed (1438). 1404's quoted the tail of the whole verb
+list; 1406's anchor demanded the list stay on one line; 1472's sliced from a phrase that this build made
+ambiguous. Suite 1226/1226.
+
 ## A control that fires an event nobody hears (build 1487)
 
 Build 1402 gave the `emit` verb exactly this report and named, in its own entry, the three things it did not

@@ -15415,6 +15415,25 @@ function _lgSetMusic(url){
   try{ if(typeof stopMusic==='function') stopMusic(); if(u && typeof startMusic==='function') startMusic(); }catch(e){}
 }
 function _isWorldVerb(v){ return v==='spawn'||v==='pickup'||v==='damage'||v==='heal'||v==='kill'||v==='teleport'||v==='give'||v==='take'||v==='stat'||v==='music'||v==='command'; }
+/* ---- build 1489: ONE FLAG WAS ANSWERING TWO QUESTIONS -------------------------------------------------
+   The prop signal editor used `_isWorldVerb` for both "hide the target-tag field" and "show the parameter
+   row", and those are different questions. `view` (1404) and `marker` (1412) take no tag and DO need
+   parameters — so they were offered in the dropdown, given a useless tag box, and given no way to say WHICH
+   camera or WHICH place. Build 1406 added the `view` row and `test-1406` pinned that the row EXISTS; nothing
+   pinned that it is ever rendered, which is build 1277's two-ends-of-a-wire defect in the test written to
+   prevent it.
+
+   Asked separately, both answers are obvious: a verb that acts on a TAG shows the tag box, and a verb with
+   any parameter of its own shows the row. Some verbs (move/push/set-value on a tag) are BOTH, which the old
+   single flag could not express at all — and that is why ten verbs the Logic graph has offered for builds
+   were missing from this dropdown entirely. */
+const _SIG_TAG_VERBS = new Set(['toggle','open','close','anim','unlock',
+  'showprop','hideprop','moveprop','delprop','resetprop','pushprop','setpropvar']);
+function _sigTakesTag(v){ return _SIG_TAG_VERBS.has(v); }
+/* every verb with a parameter beyond its tag. `emit`, `win` and the plain tag verbs have none. */
+const _SIG_ROW_VERBS = new Set(['spawn','pickup','damage','heal','kill','teleport','give','take','stat','music',
+  'command','view','marker','modal','moveprop','pushprop','setpropvar','spawnprop']);
+function _sigNeedsRow(v){ return _SIG_ROW_VERBS.has(v); }
 // build 1077: what a rule can tell an enemy to DO. Every one of these drives state the AI already reads, so
 // a commanded enemy behaves like an authored one from the next frame — no parallel "scripted" mode to diverge.
 const LG_CMDS = { hunt:'Hunt the player', patrol:'Patrol', hold:'Hold position', alert:'Alert them to', calm:'Lose the player', post:'Move their post to' };
@@ -35743,7 +35762,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1488 · 2026-08-11';
+const BUILD_VERSION = 'build 1489 · 2026-08-11';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -48691,6 +48710,16 @@ function _sigWorldRow(s, rerender){
     txt('by', s.pvv, v=>{ if(v!=='') s.pvv=v; else delete s.pvv; }, 52);
     lab('on');
     txt('blank = this prop', s.target, v=>{ if(v) s.target=v; else delete s.target; }, 110, 'lgTagList');
+  /* build 1489: the three verbs that need a field BEYOND their target tag. The other seven this build added
+     to the dropdown are configured entirely by the tag box beside it, and `modal` (1468) and `setpropvar`
+     (1461) already had rows here — which is how the first draft of this build went wrong: it anchored on a
+     phrase that also lives in `_applyWorldAction` and injected editor UI into the RUNTIME, where a modal
+     signal would have thrown on the first fire. */
+  } else if(s.do==='moveprop' || s.do==='spawnprop' || s.do==='pushprop'){
+    if(s.do==='spawnprop'){ lab('prefab'); txt('prefab name', s.prefab, v=>{ if(v) s.prefab=v; else delete s.prefab; }, 96, 'lgPrefabList'); }
+    lab(s.do==='pushprop' ? 'away from' : 'at');
+    txt(s.do==='pushprop' ? 'a place (blank = up)' : 'a place', s.at, v=>{ if(v) s.at=v; else delete s.at; }, 96, 'lgPlaceList');
+    if(s.do==='pushprop'){ lab('strength'); txt('20', s.amt, v=>{ if(v) s.amt=v; else delete s.amt; }, 42); }
   } else if(s.do==='marker'){
     /* build 1412: the arrow. `at` takes the same place vocabulary every other verb does, so a tag, `me`,
        `start` or `#here` all work — and it INTERPOLATES (1402), so `booth{n}` points at the live one. */
@@ -48745,16 +48774,19 @@ function buildSignalsUI(sgBody, store, rerender, opts){
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
     r.appendChild(mkSel([['destroyed','On destroyed'],['damaged','On hit'],['interacted','On E'],['clicked','On click'],['contact','On object placed']], s.when, v=>{ s.when=v; }));   /* build 1397: On hit — a target that can report a shot without having to be destroyed by it \u00b7 build 1479: On click — the mouse finally reaches the world */
-    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view']], s.do, v=>{ s.do=v; }));
+    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['view','Camera view'],['marker','Objective marker'],['modal','Open/close a modal'],
+      ['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],
+      ['resetprop','Reset props'],['pushprop','Push props'],['spawnprop','Spawn prefab'],['setpropvar','Set prop value']],
+      s.do, v=>{ s.do=v; }));   /* build 1489: the ten the Logic graph has offered for builds. They were wired everywhere else — serialized by SIG_KEYS, applied by _applyWorldAction — and a creator simply could not pick them on a prop, so "click this door to open that gate" needed a detour through the graph. */
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag (or: this)'; ti.value=s.target||'';
     if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagListThis'); }
     ti.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
     ti.onchange=()=>{ pushUndoSnapshot(); s.target=ti.value.trim(); rerender(); };
     const del=document.createElement('button'); del.textContent='×'; del.style.cssText='padding:1px 7px;font-size:12px;';
     del.onclick=()=>{ pushUndoSnapshot(); sigs.splice(si,1); rerender(); };
-    if(!_isWorldVerb(s.do)) r.appendChild(ti);   // build 1074: a world verb takes no target tag — showing an ignored field is worse than showing none
+    if(_sigTakesTag(s.do)) r.appendChild(ti);   // build 1074: a verb that acts on no tag must not show an ignored tag box
     r.appendChild(del); sgBody.appendChild(r);
-    if(_isWorldVerb(s.do)) sgBody.appendChild(_sigWorldRow(s, rerender));   // ...it takes these instead
+    if(_sigNeedsRow(s.do)) sgBody.appendChild(_sigWorldRow(s, rerender));   // build 1489: ...and asked SEPARATELY, so a verb can be both
     // build 706: optional inventory gate — only fire this signal if the player carries a chosen item (e.g. press E on
     // a door only unlocks it if the hidden note is in your inventory). Like a key, but any inventory item.
     { const itemIds=Object.keys((typeof invCatalog!=='undefined' && invCatalog) || {});
