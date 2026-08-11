@@ -9,7 +9,7 @@
 // ways cannot be documented, and this asserts the two tables AGREE rather than restating either.
 
 import { readFileSync } from 'node:fs';
-import { gameSource, extractConst, assert, eq, done } from './harness.mjs';
+import { gameSource, html, extractConst, assert, eq, done } from './harness.mjs';
 
 const src = gameSource();
 
@@ -109,14 +109,50 @@ eq(label.clicked, 'click', "and build 1479's reads as `click`, the verb, rather 
     'Parent to this prop', 'Set prop value', 'No collision',
     'Every X sec', 'Show message', 'Set checkpoint', 'Reset props', 'Spawn prefab',
     'different sender(s) before it reacts',
+    /* sides, the building tools, and the comfort panel */
+    'Your side', 'Third party', 'Fourth party',
+    'Build room', 'Wall thickness', 'Floor slab', 'Above the pole', 'Segments per span',
+    'Camera shake', 'Camera sway', 'Damage flash', 'Slow-mo on kills', 'Interface size',
+    'Colour vision', 'Correction strength', 'Reduce all motion', 'Photosensitivity warning',
+    /* and the rest of the chapters */
+    'does not respawn this run', 'Read game stat', 'Objective marker', 'Camera view', 'Spawn pickup',
+    /* the one this guard caught LATE, and the reason it is here: build 1490's own hint, the manual and the
+       reference all said "Aim at cursor" for a checkbox the engine calls "ARPG cursor aim". A name invented
+       in an engine hint propagates into the docs by being copied out of it, so the label is claimed here in
+       both directions. */
+    'ARPG cursor aim', 'Player options',
   ];
   for(const c of CLAIMS){
     assert(manual.includes(c), 'the manual names "' + c + '" (if not, drop it from this list)');
-    assert(src.includes(c), 'THE MANUAL NAMES A CONTROL THE ENGINE DOES NOT HAVE: "' + c + '"');
+    /* against the WHOLE file, not gameSource(): the comfort panel and the pause menu are MARKUP, so a
+       label that lives in the HTML rather than in the script is just as real a control. Checking only the
+       script would have made this guard silently blind to every static control in the product. */
+    assert(html.includes(c), 'THE MANUAL NAMES A CONTROL THE ENGINE DOES NOT HAVE: "' + c + '"');
   }
 
   /* the specific one build 1348 got wrong, pinned in both directions so the fix cannot rot */
   assert(!/Cull small props/.test(manual), 'the manual must not resurrect the invented "Cull small props" label');
+
+  /* docs/REFERENCE.md is the other document that names controls, and it names far more of them. It gets the
+     same rule for the labels it happens to use: every CLAIM above that appears there must be real. This is
+     one-directional on purpose — the reference is not required to mention a control, only to be right about
+     the ones it does mention. */
+  const ref = readFileSync(new URL('../docs/REFERENCE.md', import.meta.url), 'utf8');
+  for(const c of CLAIMS){
+    if(ref.includes(c)) assert(html.includes(c),
+      'docs/REFERENCE.md names a control the engine does not have: "' + c + '"');
+  }
+  assert(!/Cull small props/.test(ref), 'and the reference must not resurrect it either');
+  /* it also states which build it was verified against, and a header that lags the tree by 200 builds is a
+     document nobody trusts. This asserts it names a build at all, and that the build it names is not older
+     than the oldest thing the file itself documents. */
+  {
+    const hdr = ref.match(/verified against the source at build \*{0,2}(\d+)/);
+    assert(hdr, 'the reference states which build it was verified against');
+    const newest = Math.max(...[...ref.matchAll(/build (\d{3,4})/g)].map(m => +m[1]));
+    assert(+hdr[1] >= newest,
+      'the reference header (build ' + hdr[1] + ') is not older than the newest build it documents (' + newest + ')');
+  }
 
   // and the manual's own cross-links have to resolve, which is how the Logic graph lost its section
   const ids = new Set([...manual.matchAll(/id="([a-z0-9-]+)"/g)].map(m => m[1]));
