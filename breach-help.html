@@ -84,6 +84,8 @@
     <a class="lnk" href="#tab-build">Build tab</a>
     <a class="lnk" href="#folds">Object folds</a>
     <a class="lnk" href="#tab-world">World tab</a>
+    <a class="lnk" href="#movement">&nbsp;&nbsp;↳ Movement &amp; traversal</a>
+    <a class="lnk" href="#perf">&nbsp;&nbsp;↳ Making a big level run well</a>
     <a class="lnk" href="#tab-player">Player tab</a>
     <a class="lnk" href="#tab-enemies">Enemies tab</a>
     <a class="lnk" href="#tab-gameplay">Gameplay tab</a>
@@ -95,6 +97,8 @@
     <a class="lnk" href="#racing">Track builder &amp; racing</a>
     <a class="lnk" href="#vehicles">Vehicle tuning</a>
     <a class="lnk" href="#signals">Signals, locks &amp; mechanisms</a>
+    <a class="lnk" href="#pointclick">Point &amp; click</a>
+    <a class="lnk" href="#logic">Visual logic — the Logic graph</a>
     <a class="lnk" href="#pickups">Pickups &amp; inventory</a>
     <a class="lnk" href="#objectives">Objectives &amp; rules</a>
     <a class="lnk" href="#cutscenes">Cutscenes</a>
@@ -103,6 +107,7 @@
     <a class="lnk" href="#community">Community library</a>
     <div class="grp">Extras</div>
     <a class="lnk" href="#faq">Tips &amp; troubleshooting</a>
+    <a class="lnk" href="#whats-new">What&rsquo;s new</a>
   </div>
 </nav>
 <main>
@@ -388,9 +393,37 @@ sees is escaped, so a shared level can't inject markup through a line or a butto
 <h2><span class="tag">Editor reference</span>World tab</h2>
 <p class="crumbs">Sections: <b>Environment</b> · <b>Auto-generate</b> · <b>Zones</b></p>
 <h3>Environment</h3>
-<h4>Movement</h4>
+<h4 id="movement">Movement — and the four traversal verbs</h4>
 <p>Global player physics: Walk speed (4–60) · Run speed (4–100) · Crouch speed (1–40) · Jump (0–30) ·
 Launch power (0.25–4, jump-pad multiplier) · Gravity (5–80) · Eye height (0.4–20).</p>
+<p>Four more sliders in the same fold give the player <b>extra ways to move</b>. All four are
+<b>off at 0</b>, which is exactly how every level built before them plays — turn one on and it is available for
+the whole level. Each is one number that both enables and tunes the verb, and <b>all four are the jump key</b>
+except the dash, so there is nothing new to teach a player and rebinding jump moves them together.</p>
+<div class="tblwrap"><table>
+<tr><th>Slider</th><th>Range</th><th>What it gives the player</th></tr>
+<tr><td><b>Tap hop</b></td><td>0.1–1</td><td>How much of a jump you keep when you <i>release</i> the key on the
+  way up. <b>1 = off</b> (every jump is full height). At <b>0.5</b> a tap is a quarter-height hop and a held key
+  is the full jump — the platformer's short hop. Height goes as the square of speed, so this one number spans
+  the whole tap-to-hold range. A demanding jump is cleared by <i>holding</i>, which is what a player does
+  naturally when reaching for something.</td></tr>
+<tr><td><b>Air jumps</b></td><td>0–3</td><td>How many extra jumps you get in mid-air. Press jump again while
+  airborne. It <i>sets</i> your upward speed rather than adding to it, so a double jump rescues a bad fall
+  instead of merely nudging it. Refunded the moment you touch the ground or grab a ledge, and it inherits the
+  ordinary jump's half-second cooldown, so it cannot be mashed.</td></tr>
+<tr><td><b>Wall jump</b></td><td>0, or 3–30</td><td>Push-off speed when you press jump in mid-air <i>next to a
+  wall</i>. You get the normal jump height plus a shove away from the wall, and your speed <i>along</i> the wall
+  is kept — so running a wall and kicking off it carries your momentum. <b>You cannot take two in a row off the
+  same wall</b>, which is what stops a single wall being an infinite ladder out of a sealed arena; touching the
+  ground, a ledge, or a wall facing a different way arms it again. A shaft with walls on both sides gives no
+  push (there is no direction to pick) — that is deliberate, not a bug.</td></tr>
+<tr><td><b>Air dash</b></td><td>0–40</td><td>A burst of horizontal speed in the direction you are moving, once
+  per airborne trip, on its own key. Refunded on landing.</td></tr>
+</table></div>
+<div class="box"><b>Building a movement course?</b> Turn on Tap hop (0.5) and Air jumps (1) first — those two
+alone change how every gap in your level reads, so tune your jump distances <i>after</i> setting them, not
+before. Add Wall jump when you want vertical routes: two walls facing each other let a player climb, because
+each kick re-arms the other wall.</div>
 <h4>Lighting — control by control</h4>
 <div class="tblwrap"><table>
 <tr><th>Control</th><th>Range</th><th>What it does / how to use it</th></tr>
@@ -413,6 +446,32 @@ big racing arenas) · Fog density (lower = see farther into the dark) &amp; colo
 it, Blur strength = how soft everything else goes. <b>Post-processing</b>: Bloom + Bloom threshold (how bright a
 surface must be before it glows), Motion blur (trail strength), Vignette, Film grain, Saturation, Contrast —
 they all compose, DoF included, and they save with the level (the on/off switch is each player's preference).</p>
+<p><b>Cull below (px)</b> stops drawing a prop once it covers fewer than that many pixels on screen — the single
+biggest performance lever a creator has on a dense level, and it is <b>0 (off) by default</b> because a setting
+that removes your content should be your decision, not the engine's. On a scattered 600-prop field, <b>2</b> cut
+draw calls by 57% and cost nothing visible; on a level of 60 big props it does nothing at all, so try it and
+watch the counters rather than assuming. Nothing within 40&nbsp;m is <i>ever</i> culled whatever the setting, and
+a prop carrying a light is never culled — so it can shrink your frame cost but it cannot make a lamp go out or
+delete the thing you are standing next to. <b>Save ▸ Level check</b> reports what it removed while it is on.</p>
+<h4 id="perf">Making a big level run well</h4>
+<p>Three numbers decide whether a level is playable on ordinary hardware, and <b>Save ▸ Level check</b> reports
+all three so you do not have to guess:</p>
+<div class="tblwrap"><table>
+<tr><th>What</th><th>The limit it warns at</th><th>What to do about it</th></tr>
+<tr><td><b>Triangles</b></td><td>40,000 in one model, or 2,000,000 in the level</td><td>The check <i>names the
+  model</i> and takes you to it. Run <b>Files ▸ Optimize</b> on it — a 497,912-triangle ramp that made the game
+  freeze on contact came down to ~10,000 and the freeze went. A small file size is no reassurance here: a
+  compressed 1.7&nbsp;MB model can hold half a million triangles.</td></tr>
+<tr><td><b>Texture memory</b></td><td>a soft cap, reported in MB</td><td>This is <i>GPU</i> memory, not download
+  size — one 4096×4096 image costs ~85&nbsp;MB on the graphics card however small the JPEG was. Optimize shrinks
+  them.</td></tr>
+<tr><td><b>Lights</b></td><td>40</td><td>Every point and spot light is looped over for every pixel, whether or not
+  it is dimmed, so the count is what costs — not the brightness. Past the cap the engine drops the surplus at
+  deploy and tells you how many; they all come back in the editor.</td></tr>
+</table></div>
+<div class="box">Press <kbd>`</kbd> in play for the live meter: FPS, draw calls, triangles, lights, and where the
+frame time is going. <b>idle?</b> means the engine is waiting — at a capped frame rate that is normal, and below
+the cap it means the graphics card is the bottleneck rather than your logic.</div>
 <h4>Sky</h4>
 <p>Browse <b>Poly Haven HDRIs</b> in-editor or paste any equirectangular <code>.hdr</code>/<code>.jpg</code> URL
 (an .hdr lights reflections too); presets Park / Mountain / Room / None (None = flat fog-colored sky).
@@ -944,10 +1003,19 @@ prop the signal lives on, no tag needed. So "press E on the door, the door opens
 <i>do</i> something to a tagged target (or to <b>this</b>, the prop itself):</p>
 <div class="tblwrap"><table>
 <tr><th>When…</th><th>Meaning</th></tr>
-<tr><td>On destroyed</td><td>This prop is broken (needs Physics &amp; destruction health)</td></tr>
-<tr><td>On E</td><td>The player activates it with <kbd>E</kbd></td></tr>
+<tr><td>On destroyed</td><td>This prop is broken (needs Physics &amp; destruction, or <b>Shootable</b> — see below)</td></tr>
+<tr><td>On hit</td><td>A shot, a swing or a blast <i>landed</i> on it — it does not have to break. This is the one a
+  shooting-range target uses: score every hit, and the plate never disappears. It fires on the killing blow too,
+  so a range that scores per hit never silently drops the last one.</td></tr>
+<tr><td>On E</td><td>The player activates it with <kbd>E</kbd> (needs <b>Interactable</b>)</td></tr>
+<tr><td>On click</td><td>The player <i>clicks</i> it — from up to 60&nbsp;m away, no walking up to it. The point-and-click
+  trigger; see <a href="#pointclick">Point &amp; click</a>.</td></tr>
 <tr><td>On object placed</td><td>A tagged object is set down touching it (contact plates, altars) — optionally only from a specific tag</td></tr>
 </table></div>
+<div class="box"><b>On hit and On click carry a payload.</b> Inside the rules they fire, four values describe what
+just happened: <code>#x</code> and <code>#z</code> (where it was), <code>#hp</code> (its health now) and
+<code>#hpf</code> (that as a fraction, 0–1). So “drop loot where it broke” is <i>Spawn pickup at #here</i>, and
+“at half health, switch phase” is a <a href="#logic">Branch</a> on <code>#hpf &lt; 0.5</code>.</div>
 <div class="tblwrap"><table>
 <tr><th>Do…</th><th>Effect on the target tag</th></tr>
 <tr><td>Toggle / Open / Close</td><td>Drive the target's mechanism</td></tr>
@@ -1006,8 +1074,85 @@ A place nobody carries does <b>nothing</b> — the verb is skipped rather than f
 and can carry a custom display name set on the pickup.</p>
 </section>
 
-<section id="pickups">
-<h2 id="logic"><span class="tag">Systems</span>Visual logic — the Logic graph</h2>
+<section id="pointclick">
+<h2><span class="tag">Systems</span>Point &amp; click — adventures, tycoons, RTS</h2>
+<p class="crumbs">Player tab ▸ <b>View &amp; camera</b> · Object ▸ <b>Signals</b> ▸ <i>On click</i></p>
+<p>The mouse can reach the world. A prop can answer a <b>click</b> from across the room, the cursor and the
+crosshair both say what is clickable, and the player can be sent walking to wherever you click the floor. That
+is the whole toolkit behind a point-and-click adventure, a tycoon, an ARPG or an RTS — and none of it needs the
+Logic graph unless you want it.</p>
+
+<h3>The two switches</h3>
+<p>Both live on the <b>Player</b> tab under <b>View &amp; camera</b>:</p>
+<div class="tblwrap"><table>
+<tr><th>Setting</th><th>What it does</th></tr>
+<tr><td><b>Free mouse cursor</b></td><td>The pointer is no longer captured. You get a real arrow you can move
+  anywhere on screen, and clicking aims where the <i>pointer</i> is instead of where the camera looks. Required
+  for anything point-and-click.</td></tr>
+<tr><td><b>Click to move</b></td><td>Clicking the floor walks the player there, routed around obstacles by the
+  engine's own navigation. Only available with the free cursor on, because it needs a pointer to click the floor
+  with. Any movement key takes control straight back.</td></tr>
+</table></div>
+<div class="box"><b>You do not need the free cursor to use On click.</b> In first person the crosshair is the
+pointer: clicking fires the ray through screen centre, and a ring appears around the reticle when it rests on
+something clickable. So a clickable world works in every view — the free cursor just changes <i>how you aim</i>
+at it.</div>
+
+<h3>How to: make a prop clickable</h3>
+<ol>
+  <li>Select the prop. Open <b>Signals</b>.</li>
+  <li><b>+ Add signal</b>, and set <i>when</i> to <b>On click</b>.</li>
+  <li>Pick a <i>do</i> — <b>Toggle</b> a door, <b>→ Logic event</b> to run a rule, <b>Open/close a modal</b> to
+  show a menu, anything in the verb table.</li>
+  <li>Give the prop a <b>Name</b> (top of <b>Object &amp; selection</b>). The name is what the player reads when
+  they point at it, so “Vault Door” beats “box 14”.</li>
+  <li>Press <b>▶ Play</b> and point at it.</li>
+</ol>
+<p>What the player gets, free, with no extra authoring:</p>
+<ul>
+  <li><b>The cursor becomes a hand</b> over anything clickable (free-cursor views).</li>
+  <li><b>A ring appears around the crosshair</b> when it rests on something clickable (first person). It is the
+  same answer, drawn where you are actually aiming.</li>
+  <li><b>The prompt names it</b> — <i>CLICK Vault Door</i> — using the prop's Name. If you are standing close
+  enough for an <kbd>E</kbd> prompt, that one wins, because the thing at arm's reach is the actionable one.</li>
+</ul>
+
+<h3>How to: click-to-move</h3>
+<ol>
+  <li><b>Player</b> tab ▸ <b>View &amp; camera</b> ▸ tick <b>Free mouse cursor</b>, then <b>Click to move</b>.</li>
+  <li>Play, and click the floor.</li>
+</ol>
+<p>A ring pings at the destination in your HUD accent colour and <b>holds there while you walk</b>, vanishing when
+you arrive. Click somewhere the player cannot route to and the ring pings <b>red</b> and does not hold — so a
+refused click never looks like a click the game ignored. Clicking something with an <i>On click</i> signal runs
+that signal <b>instead</b> of walking; a click is one thing or the other, never both.</p>
+<div class="box"><b>Routing is the engine's own navigation</b>, the same one the bots use — so the player walks
+around walls, up ramps and onto upper storeys rather than into them. If a route stops making progress (a door
+closed across it, a crate rolled into it) it is abandoned rather than pushed at forever.</div>
+
+<h3>How to: a working prize counter</h3>
+<p>The full loop — click a thing, a menu opens, a button spends a variable — in six steps:</p>
+<ol>
+  <li>Place a prop. <b>Name</b> it <i>Prize Counter</i>.</li>
+  <li><b>Signals</b> ▸ <i>On click</i> ▸ <b>Open/close a modal</b> ▸ <i>Open…</i> ▸ modal name <code>shop</code>,
+  and tick <b>freeze the world</b> so the match stops while the menu is up.</li>
+  <li><b>HUD</b> tab ▸ <b>+ Widget</b> ▸ kind <b>Button</b>. Label <i>Buy a prize</i>, <b>in modal</b>
+  <code>shop</code>, <b>fires event</b> <code>buy</code>.</li>
+  <li>Add a second widget, kind <b>Text</b>, <b>in modal</b> <code>shop</code>, label <code>Tickets {tickets}</code>.</li>
+  <li><b>Gameplay</b> tab ▸ <b>Open logic graph</b>. Add <b>On event</b> named <code>buy</code> → <b>Change
+  variable</b> <code>tickets</code> by <code>-1</code>.</li>
+  <li>Play, click the counter, press the button.</li>
+</ol>
+<p>The <b>Preview</b> dropdown on the HUD tab shows that modal's widgets on screen while you lay them out, so you
+are not authoring blind. It is a view, not a setting: it is never saved and never opens the modal in play, and
+<i>show when</i> is ignored inside it so nothing is invisible while you arrange it.</p>
+<div class="box warn"><b>If a button does nothing, the Level check will tell you.</b> A control that fires an event
+no <i>On event</i> node listens for is reported by name in <b>Save ▸ Level check</b> — as are a modal nothing
+opens, and a modal that opens onto no widgets.</div>
+</section>
+
+<section id="logic">
+<h2><span class="tag">Systems</span>Visual logic — the Logic graph</h2>
 <p>The signal system wires <i>one cause to one effect</i>. The <b>Logic graph</b> (Gameplay tab ▸ Logic graph ▸
 <b>Open logic graph</b>) is the layer above it: a full-screen node canvas where you build real game logic —
 counters, timers, branches, variables, randomness, loops and reusable functions — without writing code.
@@ -1061,6 +1206,9 @@ multiplayer stays in sync — spawned enemies and pickups stream in the world sn
 heal aimed at “the player” reaches every teammate, as do given items, bent stats and a music change) and pauses while the editor is open — playtest to see it run. Variables and timers reset
 at every match start. A mis-wired infinite loop can't freeze the game: the graph stops for that frame and a toast
 tells you to add a <i>Delay</i>.</div>
+</section>
+
+<section id="pickups">
 <h2><span class="tag">Systems</span>Pickups &amp; inventory</h2>
 <h3>Pickup pads</h3>
 <p>Gameplay tab → <b>Pickups</b>. Toggle spawning, the base disc, and the bounce/rotate animation; then place pads with
