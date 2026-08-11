@@ -99,6 +99,8 @@
     <a class="lnk" href="#signals">Signals, locks &amp; mechanisms</a>
     <a class="lnk" href="#pointclick">Point &amp; click</a>
     <a class="lnk" href="#logic">Visual logic — the Logic graph</a>
+    <a class="lnk" href="#interfaces">Interfaces — widgets &amp; menus</a>
+    <a class="lnk" href="#campaigns">Campaigns &amp; doorways</a>
     <a class="lnk" href="#pickups">Pickups &amp; inventory</a>
     <a class="lnk" href="#objectives">Objectives &amp; rules</a>
     <a class="lnk" href="#cutscenes">Cutscenes</a>
@@ -106,6 +108,7 @@
     <a class="lnk" href="#sharing">Saving &amp; sharing</a>
     <a class="lnk" href="#community">Community library</a>
     <div class="grp">Extras</div>
+    <a class="lnk" href="#recipes">Recipes — things built end to end</a>
     <a class="lnk" href="#faq">Tips &amp; troubleshooting</a>
     <a class="lnk" href="#whats-new">What&rsquo;s new</a>
   </div>
@@ -310,6 +313,42 @@ Vehicle in <a href="#vehicles">Vehicle tuning</a>.)</p>
 <i>Auto</i> (from level load), <i>E&nbsp;Activate</i> (player interacts), or <i>Signals only</i> (waits to be
 targeted) — and <b>how</b>: ⟳ Loop, ⇄ Ping-pong, or → Once. Built-in shapes have no clips (use Mechanism to
 move those); for models without animations, the Sketchfab search has an "Animated only" filter.</p>
+<h3 id="signprop">Signs — text in the world</h3>
+<p>Add a <b>Sign</b> from the shape list (Build tab → <i>Add a shape</i>). It is an ordinary prop — gizmo,
+snapping, duplication, prefabs, tags all work on it — that draws <b>text on a board</b>. Room labels, booth
+names, a warning over a door, a scoreboard on a wall.</p>
+<div class="tblwrap"><table>
+<tr><th>Control</th><th>What it does</th></tr>
+<tr><td>The text box</td><td>What the sign says. Multiple lines are fine.</td></tr>
+<tr><td><b>Size</b></td><td>Text size on the board (8–200). Long text is shrunk to fit rather than
+overflowing, so a sign never spills.</td></tr>
+<tr><td><b>Text</b></td><td>Text colour.</td></tr>
+<tr><td><b>Board</b></td><td>Board colour, then its opacity — <b>0 leaves floating text with no board
+behind it</b>, which is how you get a painted-on-the-wall look.</td></tr>
+<tr><td><b>left / center / right</b></td><td>Alignment.</td></tr>
+</table></div>
+<div class="box"><b>A sign can show a live number.</b> Curly braces read a
+<a href="#logic">Logic variable</a> exactly as a <a href="#interfaces">HUD widget</a> does, so
+<code>Hits: {score}</code> on a plate behind your shooting range is a scoreboard you can see from across
+the level. It repaints only when the variable changes, so a hundred static labels cost nothing.</div>
+<div class="box">A sign is <b>double-sided</b>, so it is never invisible from the wrong side — but the back
+reads mirrored. Place two back to back if both sides matter. It also defaults to <b>No collision</b>, so it
+is not an invisible wall in front of a booth; untick that if you want a solid board.</div>
+
+<h3 id="parenting">Parenting — props that ride other props</h3>
+<p>Select the prop that should <b>carry</b> the others last (it becomes the primary), then press
+<b>Parent to this prop</b>. The children now follow it: a crate rides a moving platform, a lamp travels
+with the wagon, a whole assembly turns as one when the parent rotates. Their colliders move with them, so
+the player really does stand on the crate while the lift climbs.</p>
+<div class="box">Deleting a parent releases its children where they stand rather than taking them with it.
+Nothing is lost by parenting something.</div>
+
+<h3 id="propvars">Prop values — a counter on the prop itself</h3>
+<p>Logic tab → <b>Do action</b> → <b>Set prop value</b>. Every prop can hold its own named numbers, so
+“this plate has been hit 3 times” lives on the plate rather than in a level-wide variable you would need one
+of per plate. Pick <b>Add</b> or <b>Set</b>, a <b>name</b>, and a value. Leave the <b>tag</b> blank and it
+writes to the prop whose signal fired the graph — so <i>one</i> node serves every plate in the booth.</p>
+
 <h3>Lock</h3>
 <p><b>Lock</b> picks the required key (red / blue / gold / green); pressing <kbd>E</kbd> on the prop then needs
 that key in hand — place a matching key pickup pad somewhere findable. <b>Consume key on unlock</b> spends the
@@ -383,8 +422,21 @@ sees is escaped, so a shared level can't inject markup through a line or a butto
 <tr><td>Weight</td><td>0.05–200</td><td>Heavier = harder to knock around, throws shorter, hits harder under Crushing-props rules.</td></tr>
 <tr><td>Grabbable</td><td>on</td><td>Players can pick it up with <kbd>G</kbd>, carry and throw it. <b>Grab label</b> replaces the default prompt ("Ancient Tome — [G] to read"); <b>Grab distance</b> sets the reach.</td></tr>
 <tr><td>🔥 On fire</td><td>off</td><td>Burns with flames from level load and hurts anyone touching it (<b>Burn dmg</b> 0–60/s). For a barrel you <i>shoot</i> to ignite, leave this OFF and give it an Explosive <b>Fuse</b> instead.</td></tr>
-<tr><td>Breakable</td><td>on</td><td>Shatters when shot. <b>Health</b> (1–2000) sets shots-to-break (refills each Deploy); <b>Break style</b>: Shatter = physics debris (with <b>Pieces</b> 3–90, <b>Size</b> 6–30%, <b>Shards/Cubes</b> shape), Puff = a quick burst + vanish (cheaper — use it for clutter).</td></tr>
-<tr><td>🎯 Objective target</td><td>off</td><td>Must be destroyed to win a <b>Destroy</b> mission; glows with a red beacon in play.</td></tr>
+<tr><td>🎯 Shootable target</td><td>off</td><td><b>Takes damage while staying bolted down.</b> The way to make a
+steel plate, a paper target or a switch panel shootable <i>without</i> making it a tumbling physics body.
+Everything below works on it: health, break style, explosives, on-hit signals, the Destroy objective. This is
+what a shooting range is made of — see <a href="#range">Building a shooting range</a>.</td></tr>
+<tr><td>Breakable</td><td>on</td><td>Whether the prop is ever <b>destroyed</b>. Untick it and the prop still
+registers hits — health, the impact flash, the hit sound and the <b>On hit</b> signal all fire — it just never
+breaks. That is exactly what a scoring plate wants. <b>Health</b> (1–2000) sets shots-to-break (refills each
+Deploy); <b>Break style</b>: Shatter = physics debris (with <b>Pieces</b> 3–90, <b>Size</b> 6–30%,
+<b>Shards/Cubes</b> shape), Puff = a quick burst + vanish (cheaper — use it for clutter).</td></tr>
+<tr><td>🎯 Objective target</td><td>off</td><td>Must be destroyed to win a <b>Destroy</b> mission; glows with a
+red beacon in play. It needs <b>Dynamic</b> or <b>🎯 Shootable target</b>, with <b>Breakable</b> on — an
+objective that can never be destroyed makes the level unwinnable, and <a href="#faq">Level check</a> says so.</td></tr>
+<tr><td>No collision</td><td>off</td><td>Decoration only: the player, enemies and shots pass straight through.
+Cables, foliage, ceiling banners, a sign you should not be able to shoot. It sits beside the <b>Tag</b> field
+rather than in this fold, because it is about presence rather than physics.</td></tr>
 <tr><td>💥 Explosive</td><td>off</td><td>Detonates when destroyed or on hard impact. <b>Radius</b> (2–20 m) + <b>Damage</b> (10–200) with falloff — hurts you too, and chain-reacts nearby explosives. <b>Impact</b> = the collision speed that sets it off (0 = shoot-only); <b>Fuse</b> = 0 blows instantly, above 0 a shot <i>lights</i> it and it blows after the fuse — shoot it, watch it catch, run.</td></tr>
 </table></div>
 </section>
@@ -795,16 +847,14 @@ refills your current weapon for its listed price.</p>
 <h2><span class="tag">Editor reference</span>HUD tab</h2>
 <p class="crumbs">Sections: <b>HUD</b> · <b>Crosshair</b></p>
 <ul>
-  <li><b>Custom widgets (logic-driven)</b> — add your own on-screen elements: <b>Text</b>, <b>Timer</b>, or <b>Bar</b>.
-  They are live views of the <b>Logic tab's variables</b>: write <b>{score}</b> inside a label and it shows that
-  variable's value in real time; a Timer reads a seconds variable and shows it as M:SS; a Bar fills value/max
-  (max can be a number or another variable). <b>Show when</b> hides a widget until a variable is non-zero — so a
-  Set-variable node can pop a scoreboard or banner mid-match. Position with 8 anchors + pixel offsets, style with
-  size/colour/panel. Recipes: <i>scoreboard</i> = On enemy killed → Change variable score +1, plus a Text widget
-  "SCORE {score}"; <i>countdown</i> = On start → Set variable time 120, Every 1 sec → Change variable time −1 →
-  Branch time ≤ 0 → lose, plus a Timer widget reading <i>time</i>. Widgets save with the level and sync to every
-  player in multiplayer (the host's numbers are the truth).</li>
+  <li><b>Custom widgets (logic-driven)</b> — five kinds: <b>+ Text</b>, <b>+ Timer</b>, <b>+ Bar</b>,
+  <b>+ Button</b> and <b>+ Image</b>, up to 24 of them. They are live views of your
+  <a href="#logic">Logic variables</a>, and a Button fires logic back. Full treatment, with
+  step-by-step builds, in <a href="#interfaces">Interfaces — widgets &amp; menus</a>.</li>
   <li><b>Colours</b> — accent, health, score.</li>
+  <li><b>Menus</b> — <b>Menu panel</b>, <b>Menu border</b>, <b>Menu text</b>, <b>Menu dim text</b>. These
+  theme the full-screen panels (the inventory and the item inspector) so a styled level does not open an
+  engine-coloured menu in the middle of itself.</li>
   <li><b>Fonts</b> — separate UI and display fonts from an 18-font set (Chakra Petch, Orbitron, Rajdhani, Press Start 2P, VT323, Russo One, Bungee, JetBrains Mono…).</li>
   <li><b>Panels</b> — shape (<i>Angular</i> / <i>Rounded</i> / <i>Square</i>), background opacity, border.</li>
   <li><b>Show in play</b> — toggle each element: minimap, score, wave counter, ammo, health, crosshair, kill feed, interact prompt, grab hint, objective banner, NPC dialogue.</li>
@@ -1190,13 +1240,18 @@ the <a href="#tab-save">campaign</a>.</p>
 <div class="tblwrap"><table>
 <tr><th>What happens</th><th>When</th></tr>
 <tr><td>The carried value is put back into the variable</td><td>At the <b>start of every match</b>, before <i>On start</i> runs — so your first node can already read it</td></tr>
-<tr><td>The live value is carried forward</td><td>Only when the level is <b>cleared</b></td></tr>
+<tr><td>The live value is carried forward</td><td>When the level is <b>cleared</b>, and when a
+<b>Go to level</b> <a href="#doorways">doorway</a> is taken</td></tr>
 <tr><td>The value rewinds to what you walked in with</td><td>On a <b>retry</b> — the level was not cleared, so nothing was committed</td></tr>
 <tr><td>Everything resets to zero</td><td>When you start the campaign from the top, or hit <b>Clear</b> in the panel</td></tr>
 </table></div>
 <p>That asymmetry is on purpose: a player can <b>never lose progress by dying</b>, and can never farm a level by
 replaying the first half of it. A variable you tick but never write settles at <code>0</code> rather than nothing,
 so a <i>Branch</i> on it is never comparing against a blank.</p>
+<div class="box">The tick means “<b>this room passes its value on</b>” — it is not a gate on what arrives.
+Anything the campaign is already carrying lands in every room whether or not that room ticked it, so a room
+you forgot to tick cannot end a run. The panel lists those names unticked, and the <b>carrying now:</b> line
+under it says exactly what is being held.</div>
 <p><b>Also keep them between sessions</b> is a separate opt-in below the list. With it on, the carried values are
 written to the player's browser, so they can close the tab and come back to the same progress; with it off — the
 default — nothing is stored anywhere. The panel always shows what is being carried <i>right now</i>, with one
@@ -1206,6 +1261,223 @@ multiplayer stays in sync — spawned enemies and pickups stream in the world sn
 heal aimed at “the player” reaches every teammate, as do given items, bent stats and a music change) and pauses while the editor is open — playtest to see it run. Variables and timers reset
 at every match start. A mis-wired infinite loop can't freeze the game: the graph stops for that frame and a toast
 tells you to add a <i>Delay</i>.</div>
+</section>
+
+<section id="interfaces">
+<h2><span class="tag">Systems</span>Interfaces — widgets &amp; menus</h2>
+<p class="crumbs">HUD tab → <b>Custom widgets (logic-driven)</b></p>
+
+<p>Everything on screen that is not the engine's own HUD is built here. A <b>widget</b> is one element —
+some text, a bar, a countdown, a button, a picture. Widgets read your
+<a href="#logic">Logic variables</a> and a Button fires a logic <b>event</b> back, so the HUD is a
+two-way surface, not a readout. Give several widgets the same <b>modal</b> name and they become a
+<b>menu</b> that opens and closes as one: a shop, an upgrade screen, a card hand, a pause-style panel of
+your own.</p>
+
+<h3 id="widgets">The five widget kinds</h3>
+<div class="tblwrap"><table>
+<tr><th>Kind</th><th>What it shows</th><th>Fields that matter</th></tr>
+<tr><td><b>+ Text</b></td><td>A line of text. Anything in curly braces is a live variable:
+<code>SCORE {score}</code>, <code>{coins} coins · {lives} lives</code>.</td><td><b>label</b></td></tr>
+<tr><td><b>+ Timer</b></td><td>A number of seconds, formatted. Point it at the variable a
+<a href="#countdown">Countdown</a> node fills.</td><td><b>value</b> (the variable), <b>format</b></td></tr>
+<tr><td><b>+ Bar</b></td><td>A fill bar — <b>value</b> ÷ <b>max</b>. Max can be a plain number or another
+variable, so a bar can grow as well as drain.</td><td><b>value</b>, <b>max</b></td></tr>
+<tr><td><b>+ Button</b></td><td>A real clickable button that fires a named logic <b>event</b>. This is
+what makes a shop or a menu possible at all.</td><td><b>label</b>, <b>event</b></td></tr>
+<tr><td><b>+ Image</b></td><td>A picture from a URL — a card face, a portrait, a panel frame, a logo.</td>
+<td><b>image URL</b>, <b>width</b>/<b>height</b>, <b>opacity</b></td></tr>
+</table></div>
+
+<p>Every widget also has: <b>anchor</b> (nine screen positions) plus an <b>offset</b> in pixels,
+<b>size</b>, <b>theme colour</b> (untick to pick your own), <b>panel</b> (the plate behind it),
+<b>show when</b>, and <b>in modal</b>. The <b>image URL</b> field exists on every kind, not just Image —
+on the others it is a <i>backdrop</i>, so a Button can be a card face and a Bar can sit inside a frame you
+drew.</p>
+
+<div class="box"><b>Show when</b> takes a variable name. The widget is hidden while that variable is zero
+or unset, and appears the moment it is anything else. Leave it blank for “always”. So a
+<i>Set variable</i> node is all it takes to pop a banner, reveal a scoreboard at the halfway mark, or show
+a “PRESS E” prompt only when the player is holding the key.</div>
+
+<h3 id="stacking">Stacking — which widget covers which</h3>
+<p>Widgets draw <b>in list order, last in front</b>. Use <b>▼ back</b> / <b>▲ front</b> on a widget's card
+to restack. Put a panel frame or a card face at the back and the text and buttons over it.</p>
+<div class="box">An <b>Image never blocks a Button's clicks</b>. That is deliberate — art is art — but it
+means a picture drawn over a button hides a control that still works. If a click seems to land on nothing,
+check whether something is stacked over it.</div>
+
+<h3 id="timerfmt">Timer formats</h3>
+<div class="tblwrap"><table>
+<tr><th>Format</th><th>65.43 seconds shows as</th><th>Use it for</th></tr>
+<tr><td><b>M:SS</b></td><td><code>1:05</code></td><td>Match clocks, round timers. The default.</td></tr>
+<tr><td><b>seconds</b></td><td><code>65s</code></td><td>Short countdowns, “detonating in…”.</td></tr>
+<tr><td><b>tenths</b></td><td><code>65.4s</code></td><td>A time trial anyone will compare.</td></tr>
+<tr><td><b>hundredths</b></td><td><code>65.43s</code></td><td>A speedrun course where places are close.</td></tr>
+</table></div>
+
+<h3 id="countdown">Counting down</h3>
+<p>You do not need arithmetic for a timer. The Logic graph has a <b>Countdown</b> node
+(<i>Flow</i> category) with three modes:</p>
+<div class="tblwrap"><table>
+<tr><td><b>Start</b></td><td>Begin counting down into a variable, from <b>sec</b> seconds.</td></tr>
+<tr><td><b>Stop</b></td><td>Halt it where it is. The variable keeps its value.</td></tr>
+<tr><td><b>Add time</b></td><td>Push more seconds onto a running countdown — a time-extend pickup.</td></tr>
+</table></div>
+<p>The output <i>is</i> an ordinary logic variable, which is the whole point: a Timer widget shows it,
+<b>Branch</b> compares it, an <a href="#logic">expression</a> reads it, and it stops while the game is
+paused or a cutscene is playing.</p>
+
+<div class="box gold"><b>Step by step — a 60-second time trial.</b>
+<ol>
+<li><b>Logic tab</b> → add <b>On event</b>, name it <code>runStart</code>.</li>
+<li>Add a <b>Countdown</b> node: mode <b>Start</b>, into <code>left</code>, sec <b>60</b>. Wire
+<i>On event</i> → it.</li>
+<li>Add <b>Branch</b>: <code>left</code> <b>≤</b> <b>0</b>. Wire it from an <b>Every X sec</b> node set to
+1 second so it is checked each tick, and its <i>true</i> output into <b>Do action → Lose level</b>.</li>
+<li><b>HUD tab</b> → <b>+ Timer</b>, value <code>left</code>, format <b>tenths</b>, anchor top-centre.</li>
+<li>On your start-line prop: <b>Signals</b> → <i>When</i> <b>contact</b> → <b>→ Logic event</b>
+named <code>runStart</code>.</li>
+</ol>
+Deploy, run through the start line, and the clock runs.</div>
+
+<h3 id="modals">Modals — building a menu</h3>
+<p>Type a name into a widget's <b>in modal</b> field and it leaves the HUD and joins that menu. Every
+widget sharing the name opens and closes together, over a dimmed backdrop, with the mouse freed and the
+world no longer taking clicks. Nothing else has to be set up — the name <i>is</i> the menu.</p>
+
+<p>Open and close it from the <b>Logic graph</b>: <b>Do action</b> → <b>Open/close a modal</b>, then
+<b>Open…</b> or <b>Close</b> and the modal's name. A <a href="#signals">prop signal</a> can do the same,
+so a shop counter you walk up to and press <kbd>E</kbd> on opens the shop.</p>
+
+<div class="tblwrap"><table>
+<tr><th>Control</th><th>What it does</th></tr>
+<tr><td><b>in modal</b></td><td>The menu this widget belongs to. Blank = an ordinary HUD widget, always
+on screen.</td></tr>
+<tr><td><b>freeze the world</b></td><td>On the <i>Open…</i> action. Stops the game while the panel is up
+— right for an upgrade screen between waves, wrong for a shop you want raided under fire.</td></tr>
+<tr><td><b>Preview</b></td><td>Under the widget list. Shows a chosen modal's widgets on screen so you can
+place and stack them. <b>show when</b> is ignored in preview, so nothing is invisible while you arrange
+it. It is a view, never saved, and never opens the modal in play.</td></tr>
+</table></div>
+
+<div class="box"><kbd>Esc</kbd> always closes a modal, so a player can never be locked inside one. Add
+your own close Button as well if the menu should have one — players look for it.</div>
+
+<div class="box warn">A modal nobody opens is invisible forever. <b>Level check</b> catches exactly that
+and tells you which modal has widgets but no node or signal naming it. Run it before you publish.</div>
+
+<div class="box gold"><b>Step by step — a shop that sells a turret.</b>
+<ol>
+<li><b>HUD tab</b> → <b>+ Button</b>. Label <code>TURRET — 50</code>, event <code>buyTurret</code>,
+<b>in modal</b> <code>shop</code>.</li>
+<li><b>+ Text</b>, label <code>COINS {coins}</code>, <b>in modal</b> <code>shop</code>, anchored above it.</li>
+<li><b>+ Button</b>, label <code>CLOSE</code>, event <code>shopClose</code>, <b>in modal</b>
+<code>shop</code>.</li>
+<li>Set <b>Preview</b> to <code>shop</code> and drag the three into place.</li>
+<li><b>Logic tab</b>: <b>On event</b> <code>buyTurret</code> → <b>Branch</b> <code>coins</code> <b>≥</b>
+<b>50</b>. On <i>true</i>: <b>Change variable</b> <code>coins</code> <b>−50</b>, then <b>Do action →
+Spawn prefab</b> at a tag you placed. On <i>false</i>: a <b>Show message</b> node
+reading “Not enough coins”.</li>
+<li><b>On event</b> <code>shopClose</code> → <b>Do action → Open/close a modal</b> → <b>Close</b>,
+<code>shop</code>.</li>
+<li>On the shop counter prop: <b>Signals</b> → <i>When</i> <b>interacted</b> → <b>Open/close a modal</b>
+→ <b>Open…</b> <code>shop</code>.</li>
+</ol>
+That is a working economy: walk up, press <kbd>E</kbd>, spend, close.</div>
+
+<div class="box">Widgets and modals save with the level and reach every player in multiplayer — the host's
+numbers are the truth. A <a href="#logic">per-player variable</a> (a name ending in <code>@</code>) shows
+each player their <i>own</i> number in the same widget, which is what a co-op shop needs.</div>
+</section>
+
+<section id="campaigns">
+<h2><span class="tag">Systems</span>Campaigns &amp; doorways</h2>
+<p class="crumbs">Save tab → <b>Campaign</b> · Logic tab → <b>Go to level</b></p>
+
+<p>A big level does not have to be one file. Split it into rooms — a hub and four wings, a fairground and
+its booths, a house you walk through — build each as its own level, chain them into a campaign, and put a
+<b>doorway</b> where they meet. This is how Half-Life and Portal are built, and the pieces are already
+here.</p>
+
+<h3 id="chaining">Chaining the levels</h3>
+<p>Save tab → <b>Campaign</b>. Build a room, press <b>➕ Add current level</b>, build the next, add it
+too. Reorder with ▲/▼, remove with ✕, open one with its ✎ button. <b>▶ Play campaign</b> runs them in
+order. <b>Export campaign</b> writes the whole sequence as one file and <b>Import campaign</b> reads it
+back — that is what you share.</p>
+<div class="box">Every room is a complete level. Its own <a href="#objectives">win condition</a> ends it
+and loads the next, so a linear campaign needs no logic at all. Doorways are for when you want to move
+between rooms in <i>any</i> order — a hub, a shortcut, a door you can walk back through.</div>
+
+<h3 id="doorways">Doorways — the Go to level node</h3>
+<p>Logic tab → <b>Go to level</b> (in <i>Actions</i>). Three fields:</p>
+<div class="tblwrap"><table>
+<tr><th>Field</th><th>What it does</th></tr>
+<tr><td><b>level #</b></td><td>Which room to load, counting from <b>1</b> — the numbers you see in the
+Campaign list. It takes a variable name too, so a graph can compute the destination.</td></tr>
+<tr><td><b>arrive at tag</b></td><td>A <a href="#folds">tag</a> on a prop in the <i>destination</i> room.
+The player materialises there, <b>facing the way that prop faces</b>. Leave it blank and they arrive at
+that room's own player start.</td></tr>
+<tr><td><b>keep gear</b></td><td>Tick it and weapons, ammo and health cross the threshold unchanged.
+Untick it and the destination's own loadout applies.</td></tr>
+</table></div>
+
+<div class="box"><b>Which way is the marker facing?</b> Rotate the arrival prop in the destination room
+and the player arrives looking that way — the prop's forward <i>is</i> the arrival facing. Point it into
+the room, not at the wall you just came through.</div>
+
+<div class="box"><b>keep gear</b> is the difference between a room split out of one level and a hub world.
+A corridor into the next room of the same building should keep it on: losing your shotgun at a doorway is
+a bug as far as the player is concerned. A hub that hands out a fresh loadout per wing wants it off.</div>
+
+<div class="box warn">The destination tag lives in the <i>other</i> level, so the field offers no
+autocomplete — there is nothing in this level to suggest. Type it carefully; a tag nothing answers to
+drops the player at the room's own start and reports it in <b>Level check</b>.</div>
+
+<h3 id="doorstate">What crosses the threshold</h3>
+<div class="tblwrap"><table>
+<tr><th>Carries</th><th>How</th></tr>
+<tr><td>Weapons, ammo, health</td><td>Only with <b>keep gear</b> ticked.</td></tr>
+<tr><td>Logic variables</td><td>Always, for names the room ticks under
+<a href="#logic">Values that carry over</a> — plus anything the campaign is already carrying.</td></tr>
+<tr><td>Inventory items</td><td>Always. Keys and quest items are the point of a multi-room level.</td></tr>
+<tr><td>The checkpoint</td><td>Cleared on the way out, so a player can never respawn into a room they
+have left.</td></tr>
+</table></div>
+
+<div class="box gold"><b>Step by step — a door between two rooms.</b>
+<ol>
+<li>Build <b>Room A</b>. Place a prop where the player should arrive when they come <i>back</i>, and tag
+it <code>fromHall</code>. Save, then Save tab → <b>➕ Add current level</b>.</li>
+<li>Build <b>Room B</b>. Place an arrival prop tagged <code>fromLobby</code>, rotated to face into the
+room. Save and add it too — it is level <b>2</b>.</li>
+<li>Still in Room B: put a doorframe prop where the player walks back, tag it, and add a
+<b>trigger zone</b> across it (World tab → Zones → Trigger).</li>
+<li>Give that zone an event name, say <code>toHall</code>. Logic tab: <b>On event</b>
+<code>toHall</code> → <b>Go to level</b>, level # <b>1</b>, arrive at tag
+<code>fromHall</code>, <b>keep gear</b> ticked.</li>
+<li>Open Room A and do the mirror: a trigger at its doorway → <b>Go to level</b> <b>2</b>, arrive at
+<code>fromLobby</code>, keep gear on.</li>
+<li><b>▶ Play campaign</b> and walk through. A short “Entering…” card covers the load, then you are
+standing at the marker.</li>
+</ol></div>
+
+<div class="box gold"><b>Step by step — a hub with four wings.</b> Build the hub as level 1 and each wing
+as 2–5. In the hub, put a tagged plinth at each doorway with a <b>trigger zone</b> in front of it, and
+wire each to <b>Go to level</b> with that wing's number and <b>keep gear</b> <i>off</i> so each wing
+issues its own kit. In each wing, one trigger at the exit goes back to level <b>1</b>, arriving at a tag
+beside the door the player left by — so returning puts them where they expect, not at the hub's spawn.
+Tick a <code>wingsDone</code> variable to carry, add <b>Change variable</b> <code>wingsDone</code> +1 at
+each wing's exit, and a <b>Branch</b> in the hub can open the finale at 4.</div>
+
+<h3 id="savedprogress">Progress across sessions</h3>
+<p>Under the carry list: <b>Also keep them between sessions</b> writes the carried values into the
+player's browser, so they can close the tab and come back. Two more boxes appear under it once that is on
+— <b>Carry the inventory too</b> and <b>Resume at the last checkpoint</b>. Both are solo only, and
+finishing the game clears the checkpoint so the next run starts clean.</p>
+<div class="box warn">Doorways are <b>solo and host-only</b>. In co-op, a client does not follow the host
+through a door — build multiplayer levels as one room, or as a campaign whose rooms end on their own win
+conditions.</div>
 </section>
 
 <section id="pickups">
@@ -1378,6 +1650,92 @@ straight in for review — <b>no account of any kind needed</b>. Once it's appro
 gallery, credited to you. (If the submission server can't be reached, the game falls back to the old GitHub
 submission form, which needs a free GitHub account.) Levels that use Sketchfab models get a
 <i>needs Sketchfab token</i> badge, since those download with each player's own free token.</p>
+</section>
+
+<section id="recipes">
+<h2><span class="tag">Extras</span>Recipes — things built end to end</h2>
+<p>Each of these is a complete thing you can build in one sitting, using nothing that is not in this
+manual. They are written as sequences to follow, not as ideas to take away.</p>
+
+<h3 id="range">Building a shooting range</h3>
+<p>Plates that score when you hit them, never disappear, and reset on demand. This is the recipe the
+engine's own <b>🎯 Shootable target</b> flag exists for.</p>
+<ol>
+<li><b>Build the plate.</b> Add a box, scale it flat and stand it up. Open <b>Object &amp; selection</b> →
+<b>Physics &amp; destruction</b> and tick <b>🎯 Shootable target</b>. <i>Do not</i> tick Dynamic — the plate
+should stay bolted where you put it.</li>
+<li><b>Make it score, not shatter.</b> In the same fold, <b>untick Breakable</b>. It now takes hits forever:
+the flash, the sound and the signal all still fire, it just never breaks.</li>
+<li><b>Tag it.</b> Give it the tag <code>plate1</code>. Duplicate it twice along the booth and tag the
+copies <code>plate2</code> and <code>plate3</code>.</li>
+<li><b>Wire the hit.</b> On each plate: <b>Signals</b> → <b>+ Add signal</b> → <i>When</i> <b>hit</b> →
+<b>→ Logic event</b> named <code>plateHit</code>.</li>
+<li><b>Count it.</b> Logic tab → <b>On event</b> <code>plateHit</code> → <b>Change variable</b>
+<code>score</code> <b>+1</b>.</li>
+<li><b>Show the score.</b> Either a <a href="#interfaces">HUD widget</a> (<b>+ Text</b>, label
+<code>SCORE {score}</code>) or a <a href="#signprop">Sign</a> on the back wall reading
+<code>SCORE {score}</code>. The sign is the nicer one for a fairground.</li>
+<li><b>Add a reset.</b> Place a lever prop, tick <b>Interactable</b>, and give it a signal:
+<i>When</i> <b>E pressed</b> → <b>Reset props</b>, tag <code>plate1</code>. Repeat for the others, or tag
+all three <code>plate</code> and use one signal — a tag names a <i>set</i>.</li>
+</ol>
+<div class="box"><b>Why untick Breakable?</b> Because the label means “<i>ever destroyed</i>”, not “ever
+damaged”. A plate that shatters on the third hit stops being a range after three shots. If you <i>want</i>
+a plate that breaks, leave it on and use <b>Reset props</b> to bring it back between rounds.</div>
+<div class="box gold"><b>Make it a timed round.</b> Add a start line: a <b>trigger zone</b> whose
+event name starts an <b>On event</b> chain that starts a <a href="#countdown">Countdown</a> into <code>left</code> for 30 seconds, sets
+<code>score</code> to 0, and shows a <b>Timer</b> widget. A <b>Branch</b> on <code>left ≤ 0</code> fires a
+<b>Show message</b> node reading <code>Time! You hit {score}</code>.</div>
+
+<h3 id="movecourse">Building a movement course</h3>
+<p>An obstacle run that teaches its own verbs. Every switch below is on the World tab under
+<a href="#movement">Movement</a>.</p>
+<ol>
+<li><b>Turn the verbs on.</b> Set <b>Air jumps</b> to 1 (a double jump), <b>Wall jump</b> to about 14, and
+<b>Air dash</b> to about 22. Leave <b>Tap hop</b> at 0.5 so a short press gives a short hop.</li>
+<li><b>Teach them in order.</b> Build the course in four stretches, each of which can only be crossed with
+one verb: a gap too wide for one jump (air jump), a chimney of two facing walls (wall jump), a long flat gap
+with no wall (air dash), and a low ceiling you have to tap-hop under.</li>
+<li><b>Sign each stretch.</b> A <a href="#signprop">Sign</a> at the entrance to each — <i>“Jump again in
+mid-air”</i>, <i>“Jump off the wall”</i>. Nobody reads a manual; everybody reads a sign in front of them.</li>
+<li><b>Add checkpoints.</b> A <b>trigger zone</b> at each stretch's start, each firing its own event
+name, and an <b>On event</b> → <b>Do action</b> → <b>Set checkpoint</b> for each. Falling then costs seconds, not the whole run.</li>
+<li><b>Time it.</b> Exactly the timed round above, with the format set to <b>hundredths</b> so two runs can
+be compared.</li>
+</ol>
+<div class="box">Build the gaps, then <i>walk them</i>. A jump that looks right is often half a metre out —
+Deploy, run it, come back and nudge. The <a href="#tab-player">play-from-here</a> button drops you at the
+editor camera so you can retest one gap without running the course.</div>
+
+<h3 id="npcroom">A room with someone in it</h3>
+<ol>
+<li>Import or place a character prop, and open <b>Dialogue (NPC)</b>. Give it a <b>Name</b> and three
+lines.</li>
+<li>Tick <b>Interactable</b> so the player gets a prompt.</li>
+<li>In a dialogue line, write <code>{set metGuard = 1}</code> — the conversation now leaves a mark on the
+world.</li>
+<li>Put a locked door across the exit: on the door prop, <b>Signals</b> → <i>When</i> <b>E pressed</b> →
+<b>Open</b>, and set the <b>needs</b> count beside the Tag box (“different sender(s) before it reacts”) if it should wait on more than one thing.</li>
+<li>Logic tab: <b>On event</b> from the guard's last line → <b>Do action</b> → <b>Open</b>, tag the
+door.</li>
+<li>Under <a href="#logic">Values that carry over</a>, tick <code>metGuard</code> so the next room knows.</li>
+</ol>
+
+<h3 id="fairground">Stitching booths into a fairground</h3>
+<p>Once each booth works on its own, a <a href="#campaigns">campaign</a> turns them into a place.</p>
+<ol>
+<li>Save each booth as its own level and add them to the campaign in order — the hub first.</li>
+<li>In the hub, put a tagged plinth at each booth's entrance and a <b>trigger zone</b> in front of it,
+wired to <b>Go to level</b> with that booth's number and <b>keep gear</b> on.</li>
+<li>In each booth, one trigger at the exit goes back to level <b>1</b>, arriving at a tag beside the door
+the player came out of.</li>
+<li>Tick a <code>booths</code> variable to carry, add <b>Change variable</b> <code>booths</code> <b>+1</b>
+when each booth is completed, and a <b>Branch</b> in the hub opens the finale at your booth count.</li>
+<li>Put a <a href="#interfaces">Text widget</a> reading <code>{booths} / 4 booths cleared</code> in the hub
+so the player always knows where they are.</li>
+</ol>
+<div class="box warn">Doorways are solo. If the fairground should be co-op, keep it as one level and use
+<a href="#logic">trigger zones</a> to move the player between areas instead.</div>
 </section>
 
 <section id="faq">

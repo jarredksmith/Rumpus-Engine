@@ -96,6 +96,19 @@ eq(label.clicked, 'click', "and build 1479's reads as `click`, the verb, rather 
     'Free mouse cursor', 'Click to move', 'Interactable', 'fires event', 'in modal',
     'Cull below', 'Shootable', 'Breakable', 'Objective target',
     'Air jumps', 'Wall jump', 'Air dash', 'Tap hop',
+    /* build 1490 docs pass: the interface chapter. Every one of these is a string a creator has to find in
+       the panel, which is exactly the class this guard exists for. */
+    '+ Button', '+ Image', '+ Timer', 'show when', 'freeze the world', 'Open/close a modal',
+    'Add time', 'Menu panel', 'Menu border',
+    /* and the campaign chapter */
+    'Go to level', 'arrive at tag', 'keep gear', 'Add current level', 'Export campaign',
+    'Values that carry over', 'Also keep them between sessions', 'Carry the inventory too',
+    'Resume at the last checkpoint', 'carrying now',
+    /* props, and the recipes that use them — these are the strings the step-by-steps tell a creator to
+       click, so an engine rename that does not reach the manual sends them hunting */
+    'Parent to this prop', 'Set prop value', 'No collision',
+    'Every X sec', 'Show message', 'Set checkpoint', 'Reset props', 'Spawn prefab',
+    'different sender(s) before it reacts',
   ];
   for(const c of CLAIMS){
     assert(manual.includes(c), 'the manual names "' + c + '" (if not, drop it from this list)');
