@@ -174,7 +174,9 @@ const src = gameSource();
 {
   assert(/\['interacted','On E'\],\['clicked','On click'\],\['contact','On object placed'\]/.test(src),
     'the trigger is offered in the signal editor, beside On E where a creator looking for it would look');
-  assert(/clicked:'clicked'/.test(src), '...and the signal summary can name it');
+  /* build 1488 gave it a human word: the row read "On clicked" beside a dropdown saying "On click". The
+     intent — the summary can NAME this trigger rather than leaking the stored key — is what is asserted. */
+  assert(/_SIG_WHEN_LABEL = \{[^}]*\bclicked:'[a-z ]+'/.test(src), '...and the signal summary can name it');
 
   // build 1397 established there is no allow-list of trigger names anywhere, which is why neither loader
   // needed a line — asserted rather than assumed, because a sanitizer that dropped it would make this a

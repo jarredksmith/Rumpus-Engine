@@ -14508,7 +14508,12 @@ function _lgRenderNode(n){
 //     signal can actually be edited. A card that looked editable here and was not would be worse than
 //     nothing.
 const SIG_MIRROR_MAX = 60;         // a card each; past this the panel is a wall, not a view
-const _SIG_WHEN_LABEL = { destroyed:'destroyed', interacted:'E pressed', contact:'object placed', clicked:'clicked' };
+/* build 1488: one trigger, ONE name. This map labels the row in a prop's signal LIST and the dropdown labels
+   the same trigger when you pick it — and `damaged` was never added here, so the dropdown said "On hit" while
+   the row under it said "On damaged". A control that names itself two ways cannot be documented, which is how
+   this was found. The fallback (`|| it.s.when`) is what made it survive: it degrades to the raw key rather
+   than showing nothing, so it reads as a deliberate label instead of a missing one. */
+const _SIG_WHEN_LABEL = { destroyed:'destroyed', damaged:'hit', interacted:'E pressed', contact:'object placed', clicked:'click' };
 function _lgSigMirror(){
   const out = [];
   const props = (typeof propModels!=='undefined' && propModels) ? propModels : [];
@@ -35738,7 +35743,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1487 · 2026-08-10';
+const BUILD_VERSION = 'build 1488 · 2026-08-11';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

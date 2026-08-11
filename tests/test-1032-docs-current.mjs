@@ -14,7 +14,12 @@ assert(/embeds the prefabs\nit uses<\/b>/.test(manual) || /embeds the prefabs/.t
 assert(/<li><b>Auto-rigger<\/b>/.test(manual) && /chin → wrists → elbows → knees → groin/.test(manual),
   'Auto-rigger section with the marker order');
 assert(!/upload to Mixamo, download the rigged T-pose/.test(manual), 'the old "go use Mixamo" advice is gone');
-assert(/<h2 id="logic">/.test(manual) && /Visual logic — the Logic graph/.test(manual), 'Logic graph chapter');
+/* build 1488: the id moved from the HEADING to a real <section> of its own. It had been sharing
+   `<section id="pickups">` with Pickups, so the contents' Pickups link landed on the Logic graph and the
+   Logic graph was in no contents at all. The intent — the chapter exists and is reachable — is unchanged
+   and is now asserted more strictly. */
+assert(/<section id="logic">/.test(manual) && /Visual logic — the Logic graph/.test(manual), 'Logic graph chapter');
+assert(/href="#logic"/.test(manual), '...and the contents can reach it');
 for(const n of ['On start','Branch','Counter','Delay','Repeat','Random','Only once','Set variable','Change variable','Do action','Show message','Send event'])
   assert(manual.includes('<i>'+n+'</i>'), 'logic chapter lists node: '+n);
 assert(/\{variable\}<\/code> interpolation/.test(manual), '...and the {var} message trick');
