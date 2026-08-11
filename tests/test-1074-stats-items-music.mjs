@@ -197,9 +197,12 @@ assert(/k:'stat'/.test(src) && /k:'mul'/.test(src) &&
   assert(/txt\('music URL \(blank = silence\)'/.test(fn), '...and the music row says what blank means');
   assert(/'lgPlaceList'/.test(fn) && /'lgItemList'/.test(fn), 'both rows reuse the graph\'s own dropdowns, so names are picked and not retyped');
 }
-assert(/if\(!_isWorldVerb\(s\.do\)\) r\.appendChild\(ti\);/.test(src),
+/* build 1489 split the one flag into two questions — "does it act on a tag" and "does it have parameters" —
+   because `view` and `marker` answer differently and the single flag could not say so. Both intents below are
+   unchanged; they are asserted against the question each one actually meant. */
+assert(/if\(_sigTakesTag\(s\.do\)\) r\.appendChild\(ti\);/.test(src),
   'and the target-tag box is HIDDEN for a world verb — an ignored field is worse than no field');
-assert(/if\(_isWorldVerb\(s\.do\)\) sgBody\.appendChild\(_sigWorldRow\(s, rerender\)\);/.test(src), '...replaced by the row that actually matters');
+assert(/if\(_sigNeedsRow\(s\.do\)\) sgBody\.appendChild\(_sigWorldRow\(s, rerender\)\);/.test(src), '...replaced by the row that actually matters');
 {
   const fn = extractFunction('_isWorldVerb', src);
   for (const v of ['spawn', 'pickup', 'damage', 'heal', 'kill', 'teleport', 'give', 'take', 'stat', 'music'])

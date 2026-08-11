@@ -21,7 +21,10 @@ const src = gameSource();
     assert(new RegExp("'" + k + "'").test(F), 'and build 1402\'s own members are untouched: ' + k);
 
   // the SIGNAL path resolves its own fields and does not go through _lgDoArgs, so it needs asking too
-  const b = src.slice(src.indexOf("  if(s.do==='modal'){"), src.indexOf("  if(s.do==='modal'){") + 900);
+  /* Extracted, not sliced from the first matching phrase: build 1489 added a SECOND `if(s.do==='modal')` —
+     the editor's parameter row — and `indexOf` found that one first, so this measured the authoring UI while
+     claiming to measure the runtime. A phrase anchor is only as good as that phrase is unique. */
+  const b = extractFunction('_applyWorldAction', src);
   assert(/_lgName\(s\.mid\)/.test(b), 'a prop signal interpolates it as well, or the two doors disagree');
   assert(/typeof _lgName==='function'/.test(b), '...guarded, like every other call into it');
 }

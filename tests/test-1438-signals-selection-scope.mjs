@@ -40,6 +40,9 @@ const run = (stores, withSel) => {
   const host = doc.createElement('div');
   const fn = new Function('document', 'sgBody', 'store', 'rerender', 'opts', 'K', `
     ${extractFunction('_selBanner', src)}
+    /* build 1489 split the editor's one flag into two questions the UI now asks by name. Lifted from source
+       rather than restated, so this rig cannot keep passing against a stale copy of either. */
+    ${src.slice(src.indexOf('const _SIG_TAG_VERBS'), src.indexOf('function _sigNeedsRow')) + 'function _sigNeedsRow(v){ return _SIG_ROW_VERBS.has(v); }'}
     const pushUndoSnapshot = ()=>{ K.snapshots++; };
     const renderEditorFields = ()=>{};
     const flashToast = (m)=>{ K.toasts.push(m); };

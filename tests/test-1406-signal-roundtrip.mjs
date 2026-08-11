@@ -130,19 +130,40 @@ const mk = () => new Function(
     'make, and the one that fails the day a verb adds a field without saying so');
 
   // the same question of the verb dropdown: a verb that is offered must have a row that configures it
-  const VERBLESS = new Set(['toggle','open','close','unlock','win','checkpoint',   // nothing to configure
-                            'anim','cutscene','objective','sound','emit']);        // handled by the tag row above
+  /* build 1489 made this DERIVABLE, which is this file's own lesson: it split the editor's one flag into two
+     questions the engine now states out loud — `_SIG_TAG_VERBS` (configured by the target-tag box) and
+     `_SIG_ROW_VERBS` (has parameters of its own). A hand-kept exemption list is exactly what failed for eight
+     builds before 1406, so both sets are read from source and the assertion becomes: every verb the dropdown
+     offers is configurable by ONE of the two, or genuinely has nothing to configure. */
+  const setOf = (name) => new Set([...src.slice(src.indexOf('const ' + name),
+      src.indexOf(']);', src.indexOf('const ' + name))).matchAll(/'([a-z]+)'/g)].map(m => m[1]));
+  const TAGGED = setOf('_SIG_TAG_VERBS'), ROWED = setOf('_SIG_ROW_VERBS');
+  assert(TAGGED.size > 5 && ROWED.size > 10, 'both verb sets read out of the engine');
+  const NOTHING = new Set(['win','checkpoint','cutscene','objective','sound','emit']);   // no parameters at all
   /* walk BACK from the do-select's own callback to its option list. A fixed-size window reached into the
      WHEN dropdown above it and reported 'destroyed' and 'contact' as verbs with no row — a slice scoped by
      a character count, which is this file's most repeated test defect. */
-  const end = src.indexOf('], s.do, v=>{ s.do=v; }');
+  /* whitespace-tolerant: build 1489 grew the list past one line, and an anchor demanding `], s.do` on one
+     line found nothing and reported a dropdown of ZERO verbs — a slice that misses is a wrong answer, not an
+     error (build 1392's rule). */
+  const end = src.search(/\]\s*,\s*\n?\s*s\.do, v=>\{ s\.do=v; \}/);
   assert(end > 0, 'found the signal do-select');
   const dd = src.slice(src.lastIndexOf('mkSel([', end), end);
   const verbs = [...dd.matchAll(/\['([a-z]+)',/g)].map(m => m[1]);
   assert(verbs.includes('view') && verbs.includes('command') && verbs.length > 15,
     'found the signal verb dropdown (' + verbs.length + ' verbs)');
+  /* build 1489: the dropdown must offer everything the LOGIC GRAPH does. Ten verbs were wired end to end —
+     serialized, applied, given rows — and simply missing from this one list, so a creator could not put them
+     on a prop at all. Derived from the graph's own node table so the two doors cannot drift again. */
+  { const dn = src.slice(src.indexOf("do:       { t:'Do action'"), src.indexOf(']},{k:', src.indexOf("do:       { t:'Do action'")));
+    const graphVerbs = [...dn.matchAll(/\['([a-z]+)',/g)].map(m => m[1]);
+    assert(graphVerbs.length > 25, 'read the graph Do node verb list (' + graphVerbs.length + ')');
+    for (const g of graphVerbs)
+      assert(verbs.includes(g), 'the prop signal dropdown offers what the graph offers: ' + g); }
   for (const v of verbs) {
-    if (VERBLESS.has(v)) continue;
+    assert(TAGGED.has(v) || ROWED.has(v) || NOTHING.has(v),
+      'every verb the dropdown offers can be configured somehow: ' + v);
+    if (!ROWED.has(v)) continue;
     assert(new RegExp("s\\.do==='" + v + "'").test(row),
       'the signal editor has a parameter row for every configurable verb it offers: ' + v);
   }

@@ -185,8 +185,12 @@ function rig(opts) {
 
   // both authoring surfaces
   assert(/\['view','Camera view'\]/.test(src), 'the Do node offers it');
-  assert(/\['command','Command enemies'\],\['view','Camera view'\]\], s\.do, v=>\{ s\.do=v; \}\)\);/.test(src),
-    '...and so does the prop-signal editor, so a camera prop can arm itself on contact');
+  /* MEMBERSHIP, not the tail of the whole list: this quoted every verb that happened to sit beside `view`,
+     so build 1489 adding ten more broke it with every part of what it meant still true. */
+  { const end = src.search(/\]\s*,\s*\n?\s*s\.do, v=>\{ s\.do=v; \}/);
+    const dd = src.slice(src.lastIndexOf('mkSel([', end), end);
+    assert(/\['view','Camera view'\]/.test(dd),
+      '...and so does the prop-signal editor, so a camera prop can arm itself on contact'); }
   assert(/\{k:'vmode',l:'',w:130,ifv:\['verb','view'\]/.test(src), 'with a mode picker...');
   assert(/\{k:'vtag',l:'camera tag',w:86,ifv:\['verb','view'\],ifv2:\['vmode','fixed'\]/.test(src),
     '...a tag box that appears only for a fixed camera...');
