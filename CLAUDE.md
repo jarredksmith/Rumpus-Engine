@@ -490,6 +490,69 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A control that enables another must repaint it (build 1490)
+
+Reported from play: *"I noticed an issue with the move to mouse click option. It was finnicky in the gameplay
+tab, and sometimes I could click it, and sometimes I couldn't."*
+
+Build 1481 put **Click to move** under **Free mouse cursor** and disabled it without the parent — correctly,
+since there is no pointer to click the ground with otherwise. The parent's handler wrote the flag and did not
+re-render:
+
+```js
+fcCb.onchange = () => { …; gameCfg.freeCursor = fcCb.checked; … };   // and nothing repaints
+cmCb.disabled = !gameCfg.freeCursor;                                  // …read only at render time
+```
+
+So ticking Free mouse cursor left the box below **dead until some unrelated edit happened to repaint the
+panel**. Switching tabs and coming back fixed it — which is exactly the reported *sometimes*.
+
+**A disabled control is a promise that something will unlock it, and the unlock has to be visible on the
+frame the creator does it.** One `renderEditorFields()` closes it.
+
+Two things went in beside the fix, because a dimmed control that will not say why is the defect build 1338
+records (*a control whose consequence is absent is one nobody can use on purpose*):
+- **The row says which switch unlocks it** — a tooltip, and the label itself branches: *"Click to move — tick
+  **Free mouse cursor** first"* becomes *"— walk to where you click"* the moment it is live.
+- **The child does NOT repaint.** It enables nothing below it, and a rebuild mid-click would throw away the
+  row the creator is looking at. Asserted as an absence so a future sweep does not "fix" it.
+
+### The other half of the report is where the pair goes when it is not offered
+
+Both controls sit inside `_curView==='top' || 'side' || ('chase' && chaseCursorAim)` — so in **first person
+they are simply ABSENT, and so is the hint that explains them**, because the hint lived inside the block.
+A creator who reads about click-to-move and cannot find the checkbox has no way to learn that the view is the
+reason. There is now a hint on the *negated* gate naming the views that do offer it — and stating that **On
+click prop signals work in every view**, including first person, where the crosshair is the pointer. Same
+condition written twice, once negated, so the two cannot drift.
+
+### Two instrument faults, and the first one confirms the report
+
+- **`setEditorMode('player')` was the wrong panel.** `bPly` hangs off `gHost`/`#edGame`, which is the
+  **Gameplay** tab — and the mode KEY is `rules`; `MODE_LABEL` renames it for the creator. So my first probe
+  found neither control and was measuring a different panel, while the user's own words had said "gameplay
+  tab" all along. Build 1293 does not build a section that is off screen, so the host has to be SHOWN before
+  anything in it is read.
+- **The tooltip read empty on the settled row and populated on the fresh one.** Build 1337: the editor moves
+  every native `title` to `data-tip` and removes the attribute, and the sweep runs a beat after the render.
+  A probe that asks only for `title` reports a missing tooltip that is there.
+
+Measured live (`tools/probe/clickmove-enable.mjs`), with the pre-1490 sequence — set the flag, no repaint —
+as the control in every row:
+
+```
+at rest                       cmDisabled true   "Click to move — tick Free mouse cursor first"
+parent ticked, NO repaint     cmDisabled true   unchanged          <- the reported bug
+ticked THROUGH the handler    cmDisabled FALSE  "— walk to where you click"
+unticked again                cmDisabled true   and the tooltip is back
+view fps / chase              the pair absent, the hint present
+view top                      the pair present
+```
+
+`test-1490` executes the three lines that decide the child's state, **lifted from source rather than
+restated**, both ways — and asserts an absent flag reads as OFF, so a level authored before free cursor is
+unchanged.
+
 ## One flag was answering two questions (build 1489)
 
 Found while writing the manual, which is the point worth keeping: documenting a UI forces you to enumerate it,

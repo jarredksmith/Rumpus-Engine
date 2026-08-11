@@ -35762,7 +35762,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1489 · 2026-08-11';
+const BUILD_VERSION = 'build 1490 · 2026-08-11';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -50047,10 +50047,21 @@ function renderEditorFields(){
          so the control is absent there rather than present and inert — a control whose consequence is
          invisible is one nobody can use on purpose (build 1348). Chase only counts when ARPG cursor aim
          is on, because that is what makes chase a cursor view at all. */
+      /* build 1490: the pair below is offered only where a free pointer makes sense. In first person the mouse IS
+         the camera, and in third person it is the camera until Aim at cursor is on — so in those two views these
+         controls are simply ABSENT, with the hint that explains them absent too, because it lives inside the
+         block. Say where they went instead of leaving a creator hunting for a checkbox they read about. */
+      if(!(_curView==='top' || _curView==='side' || (_curView==='chase' && gameCfg.chaseCursorAim)))
+        hint(bPly,'','2px 0 6px').innerHTML='<b>Point &amp; click</b> (free cursor, click-to-move) is offered in Top-down and Side-scroll, and in Third person once <b>Aim at cursor</b> is on \u2014 the mouse is the camera otherwise. <i>On click</i> prop signals work in every view, including first person, where the crosshair is the pointer.';
       if(_curView==='top' || _curView==='side' || (_curView==='chase' && gameCfg.chaseCursorAim)){
         const fcRow=document.createElement('label'); fcRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0 2px;cursor:pointer;';
         const fcCb=document.createElement('input'); fcCb.type='checkbox'; fcCb.checked=!!gameCfg.freeCursor; fcCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
-        fcCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.freeCursor=fcCb.checked; _levelDirty=true; if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass(); };
+        /* build 1490: RE-RENDER. Reported from play as "sometimes I could click it, sometimes I couldn't" — the
+           Click-to-move box below is DISABLED until this one is ticked, and ticking this one did not rebuild the
+           panel, so the control stayed dead until some unrelated edit happened to re-render it. Switching tabs
+           and coming back fixed it, which is exactly the shape of the report. A control that enables another
+           has to repaint the one it enables. */
+        fcCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.freeCursor=fcCb.checked; _levelDirty=true; if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass(); renderEditorFields(); };
         const fcSp=document.createElement('span'); fcSp.innerHTML='<b>Free mouse cursor</b> \u2014 point and click';
         fcRow.appendChild(fcCb); fcRow.appendChild(fcSp); bPly.appendChild(fcRow);
         hint(bPly,'','0 0 4px').textContent='The mouse is never captured, so the player keeps a real cursor: HUD buttons, signs and menus are clickable, and the character still aims and shoots at it. Point-and-click adventures, tycoons, card games and RTS-style levels need this. Not offered in first person, where the mouse IS the camera.';
@@ -50059,9 +50070,14 @@ function renderEditorFields(){
            control whose consequence is absent is one nobody can use on purpose). */
         const cmRow=document.createElement('label'); cmRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0 2px 18px;cursor:pointer;';
         const cmCb=document.createElement('input'); cmCb.type='checkbox'; cmCb.checked=!!gameCfg.clickMove; cmCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
-        cmCb.disabled=!gameCfg.freeCursor; if(cmCb.disabled) cmRow.style.opacity='0.5';
+        /* build 1490: and it SAYS SO. Dimming a control states that it is unavailable and never states why,
+           which is build 1338's rule ("a control whose consequence is absent is one nobody can use on
+           purpose") and 1348's ("a capability nobody can find is one that does not exist"). */
+        cmCb.disabled=!gameCfg.freeCursor;
+        if(cmCb.disabled){ cmRow.style.opacity='0.55'; cmRow.title='Needs Free mouse cursor \u2014 there is no pointer to click the ground with otherwise.'; }
         cmCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.clickMove=cmCb.checked; _levelDirty=true; };
-        const cmSp=document.createElement('span'); cmSp.innerHTML='<b>Click to move</b> \u2014 walk to where you click';
+        const cmSp=document.createElement('span');
+        cmSp.innerHTML='<b>Click to move</b> \u2014 ' + (cmCb.disabled ? 'tick <b>Free mouse cursor</b> first' : 'walk to where you click');
         cmRow.appendChild(cmCb); cmRow.appendChild(cmSp); bPly.appendChild(cmRow);
         hint(bPly,'','0 0 6px 18px').textContent='Clicking the ground walks the character there along the level\u2019s own navigation mesh \u2014 around walls, up steps, onto a second storey. Clicking something the world answers (a prop with an On-click signal) does that INSTEAD of moving. Any WASD or stick input takes control straight back, and a route that stops making progress is abandoned rather than pushed at.';
       }
