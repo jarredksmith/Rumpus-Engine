@@ -123,6 +123,7 @@ eq(label.clicked, 'click', "and build 1479's reads as `click`, the verb, rather 
     'ARPG cursor aim', 'Player options',
     /* build 1492 */
     'Stretch to fit',
+    'Taper', 'Pinch the',   // build 1493
   ];
   for(const c of CLAIMS){
     assert(manual.includes(c), 'the manual names "' + c + '" (if not, drop it from this list)');
