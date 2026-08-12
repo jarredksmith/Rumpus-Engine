@@ -35906,7 +35906,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1493 · 2026-08-12';
+const BUILD_VERSION = 'build 1494 · 2026-08-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -46826,18 +46826,47 @@ function _undoTrim(){
   return n;
 }
 let editorUndoActive = false;
+/* build 1494 — A GESTURE THAT CHANGES NOTHING IS NOT AN EDIT.
+   Reported from play: "ctrl-z isn't working as cleanly as it used to. It seems to do some unexpected things."
+
+   Every control calls pushUndoSnapshot as its gesture STARTS — 30 number fields on `focus`, 30 sliders on
+   `mousedown` — and the snapshot went straight onto the stack. So clicking into a field to READ a value, or
+   pressing a slider and letting go, bought a full undo step whose state is identical to the current one.
+   Measured live, with a three-edits-three-undos control that returns exactly:
+
+     one real edit + two empty gestures  ->  stack depth 2, and the first Ctrl+Z restored an IDENTICAL state
+     an edit, an undo, then a field click ->  the redo branch was GONE (build 1129's fork clear, fired by a
+                                              gesture that forked nothing)
+
+   The snapshot is now PENDING until something proves the gesture changed the level. It costs no extra
+   serialization in the common case: the next gesture serializes anyway, and that one string is both the
+   comparison for the pending commit and the new pending snapshot. */
+let _undoPending = null;
+function _undoCommitPending(now){
+  if(_undoPending == null) return;
+  const p = _undoPending; _undoPending = null;
+  if(now == null){ try { now = JSON.stringify(serializeLevel()); } catch(e){ return; } }
+  if(p === now) return;   /* the gesture changed nothing: no step, and CRUCIALLY no fork */
+  /* build 1129's dedupe, kept — and it now sits AFTER the no-op test rather than in front of the redo
+     clear. That ordering was its own defect: the early return skipped the fork clear with it, so an empty
+     gesture behaved differently depending on whether its state happened to match the top of the stack. */
+  if(!(editorUndo.length && editorUndo[editorUndo.length-1] === p)){
+    editorUndo.push(p);
+    if(editorUndo.length > 60) editorUndo.shift();
+    if(typeof _undoTrim==='function') _undoTrim();   /* build 1452's byte cap rides the commit */
+  }
+  /* build 1129: editing after an undo forks the history — the old forward branch is unreachable and
+     keeping it would redo work the author has already replaced. Only a REAL edit forks it now. */
+  editorRedo.length = 0;
+  if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
+}
 function pushUndoSnapshot(){
   if(editorUndoActive || !editorOpen) return;
   _levelDirty = true;   // autosave: an edit happened
   try {
     const snap = JSON.stringify(serializeLevel());
-    if(editorUndo.length && editorUndo[editorUndo.length-1] === snap) return;   // identical to last -> skip
-    editorUndo.push(snap);
-    if(editorUndo.length > 60) editorUndo.shift();
-    _undoTrim();   /* build 1452: and by BYTES, because 60 snapshots of a big level is megabytes */
-    // build 1129: editing after an undo forks the history — the old forward branch is unreachable and
-    // keeping it would redo work the author has already replaced.
-    editorRedo.length = 0;
+    _undoCommitPending(snap);   /* the PREVIOUS gesture, judged against the state it actually left behind */
+    _undoPending = snap;
     if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   } catch(e){}
 }
@@ -47065,19 +47094,31 @@ function _historyStep(snap, pushTo){
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
 }
+/* build 1494: the live gesture is committed BEFORE the pop, or the edit you just made is not on the stack
+   you are about to walk back. A no-op gesture drops here instead, which is what makes the first Ctrl+Z
+   after clicking into a field do the thing the creator meant rather than restoring an identical level. */
 function performUndo(){
-  if(!editorUndo.length) return false;
+  _undoCommitPending();
+  if(!editorUndo.length){ if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns(); return false; }
   return _historyStep(editorUndo.pop(), editorRedo);
 }
 function performRedo(){
-  if(!editorRedo.length) return false;
+  _undoCommitPending();
+  if(!editorRedo.length){ if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns(); return false; }
   return _historyStep(editorRedo.pop(), editorUndo);
 }
 // Grey the buttons out when there is nothing to go back or forward to — a control that looks live and
 // does nothing is worse than one that says so.
 function _edSyncHistoryBtns(){
   const u=document.getElementById('edUndo'), r=document.getElementById('edRedo');
-  if(u) u.disabled = !editorUndo.length;
+  /* build 1494: the pending gesture counts. Mid-drag the level really has changed and there really is
+     something to undo — leaving the button dead until the NEXT gesture would be the same lie in the other
+     direction. If the gesture turns out to have changed nothing, performUndo drops it and re-syncs.
+     STATED COST: the REDO button reads its own stack, so between a real edit and the moment that edit is
+     judged it can still look available. Pressing it commits the gesture first, finds the branch forked and
+     correctly does nothing — so the artifact is a briefly-live button, never a wrong redo. Closing it would
+     mean serializing the level on some end-of-gesture hook that 412 call sites do not have. */
+  if(u) u.disabled = !(editorUndo.length || _undoPending != null);
   if(r) r.disabled = !editorRedo.length;
 }
 
@@ -52721,9 +52762,14 @@ function renderEditorFields(){
         rng.oninput=()=>ap(rng.value); num.onchange=()=>ap(num.value);
         row.appendChild(sp); row.appendChild(rng); row.appendChild(num); host.appendChild(row);
       };
-      mk(per[0].toUpperCase()+' at that end', T.a, (v)=>_tApply(axSel.value, v, T.b));
-      mk(per[1].toUpperCase()+' at that end', T.b, (v)=>_tApply(axSel.value, T.a, v));
-      axSel.onchange=()=>{ pushUndoSnapshot(); _tApply(axSel.value, T.a, T.b); renderEditorFields(); };
+      /* build 1494 — a defect build 1493 shipped, found while reading this fold for the undo work. `T` is
+         captured at RENDER time and the panel does not re-render during a slider drag, so each slider was
+         writing the OTHER one's stale value back: set X to 0.5, then set Z, and X silently returned to 1.
+         The live value is read from the prop instead, which is the only thing that cannot go stale. */
+      const _tNow = ()=>{ const t=_tObj.userData.taper; return t ? [t.a, t.b] : [1, 1]; };
+      mk(per[0].toUpperCase()+' at that end', T.a, (v)=>_tApply(axSel.value, v, _tNow()[1]));
+      mk(per[1].toUpperCase()+' at that end', T.b, (v)=>_tApply(axSel.value, _tNow()[0], v));
+      axSel.onchange=()=>{ pushUndoSnapshot(); const c=_tNow(); _tApply(axSel.value, c[0], c[1]); renderEditorFields(); };
       const tHint=document.createElement('div'); tHint.className='hint'; tHint.style.margin='2px 0 0';
       tHint.textContent='Taper scales the far end of the shape. 1 leaves it alone, 0 pinches it to nothing, above 1 flares it outward. Both at 0 gives a pyramid; one at 0 gives a wedge or a roof; pinching the far end (+Z) of a long thin box is the dart shape. It stays one solid piece — physics, shooting and shadows all follow the real form.';
       host.appendChild(tHint);

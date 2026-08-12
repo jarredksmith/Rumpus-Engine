@@ -490,6 +490,68 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A gesture that changes nothing is not an edit (build 1494)
+
+Reported from play: *"ctrl-z isn't working as cleanly as it used to. It seems to do some unexpected things."*
+
+The stack is *"the state BEFORE an edit"*, and every control calls `pushUndoSnapshot` as its gesture
+**starts** — 30 number fields on `focus`, 30 sliders on `mousedown`. The snapshot went straight on the
+stack. So **clicking into a field to READ a value bought a full undo step** whose state is identical to the
+current one, and fired build 1129's fork clear.
+
+Measured live, with a three-edits-three-undos control that returns exactly:
+
+```
+                                        BEFORE                          AFTER
+one real edit + two empty gestures   stack 2, first Ctrl+Z did NOTHING   stack 1, first Ctrl+Z undid the edit
+an edit, an undo, then a field click redo branch GONE                    branch intact, redo runs
+three empty gestures on a branch     branch destroyed                    branch untouched
+a real edit after an undo            forks (correct)                     forks (still correct)
+```
+
+The snapshot is **pending** until something proves the gesture changed the level. It costs **no extra
+serialization in the common case**: the next gesture serializes anyway, and that one string is both the
+comparison for the pending commit and the new pending snapshot.
+
+**The commit must happen BEFORE the pop**, or the edit you just made is not on the stack you are about to
+walk back — so `performUndo`/`performRedo` open with it. That is also what makes the first Ctrl+Z after a
+drag do the right thing rather than needing a second gesture first.
+
+**Build 1129's dedupe moved UNDER the no-op test, and its old position was its own defect.** The
+identical-to-last skip `return`ed *before* `editorRedo.length = 0`, so an empty gesture behaved differently
+depending on whether its state happened to match the top of the stack — the two questions above were not
+independent. Now a no-op can never reach the fork clear at all, by ordering.
+
+**Stated cost, not hidden:** the Redo button reads its own stack, so between a real edit and the moment that
+edit is judged it can still look available. Pressing it commits first, finds the branch forked and correctly
+does nothing — a briefly-live button, never a wrong redo. Closing that would mean serializing on an
+end-of-gesture hook that 412 call sites do not have.
+
+### I read and probed the wrong build for the whole investigation
+
+Container rollback #32 was in effect. Everything I read — `pushUndoSnapshot`, `performUndo`, the snapshot
+call-site counts — was **build 1431's** code, and `tools/probe/undo-gestures.mjs` measured build 1431 too.
+The probe's own freshness guard could not catch it: build 1414 stamps a content hash and refuses when the
+staging disagrees with the **repo**, and here the repo *was* the rolled-back tree, so they agreed. That
+entry already says it — *the guard detects disagreement, not recency* — and this is the second time it has
+mattered.
+
+The tell was the edit script: its anchor for `pushUndoSnapshot` failed, because the real tree carries build
+1452's `_undoTrim()` line and the rolled-back one did not. **The scripted-edit convention caught a whole
+investigation aimed at the wrong file.** Every measurement above was then re-run against the real build 1493
+and came out identical — the defects predate 1431 — but that was luck, not method.
+
+**Also fixed here: a defect build 1493 shipped**, found while reading the Transform fold for this work. The
+taper sliders captured `T` at render time and the panel does not re-render during a drag, so each slider
+wrote the OTHER one's stale value back — set X to 0.5, then set Z, and X silently returned to 1. They read
+the live value off the prop now, which is the only thing that cannot go stale. Unrelated to undo and folded
+in rather than left live for a build.
+
+**Three pins moved (1129, 1291, 1452)**, every one of them quoting where the code used to LIVE rather than
+what it does — the fork clear, the depth cap, the byte cap and the button rule all moved into the commit.
+1129's is now stronger than it was: the fork clear is *unreachable* for a gesture that edited nothing, which
+is the property it always meant. 1291's stopped quoting two whole function bodies and asserts the shape.
+
 ## A box can pinch one end (build 1493)
 
 Reported from play: *"I squished a square primitive to a thin rectangle and I wanted one end of it to have

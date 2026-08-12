@@ -194,9 +194,15 @@ const mkStep = () => {
 
 // ---------------------------------------------------------------- wiring
 {
-  assert(/function performUndo\(\)\{\n  if\(!editorUndo\.length\) return false;\n  return _historyStep\(editorUndo\.pop\(\), editorRedo\);/.test(src),
+  /* the SHAPE, not the exact body: build 1494 gave both a commit of the live gesture before the pop. What
+     this always asserted — one implementation walked in two directions, so the fast path cannot reach only
+     one of them — is now stated as the property rather than quoted. */
+  const _u = extractFunction('performUndo'), _r = extractFunction('performRedo');
+  assert(/_historyStep\(editorUndo\.pop\(\), editorRedo\)/.test(_u)
+      && /_historyStep\(editorRedo\.pop\(\), editorUndo\)/.test(_r),
     'undo and redo are the same step in opposite directions — one implementation, so the fast path cannot reach only one of them');
-  assert(/function performRedo\(\)\{\n  if\(!editorRedo\.length\) return false;\n  return _historyStep\(editorRedo\.pop\(\), editorUndo\);/.test(src));
+  assert(!/restoreLevel|_applyUndoMoves/.test(_u + _r),
+    '...and neither one restores or applies anything itself');
   assert(/if\(typeof _levelDirty!=='undefined'\) _levelDirty=true;/.test(extractFunction('_edFastRefresh')),
     'the fast path still marks the level dirty, or autosave would miss an undo');
   assert(/updateGizmo/.test(extractFunction('_edFastRefresh')),
