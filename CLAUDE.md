@@ -490,6 +490,91 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A box can pinch one end (build 1493)
+
+Reported from play: *"I squished a square primitive to a thin rectangle and I wanted one end of it to have
+both corners moved towards the middle, making almost a triangle shape. Right now it isn't possible."*
+
+True, and unfixable with what was there: a primitive is a unit shape scaled on x/y/z, and **no combination
+of three scales moves ONE END**. The obvious reading is "add a mesh editor", which is a whole subsystem —
+vertex selection, a second gizmo mode, per-vertex serialization, a collider that follows arbitrary
+deformation. A **frustum is two numbers** and covers the report plus a pyramid, a roof, an obelisk, a
+buttress and a flared plinth.
+
+### The axis is selectable, and that is what makes the report answerable
+
+The natural implementation tapers the TOP face — a pyramid. The report wants a HORIZONTAL pinch, and
+getting there from a Y-only taper means rotating the box 90°, which throws away **base-at-origin** (build
+871's convention, which floor-snapping, `_maxTerrainOver` and the collider all assume). So `ax` picks the
+end: `top (+Y)`, `right end (+X)`, `far end (+Z)`.
+
+One rule for the two perpendiculars: **each scales about the geometry's own centre on that axis** — x and z
+about 0, y about 0.5. That is what "both corners toward the middle" means on every axis, and it is why a
++Z taper of (0,0) gives a spear point at mid-height rather than a ramp. A creator who wants the ramp uses
+the `wedge` primitive, which has existed since build 871.
+
+### A frustum is CONVEX, which is why one collider shape serves every path
+
+The `wedge`'s answer is a trimesh, and it could not have been used here: **Rapier's trimesh is static-only
+and carries no volume**, so a dynamic tapered crate would have had no inertia. A convex hull is exact for a
+frustum and works for the static, kinematic and dynamic paths alike.
+
+**The offset was wrong in the first draft, and it fails silently.** The points were stored base-relative
+with `off = 0`; the cuboid fallback beside `convexHull` would then have been centred on the **body origin** —
+a collider half buried in the floor, only for the shapes flat enough to defeat the hull builder, with
+nothing failing. The points are stored relative to their own AABB centre and `off` **is** that centre, so
+the hull and its fallback land in the same place by construction.
+
+**And the fallback is unreached, which is worth saying rather than implying.** Probed live: this Rapier
+build's `convexHull` returns a descriptor for the dart, the pyramid, the wedge, the flare, three collinear
+points, four coplanar ones **and an empty array**, and `createCollider` threw on none of them — including a
+prop flattened to 1e-7 tall. So the branch is a guard costing one `||`, not a measured path, and the
+source comment and the test both say so.
+
+### Instancing is where this would have gone silently wrong
+
+A batch draws ONE shared geometry looked up by the key's **shape NAME** (`instanceGeoFor`), so a tapered
+member of a `box` batch would have rendered as a plain box — the silent-visual-fault class this file keeps
+recording. Tapered props are **excluded** from instancing. Encoding the taper in the key and caching a
+geometry per variant is the version that batches them and is a bigger build; the cost of the exclusion is
+one draw call per tapered prop, which is what a one-off authored shape is.
+
+### Three smaller things that are each a defect without them
+
+- **The normals are recomputed.** A tapered side face is no longer axis-aligned, and the box's authored
+  normals would light it as though it were. Safe *because* `BoxGeometry`'s 24 vertices are not shared
+  between faces, so `computeVertexNormals` averages per face and the shape stays flat-shaded rather than
+  smoothing its own corners — asserted against the real three build rather than assumed.
+- **`refreshPropCollider` after the geometry swap is not tidiness.** It runs BEFORE this in `spawnProp`,
+  and its per-mesh boxes come from the very vertices the taper just moved.
+- **BOTH apply sites.** `_pfSpawnEntry` is build 1280's deliberate near-copy, and duplicate, paste, prefabs
+  and the array tool all route through it — a taper that only landed in `_applyPropEntry` would come back
+  as a plain box on every copy.
+
+It rides at the **top level** of the prop entry beside `par`, not inside `propMaterialDesc`, whose name
+would then be a lie about what it carries. Written only when it actually tapers, so no existing level grows
+a key — measured through the real serializer.
+
+```
+control    24 verts, no taper key, unit box base-at-origin, cuboid collider
+dart       taper {z,0,1} — width 0 at the far end, 1 at the near one
+collider   hull, 24 points, off (0, 0.5, 0), half extents (0.5, 0.5, 10)
+body       dart / pyramid / a prop flattened to 1e-7: a body and one collider each, nothing threw
+roundtrip  tpr ["z",0,1] out and back; a plain box writes NOTHING
+instance   plain eligible, tapered NOT
+```
+
+**My own pin was defeated by my own comment, for the second build running.** `!/propMaterialDesc[\s\S]{0,900}taper/`
+reached 33 lines into `propEntry`, where this build's comment says the word. It extracts the function now.
+That is the character-budget trap (1149) and the prose-defeats-a-pin trap (1421) in one object, and it is
+the same failure shape as 1492's stale `#endif` anchor: **a pin scoped by proximity is a pin against the
+neighbourhood.**
+
+**Container rollback #31** landed between the design and the edit — `BUILD_VERSION` back at 1431, 1178 test
+files against 1238, and someone else's uncommitted build-1431 work in the tree. The edit script's
+`assert "build 1492" in s` aborted before writing a byte. `git log` first, then fetch + `reset --hard
+FETCH_HEAD`; the script lives in the scratchpad, outside the repo, so re-running it was free.
+
 ## A texture on a stretched primitive is measured in metres (build 1492)
 
 Reported from play: *"if I add a concrete texture to a primitive and then stretch it into a long skinny

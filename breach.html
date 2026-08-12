@@ -16784,6 +16784,58 @@ function _signTick(){
     _signRender(o);
   }
 }
+/* build 1493 — TAPER. Reported from play: "I squished a box to a thin rectangle and I wanted one end to
+   have both corners moved towards the middle, making almost a triangle shape. Right now it isn't possible."
+   True: a primitive is a unit shape scaled by three numbers, and no combination of three scales pinches ONE
+   END of a box. A mesh editor is a whole subsystem; a FRUSTUM is two numbers and covers the report, plus a
+   pyramid, a roof, an obelisk, a buttress and a flared plinth.
+
+   The far end's two PERPENDICULAR axes are scaled, each about the geometry's own centre on that axis. One
+   rule, and it is why the axis is selectable rather than always Y: pinching the +Z end directly is what the
+   report asks for, and getting there by rotating a box 90 degrees would throw away base-at-origin placement
+   (build 871's convention, which floor-snapping and the collider both assume). */
+const _TAPER_PER = { x:['y','z'], y:['x','z'], z:['x','y'] };   // the other two axes, in x,y,z order
+const _TAPER_MID = { x:0, y:0.5, z:0 };                          // each axis' own centre in the unit shape
+const TAPER_MAX = 4;                                             // above 1 is a FLARE, which is free and useful
+function _taperClamp(v){ const n = +v; return isFinite(n) ? Math.max(0, Math.min(TAPER_MAX, n)) : 1; }
+function _taperAxis(ax){ return _TAPER_PER.hasOwnProperty(ax) ? ax : 'y'; }
+/* Build the unit box with its far end pinched. The lerp is exact rather than decorative: a BoxGeometry has
+   no subdivision, so every vertex sits at t=0 or t=1 — but writing it as a blend keeps it correct if the
+   source shape ever gains segments, and states what the number means. */
+function _taperGeo(ax, a, b){
+  const g = new THREE.BoxGeometry(1,1,1); g.translate(0, 0.5, 0);
+  const A = _taperAxis(ax), per = _TAPER_PER[A], f = [_taperClamp(a), _taperClamp(b)];
+  if(f[0] === 1 && f[1] === 1) return g;
+  const pos = g.attributes.position;
+  const lo = (A === 'y') ? 0 : -0.5, hi = (A === 'y') ? 1 : 0.5;
+  const gA = 'get' + A.toUpperCase();
+  for(let i = 0; i < pos.count; i++){
+    const t = (pos[gA](i) - lo) / (hi - lo);
+    for(let k = 0; k < 2; k++){
+      const p = per[k], m = _TAPER_MID[p], sc = 1 + (f[k] - 1) * t;
+      pos['set' + p.toUpperCase()](i, m + (pos['get' + p.toUpperCase()](i) - m) * sc);
+    }
+  }
+  pos.needsUpdate = true;
+  /* MUST recompute: a tapered side face is no longer axis-aligned, so the box's authored normals would
+     light it as though it were. BoxGeometry's 24 vertices are not shared BETWEEN faces, so the average is
+     per-face and the shape stays flat-shaded rather than smoothing its own corners. */
+  g.computeVertexNormals(); g.computeBoundingBox(); g.computeBoundingSphere();
+  return g;
+}
+/* The one writer. Rebuilds the geometry from scratch (24 vertices — cheaper than keeping a pristine copy
+   per prop) and refreshes the collider, because refreshPropCollider runs BEFORE this in spawnProp and its
+   per-mesh boxes are derived from the vertices this just moved. */
+function applyPropTaper(obj, ax, a, b){
+  if(!obj || !obj.isMesh || !obj.userData || obj.userData.src !== 'box') return;
+  const A = _taperAxis(ax), fa = _taperClamp(a), fb = _taperClamp(b);
+  if(fa === 1 && fb === 1) delete obj.userData.taper;
+  else obj.userData.taper = { ax:A, a:fa, b:fb };
+  const old = obj.geometry;
+  obj.geometry = _taperGeo(A, fa, fb);
+  if(old && old.dispose) old.dispose();
+  if(typeof refreshPropCollider === 'function') refreshPropCollider(obj);
+}
 function buildBoxProp(){
   const geo = new THREE.BoxGeometry(1,1,1); geo.translate(0, 0.5, 0);  // base at y=0 so it sits on the floor
   const m = new THREE.Mesh(geo, primitiveMat());   // build 1139: one place builds the primitive material, so the detail set reaches the box too
@@ -21710,6 +21762,9 @@ function _sigUnpack(x){
   return s;
 }
 function _applyPropEntry(obj, p){
+  /* build 1493: FIRST, before anything reads the shape. applyPropTaper rebuilds the geometry and refreshes
+     the collider, and applyPropDynState below can create a body from it. */
+  if(Array.isArray(p.tpr)) applyPropTaper(obj, p.tpr[0], p.tpr[1], p.tpr[2]);
   applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(_sigUnpack);   /* build 1406: one derivation, or the world verbs' fields keep being dropped */ if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.sgn && obj.userData.sign){ obj.userData.sign=_signCfgSan(p.sgn); if(typeof _signRender==='function') _signRender(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
 }
 function loadHostedProps(){
@@ -35851,7 +35906,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1492 · 2026-08-12';
+const BUILD_VERSION = 'build 1493 · 2026-08-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36693,6 +36748,29 @@ function propShapeInfo(obj){
   if(src==='sphere')   return { kind:'ball',     r:rXZ,                       off:_poff.set(0, rXZ, 0).clone() };
   if(src==='cylinder') return { kind:'cylinder', hh:0.5*Math.abs(s.y), r:rXZ, off:_poff.set(0, 0.5*Math.abs(s.y), 0).clone() };
   if(src==='cone')     return { kind:'cone',     hh:0.5*Math.abs(s.y), r:rXZ, off:_poff.set(0, 0.5*Math.abs(s.y), 0).clone() };
+  /* build 1493: a tapered box is a FRUSTUM, which is convex by construction — so one convex hull is exact
+     for the static, kinematic AND dynamic paths alike (Rapier's trimesh is static-only and carries no
+     volume, so the wedge's trimesh answer could not have served a dynamic tapered crate).
+
+     The points are stored relative to the AABB CENTRE and `off` is that centre, so the cuboid fallback in
+     colliderDescFor lands in exactly the same place. Storing them base-relative with off=0 was the first
+     draft, and a degenerate hull then fell back to a cuboid centred on the body origin — a collider half
+     buried in the floor, silently, only for the shapes flat enough to defeat the hull builder. */
+  if(src==='box' && obj.userData.taper){
+    const pos = obj.isMesh && obj.geometry && obj.geometry.attributes && obj.geometry.attributes.position;
+    if(pos && pos.count){
+      let x0=Infinity,y0=Infinity,z0=Infinity,x1=-Infinity,y1=-Infinity,z1=-Infinity;
+      const raw = new Float32Array(pos.count*3);
+      for(let i=0;i<pos.count;i++){
+        const px=pos.getX(i)*s.x, py=pos.getY(i)*s.y, pz=pos.getZ(i)*s.z;
+        raw[i*3]=px; raw[i*3+1]=py; raw[i*3+2]=pz;
+        if(px<x0)x0=px; if(px>x1)x1=px; if(py<y0)y0=py; if(py>y1)y1=py; if(pz<z0)z0=pz; if(pz>z1)z1=pz;
+      }
+      const cx=(x0+x1)/2, cy=(y0+y1)/2, cz=(z0+z1)/2;
+      for(let i=0;i<pos.count;i++){ raw[i*3]-=cx; raw[i*3+1]-=cy; raw[i*3+2]-=cz; }
+      return { kind:'hull', pts:raw, hx:Math.max(0.05,(x1-x0)/2), hy:Math.max(0.05,(y1-y0)/2), hz:Math.max(0.05,(z1-z0)/2), off:_poff.set(cx, cy, cz).clone() };
+    }
+  }
   if(src==='box')      return { kind:'cuboid', hx:0.5*Math.abs(s.x), hy:0.5*Math.abs(s.y), hz:0.5*Math.abs(s.z), off:_poff.set(0, 0.5*Math.abs(s.y), 0).clone() };
   // model / composite: approximate with a centered box from the world AABB
   refreshPropCollider(obj);
@@ -36705,6 +36783,15 @@ function colliderDescFor(info){
   if(info.kind==='ball')          cd = RAPIER.ColliderDesc.ball(info.r);
   else if(info.kind==='cylinder') cd = RAPIER.ColliderDesc.cylinder(info.hh, info.r);
   else if(info.kind==='cone')     cd = RAPIER.ColliderDesc.cone(info.hh, info.r);
+  /* build 1493: the cuboid beside the hull is a guard, and it is honest to say it was NOT reached. Probed
+     in the live game: this Rapier build's convexHull returns a descriptor for every input tried — the dart,
+     the pyramid, the wedge, the flare, three collinear points, four coplanar ones and an EMPTY array — and
+     createCollider threw on none of them, including a prop flattened to 1e-7 tall. So the branch is
+     unmeasured rather than dead-code-proven, and it costs one `||`. What it must NOT do is land somewhere
+     else if it ever fires, which is why the hull's points are stored relative to their own AABB centre and
+     `off` is that centre: base-relative points with off=0 was the first draft, and the fallback cuboid
+     would then have been centred on the body origin — a collider half buried in the floor, silently. */
+  else if(info.kind==='hull'){ cd = RAPIER.ColliderDesc.convexHull(info.pts) || RAPIER.ColliderDesc.cuboid(info.hx, info.hy, info.hz); }
   else                            cd = RAPIER.ColliderDesc.cuboid(info.hx, info.hy, info.hz);
   return cd;
 }
@@ -38252,7 +38339,12 @@ let instanceMeshes = [];   // active InstancedMesh objects
 let instancedProps = [];   // individual prop meshes currently hidden behind instances
 let instancingActive = false;
 function instanceEligible(o){
-  return o && isShapePrimitive(o.userData.src) && !o.userData.tex && !o.userData.emit && !o.userData.phys && !o.userData.vehicle && !(o.userData.xa && o.userData.xa.on);   // animated mechanisms + drivable vehicles must stay individual movable meshes (instancing bakes a static matrix)
+  /* build 1493: a TAPERED box is excluded. A batch draws ONE shared geometry looked up from the key's shape
+     name (instanceGeoFor), so a tapered member would silently render as a plain box — the class of silent
+     visual fault this file keeps recording. Encoding the taper in the key and caching a geometry per
+     variant is the version that batches them, and it is a bigger build; the cost of the exclusion is one
+     draw call per tapered prop, which is what a one-off authored shape is. */
+  return o && isShapePrimitive(o.userData.src) && !o.userData.tex && !o.userData.taper && !o.userData.emit && !o.userData.phys && !o.userData.vehicle && !(o.userData.xa && o.userData.xa.on);   // animated mechanisms + drivable vehicles must stay individual movable meshes (instancing bakes a static matrix)
 }
 // build 1139: the batch key. It used to be shape|colour, and the batch material was BUILT FROM SCRATCH at
 // the default roughness .65 / metalness .35 — so every instanced prop silently lost its authored shine
@@ -45259,6 +45351,7 @@ function _pfCapture(name){
 function _pfSpawnEntry(p, at, pfMark, gid, cb){
   const t=[ p.t[0]+at.x, p.t[1]+at.y, p.t[2]+at.z, p.t[3], p.t[4], p.t[5], p.t[6], p.t[7], p.t[8] ];
   spawnProp(p.src, t, (obj)=>{
+    if(Array.isArray(p.tpr)) applyPropTaper(obj, p.tpr[0], p.tpr[1], p.tpr[2]);   /* build 1493: the 1280 near-copy — a duplicated or prefabbed taper must come back tapered */
     applyPropDynState(obj, p);
     if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }
     if(p.tg) obj.userData.tag=p.tg;
@@ -45569,6 +45662,10 @@ function propEntry(o){
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
   if(o.userData.trk && o.userData.trk.w) e.trk=1;   // build 830: track-piece barrier walls
   if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.latG!=null && V.latG!==2.2) e.veh.latG=V.latG; if(V.susp!=null && V.susp!==1) e.veh.susp=V.susp; if(V.launch!=null && V.launch!==1) e.veh.launch=V.launch; if(V.brake!=null && V.brake!==1) e.veh.brake=V.brake; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.hitH!=null && V.hitH!==1) e.veh.hitH=V.hitH; if(V.hitOffX) e.veh.hitOffX=V.hitOffX; if(V.hitOffY) e.veh.hitOffY=V.hitOffY; if(V.hitOffZ) e.veh.hitOffZ=V.hitOffZ; if(V.headlights){ e.veh.headlights=1; if(V.headColor!=null && V.headColor!==0xfff2cc) e.veh.headColor=V.headColor; if(V.headInten!=null && V.headInten!==6) e.veh.headInten=V.headInten; if(V.headRange!=null && V.headRange!==32) e.veh.headRange=V.headRange; if(V.headSep) e.veh.headSep=V.headSep; if(V.headY) e.veh.headY=V.headY; if(V.headFwd) e.veh.headFwd=V.headFwd; if(V.headStart===false) e.veh.headStart=0; } if(V.brakeLights){ e.veh.brakeLights=1; if(V.brakeColor!=null && V.brakeColor!==0xff2020) e.veh.brakeColor=V.brakeColor; if(V.brakeSize!=null && V.brakeSize!==0.5) e.veh.brakeSize=V.brakeSize; if(V.brakeSep) e.veh.brakeSep=V.brakeSep; if(V.brakeY) e.veh.brakeY=V.brakeY; if(V.brakeBack) e.veh.brakeBack=V.brakeBack; } if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
+  /* build 1493: SHAPE, not material — so it rides at the top level beside `par` rather than inside
+     propMaterialDesc, whose name would then be a lie about what it carries. Written only when it actually
+     tapers, so no existing level grows a key. */
+  if(o.userData.taper){ const T=o.userData.taper; e.tpr=[ T.ax, +T.a, +T.b ]; }
   if(o.userData.parNid) e.par = String(o.userData.parNid);   // build 1309: rides this prop. Top level — a STATIC crate on a lift is the commonest case, and the block below is dynamic-props-only
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
@@ -52597,6 +52694,40 @@ function renderEditorFields(){
       tgt.apply(); updateGizmo(); updateEditorOut();
     };
     host.appendChild(snapBtn);
+  }
+  /* build 1493: the taper rows, under Transform because a taper is a SHAPE number and this is the fold a
+     creator is already in when they squash a box. Box only — every other primitive is a solid of
+     revolution or a pre-built composite, and "pinch the far end" means nothing on a sphere. */
+  if(editorActive==='props' && (MODE_SECTIONS[editorMode]||[]).indexOf('transform')>=0){
+    const _tObj = editorTargets.props.obj ? editorTargets.props.obj() : null;
+    if(_tObj && _tObj.userData && _tObj.userData.src === 'box'){
+      const T = _tObj.userData.taper || { ax:'y', a:1, b:1 };
+      const _tTargets = ()=> (typeof _selTargets==='function' ? _selTargets() : [_tObj]).filter(o=>o && o.userData && o.userData.src==='box');
+      const _tApply = (ax, a, b)=>{ for(const o of _tTargets()){ applyPropTaper(o, ax, a, b); if(typeof _homeSync==='function') _homeSync(o); } _levelDirty=true; };
+      const hdr=document.createElement('div'); hdr.style.cssText='margin:10px 0 2px;color:#ff8a4a;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;opacity:0.85;'; hdr.textContent='Taper'; host.appendChild(hdr);
+      const axRow=document.createElement('label'); axRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;';
+      const axSp=document.createElement('span'); axSp.textContent='Pinch the'; axSp.style.minWidth='78px';
+      const axSel=document.createElement('select'); axSel.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
+      for(const [v,l] of [['y','top (+Y)'],['x','right end (+X)'],['z','far end (+Z)']]){ const op=document.createElement('option'); op.value=v; op.textContent=l; if(v===T.ax) op.selected=true; axSel.appendChild(op); }
+      axRow.appendChild(axSp); axRow.appendChild(axSel); host.appendChild(axRow);
+      const per=_TAPER_PER[_taperAxis(T.ax)];
+      const mk=(label, val, onApply)=>{
+        const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;';
+        const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='78px';
+        const rng=document.createElement('input'); rng.type='range'; rng.min='0'; rng.max=String(TAPER_MAX); rng.step='0.01'; rng.value=val; rng.style.cssText='flex:1;accent-color:#ff8a4a;';
+        const num=document.createElement('input'); num.type='number'; num.min='0'; num.max=String(TAPER_MAX); num.step='0.01'; num.value=(+val).toFixed(2); num.style.cssText='width:58px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
+        const ap=(v)=>{ const c=_taperClamp(Math.round((parseFloat(v)||0)*100)/100); rng.value=c; num.value=c.toFixed(2); onApply(c); };
+        rng.addEventListener('mousedown',()=>pushUndoSnapshot()); num.addEventListener('focus',()=>pushUndoSnapshot());
+        rng.oninput=()=>ap(rng.value); num.onchange=()=>ap(num.value);
+        row.appendChild(sp); row.appendChild(rng); row.appendChild(num); host.appendChild(row);
+      };
+      mk(per[0].toUpperCase()+' at that end', T.a, (v)=>_tApply(axSel.value, v, T.b));
+      mk(per[1].toUpperCase()+' at that end', T.b, (v)=>_tApply(axSel.value, T.a, v));
+      axSel.onchange=()=>{ pushUndoSnapshot(); _tApply(axSel.value, T.a, T.b); renderEditorFields(); };
+      const tHint=document.createElement('div'); tHint.className='hint'; tHint.style.margin='2px 0 0';
+      tHint.textContent='Taper scales the far end of the shape. 1 leaves it alone, 0 pinches it to nothing, above 1 flares it outward. Both at 0 gives a pyramid; one at 0 gives a wedge or a roof; pinching the far end (+Z) of a long thin box is the dart shape. It stays one solid piece — physics, shooting and shadows all follow the real form.';
+      host.appendChild(tHint);
+    }
   }
   // live preview the aimed pose while the Aim tab is open, and highlight the selected scene object
   editorAimPreview = (editorOpen && editorActive==='aim');
