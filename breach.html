@@ -35762,7 +35762,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1490 · 2026-08-11';
+const BUILD_VERSION = 'build 1491 · 2026-08-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -49076,7 +49076,20 @@ function renderEditorFields(){
       const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 6px;';
       const inp=document.createElement('input'); inp.type='text'; inp.placeholder=placeholder; inp.value=worldCfg[key]||''; inp.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
       const ab=document.createElement('button'); ab.textContent='Apply'; ab.style.flex='0 0 auto';
-      const apply=()=>{ pushUndoSnapshot(); worldCfg[key]=inp.value.trim(); if(key==='floorTex'){ worldCfg.floorTexN=''; worldCfg.floorTexR=''; } else if(key==='wallTex'){ worldCfg.wallTexN=''; worldCfg.wallTexR=''; } applyWorldCfg(); };
+      /* build 1491: swapping the ALBEDO drops the relief maps that came with the old one — a concrete normal
+         under a brick colour is not a surface. But it only fires on an actual CHANGE now: before this, pressing
+         Apply on an unchanged field wiped a normal map the creator had just typed into the row below, which is
+         the footgun that arrives the moment those rows exist. Re-rendering is what makes the drop VISIBLE — the
+         two fields below empty in front of you rather than silently. */
+      const apply=()=>{ pushUndoSnapshot(); const was=worldCfg[key]||''; const now=inp.value.trim(); worldCfg[key]=now;
+        let dropped=false;
+        if(now!==was){
+          if(key==='floorTex'){ dropped=!!(worldCfg.floorTexN||worldCfg.floorTexR); worldCfg.floorTexN=''; worldCfg.floorTexR=''; }
+          else if(key==='wallTex'){ dropped=!!(worldCfg.wallTexN||worldCfg.wallTexR); worldCfg.wallTexN=''; worldCfg.wallTexR=''; }
+        }
+        applyWorldCfg();
+        if(dropped){ if(typeof toast==='function') toast('New texture \u2014 normal & roughness cleared'); renderEditorFields(); }
+      };
       ab.onclick=apply; inp.addEventListener('keydown', e=>{ if(e.code==='Enter'){ e.preventDefault(); apply(); } });
       row.appendChild(inp); row.appendChild(ab); host.appendChild(row);
     };
@@ -49216,7 +49229,16 @@ function renderEditorFields(){
       const skStatus=document.createElement('div'); skStatus.id='edSkyStatus'; skStatus.className='hint'; skStatus.style.cssText='margin:-2px 0 6px;font-size:10px;'; b.appendChild(skStatus); }
     { const b=subSec('Floor','floor',true);
       colorRow(b,'Floor color','floorColor'); slider(b,'Floor roughness','floorRough',0,1,0.05); slider(b,'Floor metalness','floorMetal',0,1,0.05);
-      texRow(b,'https://\u2026/floor.jpg (tiles)','floorTex'); slider(b,'Floor tile W','floorTileU',0,80,0.5); slider(b,'Floor tile H','floorTileV',0,80,0.5); slider(b,'Floor rotate\u00b0','floorRot',0,360,5);
+      texRow(b,'https://\u2026/floor.jpg (tiles)','floorTex');
+      /* build 1491: the floor has ALWAYS loaded a normal and a roughness map \u2014 applySurfaceTexture takes all
+         three and worldCfg has carried floorTexN/floorTexR since build 1378. There was simply nowhere to TYPE
+         one: only the texture search below set them, so a creator who pasted their own url got a flat image
+         forever, with the relief silently unreachable. Reported from play as "if a material is added to the
+         floor, it doesn't pick up any normal or bump maps, just the flat image." */
+      texRow(b,'https://\u2026/floor-normal.jpg (optional)','floorTexN');
+      texRow(b,'https://\u2026/floor-rough.jpg (optional)','floorTexR');
+      hint(b,'','0 0 5px').innerHTML='<b>Normal</b> gives the surface relief \u2014 grout lines, cracks, a weave \u2014 without any extra geometry; <b>roughness</b> makes parts of it shinier than others (wet patches, worn tracks). Both are optional, both tile with the sliders below, and both are DATA images: leave them blank and the engine\u2019s own fine grain takes over. Changing the texture above clears them, because relief from one material does not belong on another.';
+      slider(b,'Floor tile W','floorTileU',0,80,0.5); slider(b,'Floor tile H','floorTileV',0,80,0.5); slider(b,'Floor rotate\u00b0','floorRot',0,360,5);
       { const fh=document.createElement('div'); b.appendChild(fh); renderTexSearch(fh,(maps)=>{ pushUndoSnapshot(); worldCfg.floorTex=maps.map||''; worldCfg.floorTexN=maps.normal||''; worldCfg.floorTexR=maps.rough||''; applyWorldCfg(); renderEditorFields(); }); }
       { const tb=document.createElement('div'); tb.style.cssText='margin-top:8px;border-top:1px solid #1d2b33;padding-top:7px;';
         const tl=document.createElement('div'); tl.className='hint'; tl.style.margin='0 0 5px'; tl.innerHTML='<b>Terrain</b> \u2014 rolling height-mesh. Walks correctly in both Classic and Physics movement.'; tb.appendChild(tl);
@@ -49413,7 +49435,11 @@ function renderEditorFields(){
         vc.onchange=()=>{ pushUndoSnapshot(); worldCfg.wallsVisible=vc.checked; applyWorldCfg(); };
         const vs=document.createElement('span'); vs.innerHTML='<b>Show boundary walls</b> \u2014 off = invisible, still solid'; vr.appendChild(vc); vr.appendChild(vs); b.appendChild(vr); }
       colorRow(b,'Wall color','wallColor'); slider(b,'Wall roughness','wallRough',0,1,0.05); slider(b,'Wall metalness','wallMetal',0,1,0.05);
-      texRow(b,'https://\u2026/wall.jpg (tiles)','wallTex'); slider(b,'Wall tile W','wallTileU',0,80,0.5); slider(b,'Wall tile H','wallTileV',0,80,0.5); slider(b,'Wall rotate\u00b0','wallRot',0,360,5);
+      texRow(b,'https://\u2026/wall.jpg (tiles)','wallTex');
+      texRow(b,'https://\u2026/wall-normal.jpg (optional)','wallTexN');   /* build 1491: the same gap, the same fix \u2014 the walls have loaded these since 1378 with no field to type one into */
+      texRow(b,'https://\u2026/wall-rough.jpg (optional)','wallTexR');
+      hint(b,'','0 0 5px').textContent='Relief and shine for the boundary walls, exactly like the floor pair. Optional; they tile with the sliders below, and changing the texture above clears them.';
+      slider(b,'Wall tile W','wallTileU',0,80,0.5); slider(b,'Wall tile H','wallTileV',0,80,0.5); slider(b,'Wall rotate\u00b0','wallRot',0,360,5);
       { const wh=document.createElement('div'); b.appendChild(wh); renderTexSearch(wh,(maps)=>{ pushUndoSnapshot(); worldCfg.wallTex=maps.map||''; worldCfg.wallTexN=maps.normal||''; worldCfg.wallTexR=maps.rough||''; applyWorldCfg(); renderEditorFields(); }); }
       hint(b,'','4px 0 2px').textContent='Tile W/H = repeats across width / height (0 = auto). Lower roughness = shinier; metalness adds sheen. Rotate spins the texture (planks/bricks a new way).'; }
     { const b=subSec('Arena','arena',true);

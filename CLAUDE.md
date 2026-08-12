@@ -562,6 +562,63 @@ than missing — it said the value carries "only when the level is cleared", whi
 changed again. Fixing a stale sentence took one edit and was worth more than a new page. Read the existing
 chapter before adding one beside it.
 
+## The floor could always take a normal map, and there was nowhere to type one (build 1491)
+
+Reported from play: *"if a material is added to the floor, it doesn't pick up any normal or bump maps, just
+the flat image."*
+
+Every part of it worked except the door. `applySurfaceTexture` has taken all three maps since build 1378,
+`worldCfg` carries `floorTexN`/`floorTexR`, they serialize with the world, and build 990's asset inventory
+has listed them by name for hundreds of builds. **The only thing that ever WROTE them was the texture
+search**, which returns a whole map set from Poly Haven — so a creator who pasted their own url got a flat
+image with the relief unreachable, permanently, and nothing in the panel suggested otherwise.
+
+Six `texRow`s where there were two. That is the build.
+
+### And the field that did not exist was clearing the field that did
+
+```js
+worldCfg[key]=inp.value.trim();
+if(key==='floorTex'){ worldCfg.floorTexN=''; worldCfg.floorTexR=''; }
+```
+
+Dropping the relief when the albedo changes is **right** — a concrete normal under a brick colour is not a
+surface — but it fired on every Apply, including one that changed nothing. The moment the rows below exist
+that is a trap: type a normal, press Apply on the texture above out of habit, and it is gone. It now fires
+only on a real change, **says so**, and re-renders so the two fields empty in front of you rather than
+silently (build 1490's rule, one build later).
+
+`normalScale` needed nothing, and the reason is build 1387's: it bakes the PROCEDURAL relief strength into
+its own map rather than setting the property, precisely so a creator's loaded map is not scaled by whatever
+was left on a shared material. That decision is what makes these fields safe to expose at all, and the test
+pins that nothing writes it.
+
+### The probe could not decode an image, and says so
+
+Measured live, with a floor that was never given a field as the control in every row:
+
+```
+CONTROL — albedo only    accepted ""                     <- the report: no normal url reaches the material
+with the new rows        accepted "./probe-normal.png"   <- the creator's url does
+panel                    floorNormal · floorRough · wallNormal · wallRough all present
+re-Apply, url UNCHANGED  kept
+Apply a DIFFERENT url    dropped
+```
+
+**The decoded image never lands in this sandbox and that is stated rather than hidden.** A data url is sent
+through the CORS proxy (`proxied` treats its origin, the string `"null"`, as cross-origin) and hangs against
+a `workers.dev` host with no network. Switching to a same-origin png fixed the hang — `pending` went 3 → 0 —
+and the page still refuses the file, which **curls 200 from the staging server**. So the probe proves the
+half that was missing (the url reaches the material) and cannot prove the pixels.
+
+That is a sound place to stop rather than a gap: the loading half is 1378's, unchanged, and goes through the
+same `_loadSurfaceMap` the albedo already uses — so an albedo that works today implies a normal that works.
+`test-1491` pins that contract, executes the clear both ways, and a browser is what confirms the pixels.
+
+**And the test's own extraction was off by one first.** `src.slice(i, j)` stopped one character before the
+handler's closing `};`, so every execution below it was a syntax error rather than a test. The end marker's
+length is added explicitly now, which is build 1488's off-by-one in a different function.
+
 ## A control that enables another must repaint it (build 1490)
 
 Reported from play: *"I noticed an issue with the move to mouse click option. It was finnicky in the gameplay
