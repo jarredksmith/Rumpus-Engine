@@ -121,6 +121,8 @@ eq(label.clicked, 'click', "and build 1479's reads as `click`, the verb, rather 
        in an engine hint propagates into the docs by being copied out of it, so the label is claimed here in
        both directions. */
     'ARPG cursor aim', 'Player options',
+    /* build 1492 */
+    'Stretch to fit',
   ];
   for(const c of CLAIMS){
     assert(manual.includes(c), 'the manual names "' + c + '" (if not, drop it from this list)');
