@@ -490,6 +490,74 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## An invisible barrier, and the floor that made it impossible (build 1495)
+
+Reported from play: *"is there a way to create an invisible barrier so players can't walk into certain
+areas? Primitive opacity doesn't go totally transparent."*
+
+It did not, and the reason was a literal: **`Math.max(0.15, ...)` clamped every opacity to a 15% floor, in
+two places.** Build 871 chose that floor when opacity meant *glass*, where a pane you cannot see at all is
+indistinguishable from a prop that failed to load. It is exactly wrong for the other thing creators want
+from the same slider.
+
+So the floor is **0**, and 0 means BARRIER. **No new concept and no new serialized field** — `m.op` already
+saves anything under 1 — and it is the control the creator already reached for, which is the whole reason
+this is small.
+
+### Two things had to be true or it would have been useless
+
+- **`+ud.op || 1` turns 0 into 1.** Build 1329's recorded trap, live in both the blend and the setter, so
+  even with the floor removed a saved barrier would have loaded back **solid and visible** with nothing
+  failing anywhere. `_propOpacity` is now the one derivation.
+- **It must stay SELECTABLE.** A creator who cannot find their own walls cannot move them. In the editor a
+  barrier renders as a faint ghost; `_syncBarrierProps` re-runs the blend on the editor toggle, from ONE
+  site placed after `editorOpen` flips so it serves both directions.
+
+### `material.visible`, not the object's — and it does two jobs
+
+Verified against the real r149 rather than assumed: the shadow map **copies `material.visible` onto the
+depth material and gates the shadow render on it**, so a barrier casts no shadow — which is what would have
+given it away instantly. It also leaves the object in the scene, so selection, the gizmo and the outliner
+all still find it, and **build 1236's ghost test already reads it**, so a bullet passes through a barrier by
+the engine's own stated rule rather than by a special case.
+
+**The enemy bolt was the one shooter that disagreed.** It walks boxes rather than raycasting (build 1159),
+so without one line a barrier would have eaten enemy fire while the player's own rounds flew through it —
+the same wall behaving two ways depending on who pulled the trigger. Stated in the manual too, with the
+workaround for anyone who wants the opposite: a near-invisible pane at 0.05 is a normal solid and stops
+shots.
+
+Measured live, with an identical visible wall beside it as the control on every row:
+
+```
+opacity        barrier 0, ordinary wall unset            material.visible false / true
+solid          1 collider box each, both in `colliders`, insideSolid true at BOTH, false on open ground
+physics        a real static Rapier body for each
+drawn          hidden 69 -> shown 70 -> hidden 69        exactly one draw call, control returns EXACTLY
+editor         ghost at 0.25, transparent; back to not-drawn on the way out
+round trip     op 0 written, 0 restored, still 1 collider box; a plain wall writes NOTHING
+shots          a ghost to shots; the ordinary wall is not
+```
+
+**The draw-call row was wrong twice before it was right, and both were the instrument.** First run: 274 →
+352 → 429, the control climbing monotonically. Second, with warm-up and alternation: 1605 → 1965 → 2320, at
+~72 per render. The cause is one line at the top of the file — **`renderer.info.autoReset = false`**, set so
+the engine can accumulate across its multi-pass frame — so `.calls` is a running total and every reading
+was measuring how many renders I had done. `renderer.info.reset()` per sample, exactly as build 1414's
+probe had to. *A counter you did not reset is a stopwatch, not a measurement.*
+
+**And a pin defeated by my own prose for the third build running.** `!/\+ud\.op \|\| 1/` failed against
+correct code because this build's own comments quote the shape they removed. It asserts the property now —
+the 15% floor is gone from both functions and both route through the one derivation.
+
+**Four pins moved, and two of them were pinning the DEFECT.** `test-871` asserted *"falsy input coerces to 1
+(never invisible by accident)"* and *"floor clamp 0.15 — a pane you can still see"* — the two lines this
+build exists to remove. Both were inverted rather than restated, and what 871 always MEANT (a stray value
+cannot make a prop vanish) is now asserted directly: a missing value and a nonsense one are both opaque,
+while a deliberate 0 is a barrier. The other two are executing rigs (871, 1340) that construct
+`_applyPropBlend` in an isolated scope and needed the new derivation **lifted from source rather than
+restated** — a rig that restates a derivation keeps passing against a stale copy of it.
+
 ## A gesture that changes nothing is not an edit (build 1494)
 
 Reported from play: *"ctrl-z isn't working as cleanly as it used to. It seems to do some unexpected things."*

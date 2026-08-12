@@ -81,11 +81,19 @@ assert(/isShapePrimitive\(o\.userData\.src\) && !o\.userData\.tex/.test(src), 'i
 // build 1340: applyPropOpacity no longer writes the blend state itself — cutout and blend are mutually
 // exclusive, so ONE function owns transparent/opacity/depthWrite/alphaTest. The real writer is supplied
 // here rather than stubbed, because every assertion below is about what that state ends up as.
+// build 1495: the blend gained the ONE opacity derivation and the barrier constants, so they are LIFTED
+// FROM SOURCE here rather than restated — a rig that restates a derivation keeps passing against a stale
+// copy of it. `editorOpen` is false, which is the play condition every assertion below is about.
 const _blendSrc = extractFunction('_applyPropBlend', src);
-const applyPropOpacity = evalDecl(_blendSrc + '\n' + extractFunction('applyPropOpacity', src), 'applyPropOpacity', {
+const applyPropOpacity = evalDecl(
+  extractFunction('_propOpacity', src) + '\n' + _blendSrc + '\n' + extractFunction('applyPropOpacity', src),
+  'applyPropOpacity', {
   isMatPrimitive,
   eachPrimMesh: (obj, fn) => fn(obj._mesh),
   THREE: { DoubleSide: 2, FrontSide: 0 },
+  PROP_INVIS: parseFloat(extractConst('PROP_INVIS', src)),
+  PROP_GHOST: parseFloat(extractConst('PROP_GHOST', src)),
+  editorOpen: false,
 });
 const mk = (srcName) => ({ userData: { src: srcName }, _mesh: { material: {} } });
 let o = mk('wedge');
@@ -97,10 +105,23 @@ o = mk('box'); applyPropOpacity(o, 0.8);
 assert(o._mesh.material.transparent === true && o._mesh.material.depthWrite === true, 'solid-ish plastic (>=0.6) keeps depthWrite');
 o = mk('box'); applyPropOpacity(o, 1);
 assert(o._mesh.material.transparent === false && o._mesh.material.opacity === 1, 'opacity 1 = fully opaque again');
+/* build 1495 INVERTED both of these, and both were pinning the defect rather than the intent. This build
+   chose a 0.15 floor and a falsy-to-1 coercion when opacity meant GLASS, where a pane you cannot see is
+   indistinguishable from a prop that failed to load. Reported from play: "is there a way to create an
+   invisible barrier? Primitive opacity doesn't go totally transparent." 0 is now a barrier — invisible and
+   still completely solid — and `+op||1` was turning a SAVED one back into an opaque prop. What 871 always
+   meant, that a stray value cannot make a prop vanish, is asserted directly below instead of by a floor. */
 o = mk('box'); applyPropOpacity(o, 0);
-eq(o.userData.op, 1, 'falsy input coerces to 1 (never invisible by accident)');
+eq(o.userData.op, 0, 'zero is an INVISIBLE BARRIER (build 1495), not a coercion to 1');
+assert(o._mesh.material.visible === false, '...and the material is not drawn in play');
 o = mk('box'); applyPropOpacity(o, 0.01);
-eq(o.userData.op, 0.15, 'floor clamp 0.15 — a pane you can still see');
+eq(o.userData.op, 0.01, 'and below the barrier threshold it stays where it was put');
+o = mk('box'); applyPropOpacity(o, undefined);
+eq(o.userData.op, 1, 'a MISSING value is still opaque — a prop never vanishes by accident');
+o = mk('box'); applyPropOpacity(o, 'x');
+eq(o.userData.op, 1, '...and neither does a nonsense one');
+o = mk('box'); applyPropOpacity(o, 0.3);
+assert(o._mesh.material.visible === true, 'an ordinary translucent pane is drawn exactly as before');
 o = mk('box'); applyPropOpacity(o, 7);
 eq(o.userData.op, 1, 'ceiling clamp 1');
 o = mk('pillar'); applyPropOpacity(o, 0.4);
