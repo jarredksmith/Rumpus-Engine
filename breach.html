@@ -17172,12 +17172,52 @@ function applyPropShine(obj, rough, metal){
 // file has recorded six times: whichever ran last would win, so turning on a cutout and then nudging
 // opacity would silently un-cut the leaves.
 const CUT_MAX = 0.99;
+/* build 1495 — AN INVISIBLE BARRIER. Reported from play: "is there a way to create an invisible barrier so
+   players can't walk into certain areas? Primitive opacity doesn't go totally transparent."
+
+   It did not, and the reason was a literal: `Math.max(0.15, ...)` clamped every opacity to a 15% floor, in
+   TWO places. Build 871 chose that floor when opacity meant "glass", where a pane you cannot see at all is
+   indistinguishable from a prop that failed to load. It is exactly wrong for the other thing creators want
+   from the same slider.
+
+   So the floor is 0, and 0 means BARRIER: not drawn in play, still completely solid. That needs no new
+   concept and no new serialized field — `m.op` already saves anything under 1, and it is the control the
+   creator already reached for.
+
+   The one thing it must not do is become unselectable. In the EDITOR a barrier renders as a faint ghost, so
+   a creator can see where their walls are, click them and move them; `_syncBarrierProps` re-runs the blend
+   on both sides of the editor toggle. */
+const PROP_INVIS = 0.02;    /* at or below this a prop is a barrier — the same threshold build 1236's ghost
+                               test already uses, so the two cannot come to different answers */
+const PROP_GHOST = 0.25;    /* what a barrier looks like while you are authoring it */
+/* ONE derivation of a prop's opacity, and it fixes a live zero-swallow on the way past: `+ud.op || 1` turns
+   0 into 1 (build 1329's recorded trap), so even with the floor removed a saved barrier would have loaded
+   back as a solid opaque prop. */
+function _propOpacity(ud){
+  if(!ud || ud.op == null) return 1;
+  const v = +ud.op;
+  return isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
+}
+function _isBarrier(o){ return !!(o && o.userData && !(+o.userData.cut > 0) && _propOpacity(o.userData) <= PROP_INVIS); }
+/* The editor toggle is the only thing that changes what a barrier should look like, and `editorOpen` has
+   already flipped by the time this is called, so one site serves both directions. */
+function _syncBarrierProps(){
+  if(typeof propModels === 'undefined') return;
+  for(const o of propModels){ if(_isBarrier(o)) _applyPropBlend(o); }
+}
 function _applyPropBlend(obj){
   const ud = obj.userData;
   const cut = +ud.cut || 0;
-  const op = (ud.op != null) ? Math.max(0.15, Math.min(1, +ud.op || 1)) : 1;
+  const op = _propOpacity(ud);
+  const barrier = (cut <= 0) && (op <= PROP_INVIS);
   eachPrimMesh(obj, o=>{
     const m = o.material;
+    /* `material.visible` rather than the object's: it skips the draw AND the shadow (r149 copies it onto
+       the depth material and gates the shadow pass on it — pinned in test-1495 against the real build), it
+       leaves the object in the scene so selection, the gizmo and the outliner all still find it, and build
+       1236's ghost test already reads it, so a bullet passes through a barrier by the engine's own stated
+       rule rather than by a special case. */
+    m.visible = !barrier || !!editorOpen;
     if(cut > 0){
       /* a cutout is OPAQUE. Blending it as well would put it back in the sorted pass it exists to escape. */
       m.alphaTest = cut; m.transparent = false; m.opacity = 1; m.depthWrite = true;
@@ -17186,6 +17226,11 @@ function _applyPropBlend(obj){
          walk round it is not a feature anybody would keep. three's shadow map maps DoubleSide to DoubleSide,
          so the shadow follows. */
       m.side = THREE.DoubleSide;
+    } else if(barrier){
+      /* authoring: a faint ghost you can see and click. In play the material is not drawn at all, so the
+         opacity here is only ever what the creator looks at. */
+      m.alphaTest = 0; m.side = THREE.FrontSide;
+      m.transparent = true; m.opacity = PROP_GHOST; m.depthWrite = false;
     } else {
       m.alphaTest = 0; m.side = THREE.FrontSide;
       m.transparent = op < 1; m.opacity = op; m.depthWrite = op >= 0.6;
@@ -17197,7 +17242,8 @@ function _applyPropBlend(obj){
 // down to ~0.6 (solid-ish plastic sorts fine) and turns off below (true glass never occludes itself).
 function applyPropOpacity(obj, op){
   if(!obj || !isMatPrimitive(obj.userData.src)) return;
-  obj.userData.op = Math.max(0.15, Math.min(1, +op||1));
+  /* build 1495: the floor is 0, and `+op||1` is gone — it turned a barrier back into a solid prop */
+  const v = +op; obj.userData.op = isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
   _applyPropBlend(obj);
 }
 // The cutoff itself: a pixel with alpha below it is DISCARDED. 0 turns the whole thing off and restores
@@ -35906,7 +35952,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1493 · 2026-08-12';
+const BUILD_VERSION = 'build 1495 · 2026-08-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39763,6 +39809,11 @@ function updateEnemyShots(dt){
     // anything. Build 1148 gave every collider a tight per-part `boxes` list; this consumer was never
     // updated. The overall box survives as the coarse reject, same shape as the enemy resolve.
     if(!dead){ for(const c of _cgQuery(p.x, p.x, p.z, p.z, _cgBolt)){ const b0=c.userData.box; if(!b0) continue;
+      /* build 1495: an invisible barrier stops nobody's SHOT, which is build 1236's stated rule ("nothing
+         invisible stops a bullet") applied to the one shooter that does not go through the raycast. Without
+         this line a barrier would eat enemy fire while the player's own rounds flew through it — the same
+         wall behaving two ways depending on who pulled the trigger. */
+      if(typeof _isBarrier==='function' && _isBarrier(c)) continue;
       if(p.x<b0.min.x||p.x>b0.max.x||p.y<b0.min.y||p.y>b0.max.y||p.z<b0.min.z||p.z>b0.max.z) continue;
       const bs=c.userData.boxes||[b0];
       for(const b of bs){ if(p.x>=b.min.x&&p.x<=b.max.x&&p.y>=b.min.y&&p.y<=b.max.y&&p.z>=b.min.z&&p.z<=b.max.z){ dead=true; break; } }
@@ -46826,18 +46877,47 @@ function _undoTrim(){
   return n;
 }
 let editorUndoActive = false;
+/* build 1494 — A GESTURE THAT CHANGES NOTHING IS NOT AN EDIT.
+   Reported from play: "ctrl-z isn't working as cleanly as it used to. It seems to do some unexpected things."
+
+   Every control calls pushUndoSnapshot as its gesture STARTS — 30 number fields on `focus`, 30 sliders on
+   `mousedown` — and the snapshot went straight onto the stack. So clicking into a field to READ a value, or
+   pressing a slider and letting go, bought a full undo step whose state is identical to the current one.
+   Measured live, with a three-edits-three-undos control that returns exactly:
+
+     one real edit + two empty gestures  ->  stack depth 2, and the first Ctrl+Z restored an IDENTICAL state
+     an edit, an undo, then a field click ->  the redo branch was GONE (build 1129's fork clear, fired by a
+                                              gesture that forked nothing)
+
+   The snapshot is now PENDING until something proves the gesture changed the level. It costs no extra
+   serialization in the common case: the next gesture serializes anyway, and that one string is both the
+   comparison for the pending commit and the new pending snapshot. */
+let _undoPending = null;
+function _undoCommitPending(now){
+  if(_undoPending == null) return;
+  const p = _undoPending; _undoPending = null;
+  if(now == null){ try { now = JSON.stringify(serializeLevel()); } catch(e){ return; } }
+  if(p === now) return;   /* the gesture changed nothing: no step, and CRUCIALLY no fork */
+  /* build 1129's dedupe, kept — and it now sits AFTER the no-op test rather than in front of the redo
+     clear. That ordering was its own defect: the early return skipped the fork clear with it, so an empty
+     gesture behaved differently depending on whether its state happened to match the top of the stack. */
+  if(!(editorUndo.length && editorUndo[editorUndo.length-1] === p)){
+    editorUndo.push(p);
+    if(editorUndo.length > 60) editorUndo.shift();
+    if(typeof _undoTrim==='function') _undoTrim();   /* build 1452's byte cap rides the commit */
+  }
+  /* build 1129: editing after an undo forks the history — the old forward branch is unreachable and
+     keeping it would redo work the author has already replaced. Only a REAL edit forks it now. */
+  editorRedo.length = 0;
+  if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
+}
 function pushUndoSnapshot(){
   if(editorUndoActive || !editorOpen) return;
   _levelDirty = true;   // autosave: an edit happened
   try {
     const snap = JSON.stringify(serializeLevel());
-    if(editorUndo.length && editorUndo[editorUndo.length-1] === snap) return;   // identical to last -> skip
-    editorUndo.push(snap);
-    if(editorUndo.length > 60) editorUndo.shift();
-    _undoTrim();   /* build 1452: and by BYTES, because 60 snapshots of a big level is megabytes */
-    // build 1129: editing after an undo forks the history — the old forward branch is unreachable and
-    // keeping it would redo work the author has already replaced.
-    editorRedo.length = 0;
+    _undoCommitPending(snap);   /* the PREVIOUS gesture, judged against the state it actually left behind */
+    _undoPending = snap;
     if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   } catch(e){}
 }
@@ -47065,19 +47145,31 @@ function _historyStep(snap, pushTo){
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
 }
+/* build 1494: the live gesture is committed BEFORE the pop, or the edit you just made is not on the stack
+   you are about to walk back. A no-op gesture drops here instead, which is what makes the first Ctrl+Z
+   after clicking into a field do the thing the creator meant rather than restoring an identical level. */
 function performUndo(){
-  if(!editorUndo.length) return false;
+  _undoCommitPending();
+  if(!editorUndo.length){ if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns(); return false; }
   return _historyStep(editorUndo.pop(), editorRedo);
 }
 function performRedo(){
-  if(!editorRedo.length) return false;
+  _undoCommitPending();
+  if(!editorRedo.length){ if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns(); return false; }
   return _historyStep(editorRedo.pop(), editorUndo);
 }
 // Grey the buttons out when there is nothing to go back or forward to — a control that looks live and
 // does nothing is worse than one that says so.
 function _edSyncHistoryBtns(){
   const u=document.getElementById('edUndo'), r=document.getElementById('edRedo');
-  if(u) u.disabled = !editorUndo.length;
+  /* build 1494: the pending gesture counts. Mid-drag the level really has changed and there really is
+     something to undo — leaving the button dead until the NEXT gesture would be the same lie in the other
+     direction. If the gesture turns out to have changed nothing, performUndo drops it and re-syncs.
+     STATED COST: the REDO button reads its own stack, so between a real edit and the moment that edit is
+     judged it can still look available. Pressing it commits the gesture first, finds the branch forked and
+     correctly does nothing — so the artifact is a briefly-live button, never a wrong redo. Closing it would
+     mean serializing the level on some end-of-gesture hook that 412 call sites do not have. */
+  if(u) u.disabled = !(editorUndo.length || _undoPending != null);
   if(r) r.disabled = !editorRedo.length;
 }
 
@@ -52417,12 +52509,17 @@ function renderEditorFields(){
       // shininess shown 0 (matte) .. 1 (glossy); stored as roughness = 1 - shininess
       slider('Shininess', (1 - sh.r), '#7cc6ff', (v)=>{ for(const o of _matTargets()){ const cur=o.userData.shine||{ r:PRIM_DEFAULT_ROUGH, m:PRIM_DEFAULT_METAL }; applyPropShine(o, 1 - v, cur.m); } });
       slider('Metalness', sh.m, '#d6b35a', (v)=>{ for(const o of _matTargets()){ const cur=o.userData.shine||{ r:PRIM_DEFAULT_ROUGH, m:PRIM_DEFAULT_METAL }; applyPropShine(o, cur.r, v); } });
-      slider('Opacity', (selObj.userData.op!=null?+selObj.userData.op:1), '#9fd8ff', (v)=>{ for(const o of _matTargets()) applyPropOpacity(o, v); });   // build 871: glass/plastic
+      slider('Opacity', (selObj.userData.op!=null?+selObj.userData.op:1), '#9fd8ff', (v)=>{ for(const o of _matTargets()) applyPropOpacity(o, v); });   // build 871: glass/plastic; 1495: 0 = an invisible barrier
+      if(_propOpacity(selObj.userData) <= PROP_INVIS && !(+selObj.userData.cut > 0)){
+        const bH=document.createElement('div'); bH.className='hint'; bH.style.cssText='margin:2px 0 0;color:var(--accent);';
+        bH.textContent='Invisible barrier \u2014 not drawn in play, but still completely solid: players and enemies cannot walk through it. Shots pass through, and it casts no shadow. You can see and click it here in the editor.';
+        matHost.appendChild(bH);
+      }
       /* build 1340: the cutoff. Named "Cutout" rather than "alpha test", because the creator-facing thing
          is "holes in the texture", not the technique. */
       slider('Cutout', (+selObj.userData.cut || 0), '#8fe07a', (v)=>{ for(const o of _matTargets()) applyPropCutout(o, v); });
       const sHint=document.createElement('div'); sHint.className='hint'; sHint.style.margin='2px 0 0';
-      sHint.textContent='Shininess: 0 = flat/matte, 1 = glossy highlights. Metalness pushes toward a polished-metal look (best with some shininess). Opacity under 1 makes it see-through — glass = low opacity + high shininess, frosted plastic = mid opacity + low shininess. It stays solid to walk on and shoot.';
+      sHint.textContent='Opacity 0 makes an INVISIBLE BARRIER \u2014 you cannot see it in play but you still cannot walk through it, which is how you fence off an area. Shininess: 0 = flat/matte, 1 = glossy highlights. Metalness pushes toward a polished-metal look (best with some shininess). Opacity under 1 makes it see-through — glass = low opacity + high shininess, frosted plastic = mid opacity + low shininess. It stays solid to walk on and shoot.';
       matHost.appendChild(sHint);
       /* build 1393: "The user may want just a solid color primitive without texture or materials, and right
          now there is no way to do that." Reported from play, and true — four builds of procedural detail
@@ -52721,9 +52818,14 @@ function renderEditorFields(){
         rng.oninput=()=>ap(rng.value); num.onchange=()=>ap(num.value);
         row.appendChild(sp); row.appendChild(rng); row.appendChild(num); host.appendChild(row);
       };
-      mk(per[0].toUpperCase()+' at that end', T.a, (v)=>_tApply(axSel.value, v, T.b));
-      mk(per[1].toUpperCase()+' at that end', T.b, (v)=>_tApply(axSel.value, T.a, v));
-      axSel.onchange=()=>{ pushUndoSnapshot(); _tApply(axSel.value, T.a, T.b); renderEditorFields(); };
+      /* build 1494 — a defect build 1493 shipped, found while reading this fold for the undo work. `T` is
+         captured at RENDER time and the panel does not re-render during a slider drag, so each slider was
+         writing the OTHER one's stale value back: set X to 0.5, then set Z, and X silently returned to 1.
+         The live value is read from the prop instead, which is the only thing that cannot go stale. */
+      const _tNow = ()=>{ const t=_tObj.userData.taper; return t ? [t.a, t.b] : [1, 1]; };
+      mk(per[0].toUpperCase()+' at that end', T.a, (v)=>_tApply(axSel.value, v, _tNow()[1]));
+      mk(per[1].toUpperCase()+' at that end', T.b, (v)=>_tApply(axSel.value, _tNow()[0], v));
+      axSel.onchange=()=>{ pushUndoSnapshot(); const c=_tNow(); _tApply(axSel.value, c[0], c[1]); renderEditorFields(); };
       const tHint=document.createElement('div'); tHint.className='hint'; tHint.style.margin='2px 0 0';
       tHint.textContent='Taper scales the far end of the shape. 1 leaves it alone, 0 pinches it to nothing, above 1 flares it outward. Both at 0 gives a pyramid; one at 0 gives a wedge or a roof; pinching the far end (+Z) of a long thin box is the dart shape. It stays one solid piece — physics, shooting and shadows all follow the real form.';
       host.appendChild(tHint);
@@ -54633,6 +54735,7 @@ function toggleEditor(){
      hand the creator a dimmed viewport the moment they left again. */
   if(typeof _modalSet==='function') try{ _modalSet(''); }catch(_e){}
   editorOpen = !editorOpen; _editorOpenFlag = editorOpen;
+  if(typeof _syncBarrierProps==='function') _syncBarrierProps();   /* build 1495: barriers ghost in, vanish out */
   if(typeof grid!=='undefined' && grid) grid.visible = _gridWanted();   // build 1133: the grid follows the editor, not the level
   if(editorOpen){
     if(typeof _raceClearBots==='function') _raceClearBots();   // build 833: rivals are runtime-only — never ghosts in the editor

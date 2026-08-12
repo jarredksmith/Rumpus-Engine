@@ -13,7 +13,10 @@ const src = gameSource();
 // ---------------------------------------------------------------- the two stacks
 assert(/const editorRedo = \[\];/.test(src), 'there is a redo stack');
 {
-  const push = extractFunction('pushUndoSnapshot');
+  /* build 1494 moved the push, the cap and the fork clear out of pushUndoSnapshot and into the COMMIT,
+     which is where a gesture is finally judged to have changed something. Every assertion here is unchanged
+     in intent and now stronger: the fork clear is unreachable for a gesture that edited nothing. */
+  const push = extractFunction('_undoCommitPending');
   assert(/editorRedo\.length = 0;/.test(push),
     'a new edit clears the redo branch — after an undo, editing forks the history and the old forward branch is unreachable');
   assert(/if\(editorUndo\.length > 60\) editorUndo\.shift\(\);/.test(push), 'the undo stack is still bounded');
@@ -108,7 +111,10 @@ assert(/\{ label:'Save',                 key:'Ctrl\+S', run:\(\)=>_edClick\('edS
   'File > Save advertises its shortcut, which it could not before because it did not have one');
 {
   const fn = extractFunction('_edSyncHistoryBtns');
-  assert(/u\.disabled = !editorUndo\.length;/.test(fn) && /r\.disabled = !editorRedo\.length;/.test(fn),
+  /* build 1494: Undo also counts the live gesture, because mid-drag the level really has changed. The
+     property this always meant — a button is dead when there is nothing behind it — is unchanged. */
+  assert(/u\.disabled = !\(editorUndo\.length \|\| _undoPending != null\);/.test(fn)
+      && /r\.disabled = !editorRedo\.length;/.test(fn),
     'both buttons grey out when their stack is empty');
   for (const caller of ['_historyStep', 'pushUndoSnapshot'])   // build 1291: performUndo/Redo are _historyStep
     assert(/_edSyncHistoryBtns\(\)/.test(extractFunction(caller)), caller + ' refreshes them');

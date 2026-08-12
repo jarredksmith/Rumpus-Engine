@@ -94,7 +94,9 @@ const S = (n) => 'x'.repeat(n);
 // The stacks grow in exactly two places — pushUndoSnapshot, and _historyStep moving a step across — and a
 // cap applied at one of them is a cap that leaks at the other.
 {
-  const push = extractFunction('pushUndoSnapshot', src);
+  /* build 1494 moved the growth out of pushUndoSnapshot and into _undoCommitPending — the stack still grows
+     in exactly two places, and both caps still ride the one that pushes. */
+  const push = extractFunction('_undoCommitPending', src);
   assert(/if\(editorUndo\.length > 60\) editorUndo\.shift\(\);/.test(push), 'the count cap is unchanged');
   assert(/_undoTrim\(\);/.test(push), '...and the byte cap runs beside it');
   const step = extractFunction('_historyStep', src);
@@ -110,9 +112,13 @@ const S = (n) => 'x'.repeat(n);
 // redundancy, and it is left alone: 1 ms per discrete user gesture is imperceptible, and moving the
 // snapshot from focus to first-mutation would break build 1163's one-per-gesture rule at 412 sites.
 {
+  /* build 1494: the ONE serialization now does two jobs — it judges the previous gesture and becomes the
+     new pending snapshot — so the extra cost this note weighed is gone rather than merely tolerated. The
+     alternative it rejected (moving the snapshot from focus to first-mutation, at 412 sites) is still
+     rejected; what changed is WHEN the snapshot is committed, not when it is taken. */
   const push = extractFunction('pushUndoSnapshot', src);
-  assert(push.indexOf('serializeLevel') < push.indexOf('=== snap'),
-    'the dedup still runs after the serialize — measured at ~1 ms a gesture, and left alone deliberately');
+  assert(push.indexOf('serializeLevel') < push.indexOf('_undoCommitPending(snap)'),
+    'the gesture is judged against the state it left behind, off the same serialize it already paid for');
   assert(/if\(editorUndoActive \|\| !editorOpen\) return;/.test(push),
     'and the two cheap early-outs that keep it out of play are untouched');
 }

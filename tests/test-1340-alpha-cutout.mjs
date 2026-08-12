@@ -1,4 +1,4 @@
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, done, extractConst } from './harness.mjs';
 import * as THREE from 'three';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,6 +41,11 @@ const src = gameSource();
   // executable: the state machine, both directions, with the awkward order
   const run = new Function('THREE', `
     const CUT_MAX = ${'0.99'};
+    /* build 1495: lifted from source, never restated — see test-871's note */
+    const PROP_INVIS = ${parseFloat(extractConst('PROP_INVIS', src))};
+    const PROP_GHOST = ${parseFloat(extractConst('PROP_GHOST', src))};
+    const editorOpen = false;
+    ${extractFunction('_propOpacity', src)}
     const isMatPrimitive = ()=>true;
     let mat = { alphaTest:0, transparent:false, opacity:1, depthWrite:true, side:THREE.FrontSide, needsUpdate:false };
     const eachPrimMesh = (o, fn)=>fn({ material: mat });
