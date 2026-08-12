@@ -10294,6 +10294,10 @@ function applyProcSurface(mat, span, alb){
 // Re-tile a material (or a whole prop) that has been resized. Only slots still holding OUR texture are
 // swapped, so a creator's own map, normal or roughness is never touched.
 function retileProcSurface(root, span){
+  /* build 1492: a creator's map density is per METRE, so a gizmo scale has to re-derive it. This hook
+     already means "this prop's world span changed" and every caller passes the new span, so there is no
+     second list of resize sites to keep in step. */
+  if(root && root.userData && root.userData.tex && typeof _syncPropMapFreq==='function') _syncPropMapFreq(root);
   const set = _procSet(_procRepeatFor(span)); if(!set || !root) return;
   const one = (m)=>{ if(!m || !m.userData) return;
     // build 1379: the albedo field's density is a physical size too, so a scaled prop re-derives it. It
@@ -10410,6 +10414,15 @@ const PROP_TEX_AMT = 0.55;
 // played at, so it averaged back toward flat. Per METRE keeps the physical scale 1139 requires, and the
 // floor keeps a small prop readable — a 1 m crate would otherwise get a quarter of one tile.
 const PROP_TEX_PER_M = 0.25;
+/* build 1492: cycles per METRE for a creator's own map on a primitive, from the tiling number they typed.
+   Normalised by the prop's LONGEST axis, which is the whole compatibility argument: `texRepeat` means
+   "tiles across a face" today, and the longest face is the one a creator tuned by eye — so that face keeps
+   exactly the density it has now while every other face is brought to meet it. A uniformly-scaled prop is
+   therefore unchanged on all six faces, and only a STRETCHED prop moves, which is the one that is wrong. */
+function _propMapFreq(rep, span){
+  const r = Math.max(0.01, Math.min(200, +rep || 1));
+  return r / Math.max(0.05, Math.min(500, +span || 1));
+}
 const PROP_TEX_MIN_CYC = 1.5;    /* minimum tiles across the object, whatever its size */
 // build 1388: how deep the texture's structure is, in METRES — a physical quantity, not a gain, because
 // the surface gradient below divides a height derivative by a POSITION derivative and both are in view
@@ -10547,12 +10560,31 @@ function applyObjDetail(mat, freq, albOnly){
     }
     // kept so a later resize can move the density without recompiling anything (retileProcSurface)
     mat.userData._odU = shader.uniforms;
-    shader.vertexShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\n' + shader.vertexShader
-      .replace('#include <begin_vertex>', 'vOdPos = position;\nvOdNrm = normal;\n#include <begin_vertex>');
+    /* build 1492: `vOdMet` is the object-space position IN METRES — `position` times the object's own world
+       scale, taken from the model matrix's column lengths so nothing has to be told when a prop is resized.
+       `vOdPos` is deliberately UNTOUCHED: builds 1379/1388 tune their noise against a unit box and re-derive
+       density on the CPU, and moving that coordinate would retune every one of them.
+
+       Why it is needed: `position` is the UNIT box for every primitive — the stretch lives in the matrix —
+       so one scalar frequency times a unit coordinate gives the SAME cycle count on a face 20 m long and one
+       1 m long. That is build 1384's own recorded complaint about UVs ("a primitive's UVs run 0..1 per FACE
+       whatever that face's real size is"), reproduced one layer down inside the very code written to escape
+       it. In metres it cannot happen. */
+    shader.uniforms.uOdMapF = { value: (mat.userData._odMapF > 0) ? mat.userData._odMapF : 0 };
+    shader.vertexShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\nvarying vec3 vOdMet;\n' + shader.vertexShader
+      .replace('#include <begin_vertex>',
+        'vOdPos = position;\nvOdNrm = normal;\n'
+        /* the model matrix's column lengths ARE the world scale, and for an instanced draw three composes
+           modelMatrix * instanceMatrix — so this stays right with no CPU uniform to keep in step. A
+           degenerate axis floors at 1e-4 rather than collapsing the projection to a line. */
+      + '#ifdef USE_INSTANCING\n  mat4 _odM = modelMatrix * instanceMatrix;\n#else\n  mat4 _odM = modelMatrix;\n#endif\n'
+      + 'vec3 _odS = vec3(length(_odM[0].xyz), length(_odM[1].xyz), length(_odM[2].xyz));\n'
+      + 'vOdMet = position * max(_odS, vec3(1e-4));\n'
+      + '#include <begin_vertex>');
     // _odP and _odBase are shader-globals on purpose: three's meshphysical fragment shader runs
     // roughnessmap_fragment BEFORE normal_fragment_maps, so the field is evaluated once in the first
     // patch and reused by the second — four noise evaluations per pixel instead of five.
-    shader.fragmentShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump; uniform float uOdAlb; uniform float uOdOn;\n'
+    shader.fragmentShader = 'varying vec3 vOdPos;\nvarying vec3 vOdNrm;\nvarying vec3 vOdMet;\nuniform float uOdMapF;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump; uniform float uOdAlb; uniform float uOdOn;\n'
       + (texOn ? 'uniform sampler2D uOdTex; uniform float uOdTexM; uniform float uOdTexA; uniform float uOdTexF; uniform float uOdTexN;\n' : '')
       + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase; float _odTexL;\n' + shader.fragmentShader
       // build 1379: the field is evaluated HERE now, at map_fragment, because that is the earliest chunk
@@ -10561,8 +10593,40 @@ function applyObjDetail(mat, freq, albOnly){
       // chunk order is what makes that safe and `test-1379` asserts it against the real build: get it
       // backwards and `_odBase` is read before it is written, which is a silent garbage perturbation
       // rather than an error (build 1145 pinned the same ordering for the same reason).
+      /* build 1492 — THE REPORTED BUG. "If I add a concrete texture to a primitive and stretch it into a
+         long skinny rectangle, either the sides look correct or the top and bottom do; the wrong one looks
+         tiled hundreds of times and stretched, and no x/y tiling value fixes it."
+         It cannot be fixed from the panel, because `texture.repeat` is ONE (u,v) pair shared by all six
+         faces while a BoxGeometry's UVs run 0..1 per face whatever that face's real size is. A 1x1x20 box
+         wants (20,1) on its long sides, (1,1) on its end caps and (1,20) on its top. One pair serves one of
+         them.
+         So the map is projected TRIPLANAR from the metric position instead — density is per metre, so every
+         face of every shape matches by construction and the pair is not needed. `uOdMapF` is normalised on
+         the CPU by the prop's LONGEST axis, which is the compatibility argument: the biggest face is the one
+         a creator tuned by eye, and it keeps exactly the tiling it has today while the wrong faces are
+         brought to meet it. 0 keeps three's own UV path untouched, which is every model and every prop that
+         has not opted in. */
       .replace('#include <map_fragment>', [
+        '#ifdef USE_MAP',
+        'if( uOdMapF > 0.0 ){',
+        '  vec3 _mb = abs(normalize(vOdNrm)); _mb = _mb*_mb; _mb = _mb*_mb; _mb /= max(1e-4, _mb.x+_mb.y+_mb.z);',
+        '  vec2 _mf = vec2(uOdMapF);',
+        '  vec4 _ms = texture2D(map, vOdMet.zy*_mf)*_mb.x',
+        '           + texture2D(map, vOdMet.xz*_mf)*_mb.y',
+        '           + texture2D(map, vOdMet.xy*_mf)*_mb.z;',
+        /* NO decode call here, and that was VERIFIED in the vendored r149 rather than assumed: its
+           map_fragment is a bare `diffuseColor *= texture2D(map, vUv)` with no texel-decode function at
+           all — an sRGB map is decoded by the GL layer at UPLOAD (the internal format), so sampling by
+           hand gets the same linear value. The first draft called mapTexelToLinear, which does not exist
+           in this build: an undefined function inside a chunk every lit material compiles is a SILENT
+           subsystem loss, which this file has shipped twice. test-1492 pins the premise. */
+        '  diffuseColor *= _ms;',
+        '} else {',
+        '  #include <map_fragment>',
+        '}',
+        '#else',
         '#include <map_fragment>',
+        '#endif',
         '_odP = vOdPos * uOdFreq;',
         '_odBase = _odField(_odP);',
         // EXPOSURE-NEUTRAL BY CONSTRUCTION: the field's mean is 0.5, so the multiplier's mean is exactly
@@ -16868,13 +16932,34 @@ function _matTargets(){
 }
 
 // --- image texture + tiling ---
+/* build 1492: ONE writer of the map frequency, because it is derived from three things that each move
+   independently — the tiling number, the prop's scale (a gizmo drag) and the opt-out. Two copies of that
+   derivation is how they stop agreeing, which is this file's most-repeated defect. It writes the material
+   AND the live uniform: the uniform is created at first compile, usually after a prop is first configured,
+   so a write to only one of them lands nowhere half the time (build 1379's trap). */
+function _syncPropMapFreq(obj){
+  if(!obj || !obj.userData) return;
+  const url = obj.userData.tex || '';
+  const rep = obj.userData.texRepeat || [1,1];
+  const mf = (url && !obj.userData.texFit) ? _propMapFreq(rep[0], _propProcSpan(obj)) : 0;
+  eachPrimMesh(obj, o=>{
+    if(!o.material) return;
+    o.material.userData._odMapF = mf;
+    const u = o.material.userData._odU; if(u && u.uOdMapF) u.uOdMapF.value = mf;
+  });
+}
 function applyPropTexture(obj, url){
   if(!obj || !isMatPrimitive(obj.userData.src)) return;   // textures only for the built-in shapes
   obj.userData.tex = url || '';
   if(!url){ obj.userData.texN = ''; obj.userData.texR = ''; }   // clearing color clears the PBR maps too
   const rep = obj.userData.texRepeat || [1,1];
   const rot = (+obj.userData.texRot || 0) * Math.PI/180;
+  /* build 1492: 0 means "leave three's own UV path alone", which is every prop that opts out and every
+     shape the map is not on. Anything else is cycles per world metre and the shader projects triplanar. */
+  const mf = (url && !obj.userData.texFit) ? _propMapFreq(rep[0], _propProcSpan(obj)) : 0;
   eachPrimMesh(obj, o=>{
+    o.material.userData._odMapF = mf;
+    { const u = o.material.userData._odU; if(u && u.uOdMapF) u.uOdMapF.value = mf; }   /* live, no recompile */
     if(url){
       o.material.map          = texInstance(url, rep[0], rep[1], true, rot);   // per-prop instance keeps each prop's own tiling
       o.material.normalMap    = obj.userData.texN ? texInstance(obj.userData.texN, rep[0], rep[1], false, rot) : null;   // depth
@@ -16896,6 +16981,7 @@ function applyPropTexture(obj, url){
 function applyPropTexRepeat(obj, u, v){
   if(!obj) return;
   obj.userData.texRepeat = [u, v];
+  _syncPropMapFreq(obj);   /* build 1492: the density is derived from this number, so it moves with it */
   eachPrimMesh(obj, o=>{ for(const k of ['map','normalMap','roughnessMap']){ const t=o.material[k]; if(t){ t.repeat.set(u, v); t.needsUpdate = true; } } });
 }
 function applyPropTexRot(obj, deg){   // live-rotate all maps about their center (committed/re-keyed via rebind)
@@ -17127,6 +17213,9 @@ function applyStoredMaterial(obj, mat){
   if(mat.texN) obj.userData.texN = mat.texN;
   if(mat.texR) obj.userData.texR = mat.texR;
   if(mat.texRot != null) obj.userData.texRot = mat.texRot;
+  /* build 1492: BEFORE applyPropTexture, which derives the map frequency from it. A line later and every
+     opted-out prop loads with the new projection until something else happens to re-apply its texture. */
+  if(mat.tfit) obj.userData.texFit = true; else delete obj.userData.texFit;
   if(mat.tex) applyPropTexture(obj, mat.tex);
   if(mat.emit) applyPropEmissive(obj, mat.emit.c, mat.emit.i);
   if(mat.shine) applyPropShine(obj, mat.shine.r, mat.shine.m);
@@ -35762,7 +35851,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1491 · 2026-08-12';
+const BUILD_VERSION = 'build 1492 · 2026-08-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45445,6 +45534,7 @@ function propMaterialDesc(o){
   if(o.userData.op!=null && +o.userData.op < 1) m.op = +o.userData.op;   // build 871
   if(o.userData.cut) m.cut = +o.userData.cut;   // build 1340
   if(o.userData.plain) m.pln = 1;   // build 1393 — only when set, so an ordinary prop's entry does not grow a key
+  if(o.userData.texFit) m.tfit = 1;   // build 1492 — the legacy stretch-to-fit opt-out, likewise
   return Object.keys(m).length ? m : null;
 }
 // Authored position for save/export. build 713: ONLY fall back to physHome while a dynamic prop is actually being
@@ -52169,6 +52259,23 @@ function renderEditorFields(){
       ru.oninput=setRep; rv.oninput=setRep; ru.onchange=commitRep; rv.onchange=commitRep; ru.addEventListener('focus',()=>pushUndoSnapshot()); rv.addEventListener('focus',()=>pushUndoSnapshot());
       const x=document.createElement('span'); x.className='hint'; x.textContent='×';
       rrow.appendChild(rlbl); rrow.appendChild(ru); rrow.appendChild(x); rrow.appendChild(rv); matHost.appendChild(rrow);
+      /* build 1492: the opt-out, and the two things it decides said plainly. In the shipped (unticked) mode
+         the map is projected by METRES, so there is ONE density and the second field has nothing to do — a
+         control that still accepts a number it will ignore is the "nothing happened" this file keeps
+         removing (1338/1348), so it is disabled and says why. */
+      if(!selObj.userData.texFit){ rv.disabled=true; rv.style.opacity='0.5';
+        rv.title='One density in both directions \u2014 the texture is measured in metres now, so it cannot stretch. Tick "Stretch to fit" below for the old per-face tiling.'; }
+      { const fl=document.createElement('label'); fl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0 2px;cursor:pointer;';
+        const fc=document.createElement('input'); fc.type='checkbox'; fc.checked=!!selObj.userData.texFit; fc.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+        fc.onchange=()=>{ pushUndoSnapshot();
+          for(const o of _matTargets()){ if(fc.checked) o.userData.texFit=true; else delete o.userData.texFit;
+            if(typeof _syncPropMapFreq==='function') _syncPropMapFreq(o); }
+          _levelDirty=true; renderEditorFields(); };
+        const fs=document.createElement('span'); fs.innerHTML='<b>Stretch to fit</b> \u2014 one tile per face (the old behaviour)';
+        fl.appendChild(fc); fl.appendChild(fs); matHost.appendChild(fl);
+        const fh=document.createElement('div'); fh.className='hint'; fh.style.cssText='margin:0 0 4px;font-size:10.5px;';
+        fh.textContent='Off (recommended): the texture is measured in METRES, so stretching a shape into a long thin wall keeps the grain the same size on every face instead of squashing it on some and tiling it hundreds of times on others. The number above is tiles across the longest side, which is what it already meant for the biggest face \u2014 so that face looks exactly as it does now. On: every face gets one tile whatever its real size, which is what a box did before this build.';
+        matHost.appendChild(fh); }
       // texture rotation (planks/bricks running a different direction)
       const rotRow=document.createElement('div'); rotRow.style.cssText='display:flex;align-items:center;gap:8px;margin-top:6px;';
       const rotL=document.createElement('span'); rotL.className='hint'; rotL.textContent='Rotate°';

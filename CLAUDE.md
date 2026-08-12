@@ -490,6 +490,102 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A texture on a stretched primitive is measured in metres (build 1492)
+
+Reported from play: *"if I add a concrete texture to a primitive and then stretch it into a long skinny
+rectangle, either the sides look correct or the top and bottom do. The incorrect side looks like it's tiled
+hundreds of times and stretched. No matter how I adjust the x and y tiling in the editor, I can't fix it."*
+
+**Unfixable from the panel by construction, and that is the finding.** `texture.repeat` is ONE (u,v) pair
+shared by all six faces, while a `BoxGeometry`'s UVs run 0..1 per FACE whatever that face's real size is. A
+1 × 1 × 20 box wants `(20,1)` on its long sides, `(1,1)` on its caps and `(1,20)` on its top — one pair can
+serve exactly one of them. No amount of dragging the two numbers reaches the other two faces.
+
+So the map is re-projected **triplanar in object space, scaled by the object's own world scale** — build
+1384's exact shape, one layer over. That build already solved this for its texture MODULATION and its own
+entry says why: *"a primitive's UVs run 0..1 per FACE whatever that face's real size is, so a stretched box
+stretches the texture."* The creator's own `map` was left on the UV path.
+
+### `vOdPos` is the UNIT box, which is why 1384 could not simply be reused
+
+The existing varying is the raw local position — for a box primitive that is ±0.5 on every axis whatever
+the prop's scale — so projecting a map from it stretches identically to the UVs it replaces. `vOdMet` is a
+second varying, `position × the model matrix's own column lengths`, so it is **metres** and a resize needs
+nobody told. Composed with `instanceMatrix` under `USE_INSTANCING`, because `modelViewMatrix` never carries
+it (build 1181's rule) — dead code today, since `instanceEligible` excludes a textured prop, and correct
+the day that changes.
+
+**`vOdPos` is byte-untouched, deliberately.** Builds 1379 and 1388 tune their noise against a unit box and
+re-derive density on the CPU; moving that coordinate would silently retune both.
+
+### The frequency is normalised by the LONGEST axis, and that is the whole compatibility argument
+
+`_propMapFreq(rep, span) = rep / span`, where `span` is `_propProcSpan` — the max absolute scale axis, the
+same measure the procedural set already uses. So **a cube of any size shows exactly the number of tiles the
+creator typed**, byte-identically to before, and the only props that move are stretched ones, which move
+toward correct. That is what makes this safe to default ON rather than hiding it behind a checkbox nobody
+would find (1348's rule).
+
+Measured on the reported shape — a 1 × 1 × 20 box at tiling 4:
+
+```
+              tiles across the face      tiles per metre
+long face            4.0                      0.20
+1 m face             0.2                      0.20      <- the SAME grain, not 4 tiles crammed into a metre
+```
+
+`Stretch to fit` is the opt-out (`texFit`, serialized as `tfit` only when set), which hands the map back to
+three's own chunk — a creator who WANTS one tile per face, or who tuned a level against the old behaviour,
+still has it, and the V tiling field is disabled without it because V means nothing to a triplanar sample.
+
+### Four things that would each have shipped this broken
+
+- **`mapTexelToLinear` does not exist in r149.** The first draft called it on the hand-sampled texel, on the
+  assumption that three decodes sRGB inside `map_fragment`. It does not — the chunk is a bare multiply and
+  the decode happens at UPLOAD, in the GL layer's internal format. That call would have been an undefined
+  function **in a chunk every lit material compiles**, i.e. a plausible frame with the whole scene missing.
+  Verified against the vendored build, not assumed; `test-1492` pins the premise so an upgrade fails loudly.
+- **Both fall-through branches must reach `#include <map_fragment>`.** A frequency of 0 (an untextured prop,
+  an imported model, an opted-out prop) has to take three's own path, or every model in every level loses
+  its texture.
+- **The uniform and the material must BOTH be written.** `shader.uniforms` does not exist until the material
+  first compiles, and a prop is textured at spawn — so writing only the uniform lands nowhere half the time
+  (build 1379's own trap). `_syncPropMapFreq` is the one writer, and it is what `applyPropTexRepeat` and
+  `retileProcSurface` call.
+- **The flag must be restored BEFORE the texture that reads it.** `applyPropTexture` derives the frequency
+  from `texFit`, so the first draft's ordering loaded every opted-out prop with the new projection and
+  nothing failed.
+
+### The probe's first shader-health reading measured a frame that did not contain the props
+
+`__drive` stubs `renderer.render`, so the 63 programs it reported had compiled **before** the test props
+existed — `calls: 0` in that row is the tell, and I nearly read it as the patch being clean. An explicit
+`renderer.render(scene, camera)` with the textured props in the scene is what makes it evidence:
+
+```
+programs 63 -> 71 (+9)   diagnostics 0   glError 0   calls 179   tris 5,914
+```
+
+Nine programs compiled the moment those props were drawn, and three reports a compile failure in
+`diagnostics`, so nine clean new programs IS the patch working. **A shader-health check taken through a rig
+that stubs the renderer is not a shader-health check.**
+
+`spawnProp` returns **undefined** for a primitive — the object arrives through `onReady`, synchronously for
+a built-in shape. Reading the return value died in `eachPrimMesh`, which is build 1429's rule again: read
+the real signature rather than inventing one.
+
+### And it broke a slice anchor by adding a `#endif` above it
+
+`test-1388` sliced its relief block as `fn.slice(indexOf("'#if defined("), indexOf("'#endif',"))` — an
+UNSCOPED end anchor. This build's map patch put a `'#endif',` **4,400 characters earlier** in the same
+function, so the end came before the start, the slice was the empty string, and three assertions failed
+**against correct code** while the other 38 passed. It is the anchor-drift trap this file records under
+builds 1392 and 1411, arriving from a new direction: not an `indexOf` that MISSES, but one that finds a
+newly-added EARLIER match. The end anchor is scoped from the start now, and both are asserted — a slice is
+only as good as BOTH of its ends (build 1420's rule, stated there about a range that ran too far).
+
+Two pins moved (1488's CLAIMS list, which gained `Stretch to fit`; 1388's slice, intent unchanged).
+
 ## The manual grew six chapters, and the guard grew teeth (docs pass, after build 1490)
 
 The request was *"update the help documentation with all of the new features — as thorough as possible,

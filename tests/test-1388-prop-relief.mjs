@@ -52,7 +52,13 @@ const fn = extractFunction('applyObjDetail');
 
 // -------------------------------------------------- derivatives sit in UNIFORM control flow ----
 {
-  const blk = fn.slice(fn.indexOf("'#if defined("), fn.indexOf("'#endif',"));
+  // The end anchor is scoped FROM the start, and both are asserted. Build 1492 added a `#ifdef USE_MAP`
+  // block to the map_fragment replacement 4,400 characters ABOVE this one, so an unscoped
+  // indexOf("'#endif',") found THAT one and the slice ran backwards to an empty string — three assertions
+  // failing against correct code, which is this file's recorded anchor-drift trap (builds 1392, 1411).
+  const _s = fn.indexOf("'#if defined("), _e = fn.indexOf("'#endif',", _s);
+  assert(_s > 0 && _e > _s, 'the relief block anchors are both found, in order');
+  const blk = fn.slice(_s, _e);
   assert(/if\( uOdTexN > 0\.0 && uOdTexA \* uOdOn > 0\.0 \)\{/.test(blk),
     'the only branch around a derivative is on TWO UNIFORMS — a dFdx inside non-uniform control flow is ' +
     'undefined in GLSL ES, which is why the degenerate case is a select and not an early out');
