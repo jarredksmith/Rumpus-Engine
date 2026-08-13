@@ -490,6 +490,80 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The field could not answer the question it was opened to ask (build 1496)
+
+Reported from play with four screenshots — a trigger firing `newLevel`, an `On event` node catching it, a
+`Go to level` node wired to it, and a two-level campaign named *Intro* / *Level 2* sitting in the panel
+beside it: *"How do I trigger a new level load on a player trigger? There aren't different levels in the
+Go to level dropdowns."*
+
+**Everything they had built was correct.** The answer was to type `2`. `level #` takes a 1-BASED NUMBER —
+build 1352 chose 1-based deliberately, *"because that is what the campaign list shows the creator"* — and
+the field carried `listId:'lgVarList'`, the VARIABLE datalist. So opening it offered `#hp #hpf #pid #team
+#x #z` and nothing that looked like a level.
+
+That is worse than no dropdown. A field with no list says *type something*; a field with the WRONG list
+says *these are your options*, and every one of them was wrong.
+
+**The manual was already right** (*"counting from 1 — the numbers you see in the Campaign list"*), which is
+the useful part of the report: documentation cannot rescue a control that contradicts it at the point of
+use. Build 1348's rule, one step further along — a capability nobody can find does not exist, and neither
+does one whose own control points somewhere else.
+
+### The levels come first, and the variables stay
+
+Offering only levels would have silently removed what build 1352 built the field for: *"accepts a variable,
+so a hub can branch"*. So `lgLevelList` is the campaign's levels — value `1`, label `Intro` — followed by
+the variable names, labelled `variable`. The common answer is the first thing in the list and the powerful
+one is still there.
+
+`campaign` is a `let` declared ~30,000 lines below the refresher, and **`typeof` does not guard a temporal
+dead zone** (builds 1127, 1331, 1350, 1383, 1411) — a `catch` is what actually does, and the test drives
+the refresher with the binding genuinely absent to prove the other nine datalists still get built.
+
+### Two smaller things the same report exposed
+
+- **`at` had no hint of any kind.** Build 1394 gave it no datalist for a good reason — the tags live in the
+  DESTINATION level, and autocompleting a creator into a tag that does not exist there is worse than
+  offering none — and then left a blank box beside it. It has a placeholder now. The param renderer gained
+  `ph` and `ttl` (the tooltip on the LABEL, so hovering the words explains them, and so build 1337's sweep
+  moves it like every other control here).
+- **A blank field reported "asked for level 0".** Which is true and unhelpful, and blank is the commonest
+  way to reach that guard. It says it is blank now, with the range that would work.
+
+Measured live, reading the real datalist out of the real DOM after the real editor built it:
+
+```
+no campaign     6 options, none numbered            <- the control: no phantom levels
+two levels      1 -> Intro, 2 -> Level 2, then the variables
+unnamed         1 -> Level 1, 2 -> Level 2, 3 -> Vault
+the node        level# list=lgLevelList placeholder="1"; tag list=null placeholder="optional"; 3 tooltips
+not a campaign  "...this level is not part of a campaign — there is nothing to go to."
+blank           "...has no level number — type which level to load (1-2), or pick one from the dropdown."
+out of range    "...asked for level 9, but this campaign has 2."
+```
+
+**A pin defeated by prose for the fourth build running**, and this time by somebody else's: I asserted that
+no reporting branch also loads a level by counting `_campaignLoad` in a slice, and build 1415's own comment
+*names that function in prose*. It asserts the thing that makes it true instead — every `_noteLogicFailure`
+call is followed by a `break;` — and that had to split on the CALL rather than the bare name, because
+`if(typeof _noteLogicFailure==='function') _noteLogicFailure(...)` mentions it twice.
+
+**And the rig invented a name**, which is build 1429's trap: `_lgClearFailures` does not exist (it is
+`logicFailures.clear()`), and my scope stub missed `_lgModalOptions` entirely. The rig now DERIVES its
+dependency list from the function's own text and asserts it supplies every one, so the next dependency
+fails loudly instead of throwing mid-run.
+
+**Container rollback #33** landed between the design and the edit; the script's version assert caught it
+before writing a byte.
+
+**Two pins moved (1394), and widening one of them broke it a second way.** Both quoted the WHOLE param
+literal, which gained `ph` and `ttl` — the recorded *a pin that quotes a whole literal is a pin against the
+literal*. Relaxing the first to a bare `k:'at'` then matched build 1073's do-node PLACE field, which
+legitimately carries `lgPlaceList`, so the "no datalist" assertion failed against correct code. It is
+scoped by the label, which is unique. **A pin needs to be loose enough to survive a new field and tight
+enough to name one control**, and those are two different edits.
+
 ## An invisible barrier, and the floor that made it impossible (build 1495)
 
 Reported from play: *"is there a way to create an invisible barrier so players can't walk into certain

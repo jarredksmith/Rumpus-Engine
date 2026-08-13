@@ -178,9 +178,14 @@ const src = gameSource();
 
 // --------------------------------------------------------------------- the door ----
 {
-  assert(/\{k:'at',l:'arrive at tag',w:96\}/.test(src), 'the node offers the arrival tag...');
-  assert(/\{k:'keep',l:'keep gear',chk:1\}/.test(src), '...and the gear checkbox');
-  assert(!/\{k:'at',l:'arrive at tag',w:96,listId/.test(src),
+  /* build 1496 gave both of these a tooltip and the tag field a placeholder, which broke two pins that
+     quoted the WHOLE param literal with every part of what they meant still true — the trap this file
+     records as "a pin that quotes a whole literal is a pin against the literal". Membership now. */
+  assert(/k:'at',l:'arrive at tag',w:96/.test(src), 'the node offers the arrival tag...');
+  assert(/k:'keep',l:'keep gear',chk:1/.test(src), '...and the gear checkbox');
+  /* scoped by the LABEL, which is unique: a bare `k:'at'` also matches build 1073's do-node place field,
+     which legitimately carries lgPlaceList — so the widened form found somebody else's list and failed. */
+  assert(!/l:'arrive at tag'[^}]*listId/.test(src),
     'the tag field has NO datalist, deliberately: the tags one could offer are the ones in the level being ' +
     'EDITED, and the marker is in the DESTINATION — autocompleting a creator into a tag that does not exist ' +
     'there is worse than offering none');

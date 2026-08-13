@@ -13740,7 +13740,12 @@ function _lgPulse(id, pin){
       }
       const _tot = (typeof campaign!=='undefined' && campaign.levels) ? campaign.levels.length : 0;
       if(!(_n1 >= 1 && _n1 <= _tot)){
-        if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "Go to level" node asked for level '+_n1+', but this campaign has '+_tot+'.');
+        /* build 1496: a BLANK field is the commonest way to get here and "asked for level 0" does not say
+           so. It is reported as what it is, with the range that would work. */
+        const _blank = (p.n == null || String(p.n).trim() === '');
+        if(typeof _noteLogicFailure==='function') _noteLogicFailure(_blank
+          ? 'A "Go to level" node has no level number \u2014 type which level to load (1\u2013' + _tot + '), or pick one from the field\u2019s dropdown.'
+          : 'A "Go to level" node asked for level '+_n1+', but this campaign has '+_tot+'.');
         break;
       }
       // ---- build 1394: the three things that make this a DOORWAY rather than a level select ---------
@@ -14306,7 +14311,12 @@ const LG_DEFS = {
      level being edited, and the arrival marker is in the DESTINATION — offering the wrong level's tags
      would autocomplete a creator straight into a tag that does not exist there, which is worse than
      offering none. A tag nothing carries is reported at run time instead (build 1214's channel). */
-  goto:     { t:'Go to level',     cat:'ac', ins:['in'], outs:[],        params:[{k:'n',l:'level #',w:64,listId:'lgVarList'},{k:'at',l:'arrive at tag',w:96},{k:'keep',l:'keep gear',chk:1}] },
+  /* build 1496: `n` is a 1-BASED index into the campaign, and it used to carry the VARIABLE list, so the
+     one question a creator opens it to ask — which levels are there? — was the one thing it could not
+     answer. `at` keeps NO list for build 1394's stated reason (the tags live in the DESTINATION level, and
+     autocompleting someone into a tag that does not exist there is worse than offering none) — so it gets a
+     PLACEHOLDER instead, which was the missing half of that decision. */
+  goto:     { t:'Go to level',     cat:'ac', ins:['in'], outs:[],        params:[{k:'n',l:'level #',w:64,listId:'lgLevelList',ph:'1',ttl:'Which level in the campaign, counting from 1 — the same order the Files \u203a Campaign list shows. Pick from the dropdown, or type a variable name to branch (a hub world).'},{k:'at',l:'arrive at tag',w:96,ph:'optional',ttl:'Optional. A tag carried by a prop in the DESTINATION level — the player arrives there, facing the way that prop faces, instead of at its player start. Left blank, they arrive at the destination\u2019s own spawn.'},{k:'keep',l:'keep gear',chk:1,ttl:'Arrive with the weapons, ammo and health you left with. Off, the destination level equips you itself.'}] },
   lose:     { t:'Lose level',      cat:'ac', ins:['in'], outs:[],        params:[] },
 };
 const LG_CATS = { ev:['EVENTS','#35e0d6'], fl:['FLOW','#ffd75e'], st:['STATE','#8fe05a'], ac:['ACTIONS','#ff9b5b'] };
@@ -14381,6 +14391,26 @@ function _lgRefreshDatalists(){
   for(const nm of _lgClipOptions()){ const op=document.createElement('option'); op.value=nm; cl.appendChild(op); }
   const sl=mk('lgSndList');
   for(const u of _lgSoundOptions()){ const op=document.createElement('option'); op.value=u; sl.appendChild(op); }
+  /* build 1496 — THE LEVELS. Reported from play, with screenshots of a correctly wired trigger -> On event
+     -> Go to level: "how do I trigger a new level load on a player trigger? There aren't different levels in
+     the Go to level dropdowns." The field takes a 1-BASED NUMBER, and it carried the VARIABLE datalist — so
+     opening it offered `#hp #hpf #pid #team #x #z` and nothing that looked like a level. A creator with a
+     two-level campaign in the panel beside it had no way to learn that the answer was to type `2`.
+
+     The levels come FIRST and the variables stay after them, because build 1352 deliberately accepts a
+     variable here so a hub world can branch — offering only levels would take that away silently. */
+  const lvl=mk('lgLevelList');
+  try{
+    const _cl = (campaign && campaign.levels) ? campaign.levels : [];
+    for(let i=0;i<_cl.length;i++){
+      const op=document.createElement('option');
+      op.value=String(i+1);                                  /* 1-based: what the campaign panel shows */
+      op.label=(_cl[i] && _cl[i].name) ? _cl[i].name : ('Level '+(i+1));
+      lvl.appendChild(op);
+    }
+  }catch(e){}   /* `campaign` is a `let` declared ~30,000 lines below this — and `typeof` does NOT guard a
+                   temporal dead zone (builds 1127, 1331, 1350, 1383, 1411). A catch is what actually does. */
+  for(const nm of _lgVarOptions()){ const op=document.createElement('option'); op.value=nm; op.label='variable'; lvl.appendChild(op); }
   const vl=mk('lgVarList');   // build 1060: variable names, shared by the logic nodes and the HUD widget fields
   for(const nm of _lgVarOptions()){ const op=document.createElement('option'); op.value=nm; vl.appendChild(op); }
   const ll=mk('lgListList');   // build 1269: list names, so a deck is named once and picked thereafter
@@ -14517,9 +14547,13 @@ function _lgRenderNode(n){
         const op=document.createElement('option'); op.value=ov; op.textContent=ot; if(cur===ov) op.selected=true; inp.appendChild(op); }
       inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
     else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=(n.p[pm.k]!=null)?!!n.p[pm.k]:!!pm.def;   /* build 1407: an unset box shows the default the runtime will use, rather than contradicting it */ inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
-    else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList' || pm.listId==='lgVarList' || pm.listId==='lgListList') _lgRefreshDatalists(); }; }
+    else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); if(pm.ph) inp.placeholder=pm.ph; inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList' || pm.listId==='lgVarList' || pm.listId==='lgListList') _lgRefreshDatalists(); }; }
     if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:'+(pm.w||100)+'px;';
     inp.onpointerdown=(e)=>e.stopPropagation();
+    /* build 1496: a field whose meaning is not in its own label can say so. On the LABEL rather than the
+       input, so hovering the words explains them too — and the editor's own tooltip sweep (build 1337)
+       moves `title` to `data-tip`, so this is the same convention every other control here uses. */
+    if(pm.ttl) wrap.title=pm.ttl;
     wrap.appendChild(inp); body.appendChild(wrap);
   }
   el.appendChild(body);
@@ -35952,7 +35986,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1495 · 2026-08-12';
+const BUILD_VERSION = 'build 1496 · 2026-08-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
