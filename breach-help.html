@@ -1628,13 +1628,36 @@ between rooms in <i>any</i> order — a hub, a shortcut, a door you can walk bac
 <div class="tblwrap"><table>
 <tr><th>Field</th><th>What it does</th></tr>
 <tr><td><b>level #</b></td><td>Which room to load, counting from <b>1</b> — the numbers you see in the
-Campaign list. It takes a variable name too, so a graph can compute the destination.</td></tr>
+Campaign list. <b>The dropdown lists your campaign's own levels by name</b>, so you can pick rather than
+count. It takes a variable name too (offered under the levels), so a graph can compute the destination —
+that is how a hub world sends you to a different wing each time.</td></tr>
 <tr><td><b>arrive at tag</b></td><td>A <a href="#folds">tag</a> on a prop in the <i>destination</i> room.
 The player materialises there, <b>facing the way that prop faces</b>. Leave it blank and they arrive at
 that room's own player start.</td></tr>
 <tr><td><b>keep gear</b></td><td>Tick it and weapons, ammo and health cross the threshold unchanged.
 Untick it and the destination's own loadout applies.</td></tr>
 </table></div>
+
+<h3 id="doorwalk">Worked example — a trigger that loads the next level</h3>
+<p>This is the whole thing, in the room you are leaving:</p>
+<ol>
+<li><b>Build both levels first.</b> Save tab → <b>Campaign</b> → <b>Add current level</b> for each one. The
+<b>Go to level</b> field can only offer rooms that are already in that list.</li>
+<li>In the room you are leaving: World tab → <b>Zones</b> → <b>Trigger</b> → <b>+ Add trigger (here)</b>.
+Drag the blue dot to the doorway, set <b>radius</b> and <b>height</b>, leave <b>when</b> on <b>Enters</b>
+and <b>who</b> on <b>Player</b>.</li>
+<li>Type a name in <b>fires</b> — say <code>newLevel</code>. A trigger does nothing on its own; it just
+announces that name.</li>
+<li>Logic tab → add <b>On event</b> and type the same name, <code>newLevel</code>.</li>
+<li>Add <b>Go to level</b> and wire the event's <b>▶</b> to its input.</li>
+<li>Click <b>level #</b> and pick the room from the dropdown — it lists your campaign by name
+(<i>1 → Intro</i>, <i>2 → Level 2</i>). You can also just type the number.</li>
+<li>Save the room back into the campaign (<b>Save changes to "…"</b>), then <b>Play campaign</b>.</li>
+</ol>
+<div class="box warn"><b>It has to be a campaign run.</b> <b>Go to level</b> is a doorway between rooms of
+one campaign, so plain <b>Play</b> has nowhere to go — the node reports that in <b>Level check</b> and
+nothing happens. Use <b>Play campaign</b>. And an empty <b>level #</b> says so in Level check too, rather
+than failing silently.</div>
 
 <div class="box"><b>Which way is the marker facing?</b> Rotate the arrival prop in the destination room
 and the player arrives looking that way — the prop's forward <i>is</i> the arrival facing. Point it into
