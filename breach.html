@@ -22685,6 +22685,7 @@ let gameCfg = {
   wavesText: (savedLevel && savedLevel.game && typeof savedLevel.game.wavesText==='string') ? savedLevel.game.wavesText.slice(0,2000) : '',   // build 1179: the manifest source, round-tripped for the editor
   waves: (savedLevel && savedLevel.game && typeof savedLevel.game.wavesText==='string') ? parseWaveManifest(savedLevel.game.wavesText) : null,   // random mode: spawn a BOSS every Nth wave (0 = never)
   noRespawn: !!(savedLevel && savedLevel.game && savedLevel.game.noRespawn),   // pre-built: spawn authored markers once, don't respawn cleared waves
+  buildMenu: !(savedLevel && savedLevel.game && savedLevel.game.buildMenu===false),   // build 1502: the Deploy radial is optional; only an authored false disables it
   // build 672: "hands" / unarmed support — turns the game into a fist-fight / adventure / puzzle base
   unarmed: !!(savedLevel && savedLevel.game && savedLevel.game.unarmed),        // start with fists only (no guns)
   startWeapon: (savedLevel && savedLevel.game && typeof savedLevel.game.startWeapon==='string') ? savedLevel.game.startWeapon : 'rifle',   // build 976: the primary you spawn with (armed levels)
@@ -28467,6 +28468,7 @@ function _applyGameCfg(g){
   gameCfg.freeCursor  = !!g.freeCursor;   /* build 1467: always assigned, never "if present" — build 1400's rule, or it LEAKS from the previous level */
   gameCfg.clickMove   = !!g.clickMove;    /* build 1481, same rule */
   if(typeof _applyFreeCursorClass==='function') _applyFreeCursorClass();
+  gameCfg.buildMenu   = g.buildMenu !== false;   /* build 1502: same rule — absent means ON */
   gameCfg.crosshair   = _crosshairFrom(g.crosshair);
   if(typeof applyCrosshair==='function') try{ applyCrosshair(gameCfg.crosshair); }catch(e){}
 }
@@ -35991,7 +35993,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1501 · 2026-08-14';
+const BUILD_VERSION = 'build 1502 · 2026-08-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36640,7 +36642,7 @@ function _touchCtxTick(now){
   s('tFire',   _combat); s('tAim', _combat); s('tReload', _combat); s('tWeapon', _combat); s('tNade', _combat);
   s('tMelee',  !_race);                                   // fists still work on foot in non-driving levels
   s('tCrouch', !_race && _vm==='fps');                    // no crouch/slide in top-down / side-scroll / racing
-  s('tBuild',  !!(typeof radialCfg!=='undefined' && radialCfg && radialCfg.length));   // nothing to place -> no BUILD
+  s('tBuild',  !!(typeof radialCfg!=='undefined' && radialCfg && radialCfg.length) && gameCfg.buildMenu!==false);   // nothing to place, or the level opted out -> no BUILD
 }
 // build 908: keep the phone awake during play — thumbs don't move the "activity" needle and the
 // screen used to dim/sleep mid-match. Best-effort; re-acquired when the tab returns.
@@ -37410,7 +37412,7 @@ function startTutorial(){
   if(NET.mode!=='off') return;   // solo only — a lobby/joiner flow is the wrong moment
   // only steps the player can actually PERFORM right now: no fire/switch on a fists-only level,
   // and no "switch weapons" while they own a single gun (a fresh run starts rifle-only)
-  const steps=TUT_STEPS.filter(st=>!(gameCfg.unarmed && (st.id==='fire'||st.id==='wep')) && !(st.id==='wep' && owned.length<2));
+  const steps=TUT_STEPS.filter(st=>!(gameCfg.unarmed && (st.id==='fire'||st.id==='wep')) && !(st.id==='wep' && owned.length<2) && !(st.id==='build' && gameCfg.buildMenu===false));   /* build 1502 */
   if(!steps.length) return;
   TUT={ steps, i:0, t:0, sx:player.pos.x, sz:player.pos.z, look:0, wep0:curWep, py:player.yaw, pp:player.pitch };
   _tutRender();
@@ -37664,6 +37666,7 @@ let radialCfg = _sanitizeRadial(savedLevel && savedLevel.radial);
 let radialOpen=false, radialSel=-1, radialCx=0, radialCy=0, _deployCD=0;
 const RADIAL_R=120, RADIAL_DEAD=26;
 function openRadial(){
+  if(gameCfg.buildMenu===false) return;   /* build 1502: the level opted out — every input door routes through here */
   if(!gameOn || editorOpen || shopOpen || paused || duelDead || radialOpen) return;
   radialOpen=true; radialCx=0; radialCy=0; radialSel=-1;
   const host=document.getElementById('radialRing');
@@ -45907,7 +45910,7 @@ function serializeLevel(){
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
     animCuts: (Object.keys(animCuts).length ? _sanAnimCuts(animCuts) : undefined),   /* build 1336: undefined when unused, so a level with no slices does not grow a dead key. Sanitized on the way OUT as well as in, so nothing out-of-range can enter a share code (1191's rule). */
-    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim, freeCursor: !!gameCfg.freeCursor, clickMove: !!gameCfg.clickMove },   /* build 1467 · 1481 */   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, buildMenu: (gameCfg.buildMenu===false) ? false : undefined, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim, freeCursor: !!gameCfg.freeCursor, clickMove: !!gameCfg.clickMove },   /* build 1467 · 1481 */   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -46356,6 +46359,17 @@ function renderDecalFxPanel(){
 // their material) already sync to every player via the prop reconciler, so a custom build kit is shared online.
 function renderBuildMenuPanel(){
   const host=edDoc().getElementById('edBuildMenu'); if(!host) return; host.innerHTML='';
+  /* build 1502: the menu is OPTIONAL. Some games have no place for a deploy mechanic, and the only
+     previous off was emptying the slot list, which this panel itself refuses. The slots stay editable
+     while off, so turning it back on restores exactly what was authored. */
+  { const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:7px;margin:2px 0 8px;cursor:pointer;font-size:12px;color:#cfeee2;';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=(gameCfg.buildMenu!==false); cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+    cb.onchange=()=>{ pushUndoSnapshot(); gameCfg.buildMenu=cb.checked; renderBuildMenuPanel(); };
+    row.appendChild(cb); row.appendChild(document.createTextNode('Players can open the build menu'));
+    host.appendChild(row);
+    if(gameCfg.buildMenu===false){ const h=document.createElement('div'); h.style.cssText='font-size:11px;color:#7fa596;margin:-4px 0 8px;';
+      h.textContent='Off \u2014 the Deploy radial never opens in this level (Tab, the BUILD button and the pad all do nothing). The slots below are kept.';
+      host.appendChild(h); } }
   const wrap=document.createElement('div');
   const touch=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); _levelDirty=true; };
   const lbl=(t)=>{ const s=document.createElement('span'); s.textContent=t; s.style.cssText='flex:1 1 auto;font-size:11px;color:#cfeee2;'; return s; };

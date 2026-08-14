@@ -22,7 +22,8 @@ assert(/s\('tFire',   _combat\); s\('tAim', _combat\); s\('tReload', _combat\); 
   'the gun cluster follows _combat');
 assert(/s\('tMelee',  !_race\);/.test(src), 'melee hides only on a race (fists still work on foot elsewhere)');
 assert(/s\('tCrouch', !_race && _vm==='fps'\);/.test(src), 'crouch hides on race and in top/side views');
-assert(/s\('tBuild',  !!\(typeof radialCfg!=='undefined' && radialCfg && radialCfg\.length\)\);/.test(src),
-  'build hides when there is nothing to place');
+/* build 1502: the line gained the level's opt-out — same intent, one more reason to hide */
+assert(/s\('tBuild',  !!\(typeof radialCfg!=='undefined' && radialCfg && radialCfg\.length\) && gameCfg\.buildMenu!==false\);/.test(src),
+  'build hides when there is nothing to place, or when the level opted out');
 
 done('build 969: mobile controls match the level — no melee/crouch on a race, no guns unarmed');
