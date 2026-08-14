@@ -14546,7 +14546,7 @@ function _lgRenderNode(n){
       for(const o of pm.sel){ const ov=Array.isArray(o)?o[0]:o, ot=Array.isArray(o)?o[1]:o;
         const op=document.createElement('option'); op.value=ov; op.textContent=ot; if(cur===ov) op.selected=true; inp.appendChild(op); }
       inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
-    else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=(n.p[pm.k]!=null)?!!n.p[pm.k]:!!pm.def;   /* build 1407: an unset box shows the default the runtime will use, rather than contradicting it */ inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
+    else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=(n.p[pm.k]!=null)?!!n.p[pm.k]:!!pm.def;   /* build 1407: an unset box shows the default the runtime will use, rather than contradicting it */ inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ /* build 1501: store what DIFFERS from the default, delete what equals it. The old shape deleted on untick — for a default-ON box (vtrack) the re-render then redrew the default and the box snapped back ticked, so the untick was inexpressible. A field with no def keeps its old bytes exactly (tick 1, untick absent). */ const _dv=pm.def?1:0, _nv=inp.checked?1:0; if(_nv===_dv) delete n.p[pm.k]; else n.p[pm.k]=_nv; _lgDirty(); _lgRender(); }; }
     else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); if(pm.ph) inp.placeholder=pm.ph; inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList' || pm.listId==='lgVarList' || pm.listId==='lgListList') _lgRefreshDatalists(); }; }
     if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:'+(pm.w||100)+'px;';
     inp.onpointerdown=(e)=>e.stopPropagation();
@@ -21821,6 +21821,7 @@ const SIG_KEYS = {
 };
 const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
 const SIG_STR_MAX = 300;   // a signal can carry a sound URL; the consumers keep their own tighter caps
+const SIG_ZERO_KEYS = { vtrack:1 };   // build 1501: the keys whose 0 must survive the pack (rationale at the emitter)
 function _sigPack(s){
   const x={};
   if(!s) return x;
@@ -21828,8 +21829,12 @@ function _sigPack(s){
      engine can tell an amount of 0 from an unset one — every consumer reads `+s.amt||25` — so emitting it
      would grow every saved level for a value that means nothing, and would break the byte-identical
      round trip that makes this safe over existing content. */
+  /* build 1501: ...with ONE exemption, SIG_ZERO_KEYS. vtrack is the single field whose ZERO is
+     meaningful -- the runtime read distinguishes absent (follow, the default) from an authored 0 (hold
+     the prop own facing) -- so dropping its 0 made the untick vanish on every save. Absent still means
+     default, so every level authored before this build is byte-identical. */
   for(const k in SIG_KEYS){ const v=s[k];
-    if(!v) continue;
+    if(!v && !(v===0 && SIG_ZERO_KEYS[k])) continue;
     x[SIG_KEYS[k]] = (v===true) ? 1 : v; }
   return x;
 }
@@ -35986,7 +35991,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1498 · 2026-08-12';
+const BUILD_VERSION = 'build 1501 · 2026-08-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -44188,6 +44193,23 @@ const ZONE_EDIT = {
   waterzones: { list:()=>waterZones,    sel:()=>selWaterZone, pick:(i)=>{ selWaterZone=i; }, markers:()=>waterZoneFx,      refresh:()=>refreshWaterZones(),       panel:()=>renderWaterZonesPanel(), remove:(i)=>removeWaterZone(i), add:()=>{ if(typeof addWaterZone==='function') addWaterZone(); } },
   fxzones:    { list:()=>fxZones,       sel:()=>selFxZone,    pick:(i)=>{ selFxZone=i;    }, markers:()=>fxZoneFx,         refresh:()=>refreshFxZoneMarkers(),    panel:()=>renderFxZonesPanel(),    remove:(i)=>removeFxZone(i), add:()=>{ if(typeof addFxZone==='function') addFxZone(); } },
 };
+/* ---- build 1499: authoring zone markers leave the frame when play begins ----
+   Reported from play: trigger outlines (and a few others) rode into the game via the P key and via
+   Play campaign. Three hand-kept hide lists existed (toggleEditor close, startGame, endGame), each
+   incomplete differently -- TRIGGERS were in none of them, and the P-key path hid no zones at all.
+   The sweep derives from ZONE_EDIT above, so the ninth zone type cannot be missed (build 1326 built
+   the table for exactly this reason). firezones/waterzones are SKIPPED on purpose: their markers()
+   return the PLAY visuals (the flames, the water surface) -- sweeping those would delete the effect
+   in play, a worse failure than the leak this fixes. The fx zone cues ARE swept even though
+   updateFxZones re-syncs them per frame: the first frame of play must not flash authoring cues. */
+const ZONE_PLAY_VISUALS = ['firezones','waterzones'];
+function _edZoneMarkersVisible(v){
+  for(const k in ZONE_EDIT){
+    if(ZONE_PLAY_VISUALS.indexOf(k) >= 0) continue;
+    const ms = ZONE_EDIT[k].markers() || [];
+    for(const g of ms){ if(g) g.visible = v; }
+  }
+}
 /* build 1445: duplicating a zone is the same operation for all eight — a zone is a PLAIN SERIALIZABLE
    OBJECT (it round-trips through the level file, which is what makes the deep copy safe), so there is one
    implementation rather than eight near-copies. The copy is offset and SELECTED, so a creator can drag it
@@ -48340,7 +48362,13 @@ function buildEditorPanel(){
     /* build 1497: while attached to a campaign level, Save feeds BOTH destinations and the note says so —
        a save whose second destination is invisible is how the old two-target confusion started */
     const _cn = (typeof campaignEditIdx!=='undefined' && campaignEditIdx>=0 && campaign.levels[campaignEditIdx]) ? (campaign.levels[campaignEditIdx].name||('Level '+(campaignEditIdx+1))) : null;
-    note.textContent = _ok ? (_cn ? ('Saved — campaign level \u201c'+_cn+'\u201d updated too ✓') : 'Level saved — it will auto-load next time ✓') : 'Save failed (storage blocked here)';
+    const _msg = _ok ? (_cn ? ('Saved — campaign level \u201c'+_cn+'\u201d updated too ✓') : 'Level saved — it will auto-load next time ✓') : 'Save failed (storage blocked here)';
+    note.textContent = _msg;
+    /* build 1500: Ctrl+S works from ANY tab (the panel HTML is static, so #edSave always exists) but
+       the note above renders only on the Save tab, and even there it is small. The toast is the
+       visible answer, and it carries the SAME string, so the two can never disagree. A failed save
+       toasts as well: a silent failure is worse than a missed confirmation (build 1359). */
+    if(typeof flashToast==='function') flashToast(_msg);
     clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 2800);
   };
   p.querySelector('#edShare').onclick = async ()=>{
@@ -49066,7 +49094,7 @@ function _sigWorldRow(s, rerender){
     sel([['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']], s.vmode||'normal', v=>{ s.vmode=v; });
     if(s.vmode==='fixed'){
       lab('tag'); txt('camera prop tag', s.vtag, v=>{ if(v) s.vtag=v; else delete s.vtag; }, 110, 'lgTagList');
-      chk('follows the player', s.vtrack, v=>{ if(v) s.vtrack=1; else delete s.vtrack; });
+      chk('follows the player', (s.vtrack!=null)?!!s.vtrack:true, v=>{ if(v) delete s.vtrack; else s.vtrack=0; });   /* build 1501: unset shows the ON the runtime will use (1407's display rule, applied here too), and an untick is an EXPLICIT 0 — deleting it read back as the default and the camera kept following */
       /* build 1410: several props under one tag are a BANK. Blank holds on the first — the 1404 behaviour. */
       lab('cut every'); txt('0 = hold', s.vdwell, v=>{ if(v) s.vdwell=v; else delete s.vdwell; }, 46);
       /* build 1348's rule: a capability nobody can find is, for most creators, a capability that does
@@ -54921,6 +54949,7 @@ function toggleEditor(){
     setTurretMarkersVisible(true);
     if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(true);
     if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
+    if(typeof _edZoneMarkersVisible==='function') _edZoneMarkersVisible(true);   // build 1499: the close sweep hid these; build 1293 means no panel render will re-show them
     if(typeof refreshCinePreview==='function') refreshCinePreview();   // show the dotted camera path while editing
     document.body.classList.add('editing');   // build 658: CSS hides all combat HUD elements (crosshair stays)
     if(typeof _outOnEditorOpen==='function') _outOnEditorOpen();   // build 1036: re-apply outliner hides + restore the panel
@@ -54948,6 +54977,8 @@ function toggleEditor(){
     setTurretMarkersVisible(false);
     if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
     if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false);   // markers linger visible otherwise — the 'stuck double' next to every live pad
+    if(typeof _edZoneMarkersVisible==='function') _edZoneMarkersVisible(false);   // build 1499: zone outlines (triggers included) must not ride into play on the P key
+    if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false);
     for(const en of enemies){ en.mesh.visible = true; }   // un-hide enemies when leaving the editor
     document.body.classList.remove('editing');   // build 658: restore the combat HUD
     document.body.classList.remove('hudPreview');   // build 665: leave HUD-preview mode
@@ -55096,10 +55127,10 @@ function startGame(){
   if(typeof _vehArrow!=='undefined' && _vehArrow) _vehArrow.visible=false; if(typeof _vehPivotDot!=='undefined' && _vehPivotDot) _vehPivotDot.visible=false; if(typeof _carHitBox!=='undefined' && _carHitBox) _carHitBox.visible=false; if(typeof _jointGiz!=='undefined' && _jointGiz) _jointGiz.visible=false;   // build 859: toggleEditor hid these; the direct-close paths (Deploy / end of game) didn't — the arrow + orange hit box rode into play
   if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
   if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false);
-  if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
+  if(typeof _edZoneMarkersVisible==='function') _edZoneMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
   if(typeof lightModels!=='undefined') for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; }
   if(typeof setTurretMarkersVisible==='function') setTurretMarkersVisible(false);
-  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; } if(typeof _edToolbarShow==='function') _edToolbarShow(false);   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
+  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; } if(typeof _edToolbarShow==='function') _edToolbarShow(false);   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof _edZoneMarkersVisible==='function') _edZoneMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
   camera.fov = (worldCfg && worldCfg.fov) || BASE_FOV; camera.updateProjectionMatrix(); camera.rotation.z = 0;
   // clear entities
   enemies.slice().forEach(e=>{ scene.remove(e.mesh); if(e.mesh.userData.mixer){ const mi=mixers.indexOf(e.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } }); enemies.length=0;
@@ -55306,10 +55337,10 @@ function endGame(){
   if(typeof _vehArrow!=='undefined' && _vehArrow) _vehArrow.visible=false; if(typeof _vehPivotDot!=='undefined' && _vehPivotDot) _vehPivotDot.visible=false; if(typeof _carHitBox!=='undefined' && _carHitBox) _carHitBox.visible=false; if(typeof _jointGiz!=='undefined' && _jointGiz) _jointGiz.visible=false;   // build 859: toggleEditor hid these; the direct-close paths (Deploy / end of game) didn't — the arrow + orange hit box rode into play
   if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
   if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false);
-  if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
+  if(typeof _edZoneMarkersVisible==='function') _edZoneMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
   if(typeof lightModels!=='undefined') for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; }
   if(typeof setTurretMarkersVisible==='function') setTurretMarkersVisible(false);
-  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; } if(typeof _edToolbarShow==='function') _edToolbarShow(false);   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
+  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; } if(typeof _edToolbarShow==='function') _edToolbarShow(false);   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof _edZoneMarkersVisible==='function') _edZoneMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
   $('shop').classList.add('hidden');
   $('prompt').style.display='none';
   const ov=$('overlay'); ov.classList.remove('hidden');

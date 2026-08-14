@@ -490,6 +490,122 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The untick that could not exist (build 1501)
+
+Reported from play, about the fixed camera's *follows the player* box: *"No matter what, I'm not able to
+untick this toggle."* Three sites conspired, and any ONE of them alone keeps the bug:
+
+- **The graph node's checkbox DELETED the key on untick** — and its own onchange ends in `_lgRender()`,
+  which redraws an absent value as `!!pm.def`. For the engine's single `def:1` field the box snapped back
+  checked under the cursor, which is the report verbatim. Build 1407 created this shape honestly: it fixed
+  the DISPLAY to show the default the runtime uses, and in doing so made the default-ON untick
+  inexpressible — the fix for one lie enabled the other.
+- **The signal editor's row deleted too** — the sneakier half: the box *looked* unticked while the runtime
+  read absent as ON, so the camera kept following and the creator kept clicking.
+- **`_sigPack` drops falsy**, so even an explicit 0 died on the next save. That rule's own rationale —
+  *"nothing in the engine can tell an amount of 0 from an unset one"* — is FALSE for exactly this field:
+  the runtime read has always distinguished absent (default: follow) from an authored 0 (hold the prop's
+  facing). `vtrack` is the one place "falsy is absent" was wrong, and it took the one default-ON checkbox
+  to prove it.
+
+The rule replacing all three: **store what DIFFERS from the default, delete what equals it.** The node
+onchange writes 0 on untick and deletes on tick; the signal row displays the default when unset (1407's
+display rule, finally applied to both doors) and writes the 0; `SIG_ZERO_KEYS` exempts `vtrack` from the
+pack's falsy-drop. A def-less checkbox (`once`, `mfrz`) produces byte-identical files to before, and an
+unset `vtrack` still serializes as nothing — every existing level is untouched.
+
+Measured live (`tools/probe/vtrack-untick.mjs`), clicking the REAL checkbox in the REAL board:
+
+```
+untick     before:true -> afterChecked:false, stored:0     <- was: snapped back checked, stored nothing
+reloaded   serialized:0, restored:0                        <- the 0 survives the file
+retick     afterChecked:true, keyPresent:false             <- absent again = the default, old bytes
+signal     vk:0 on the wire, round-trips, unset absent     <- the pack exemption, with its control
+```
+
+**And the count pin caught my own comment.** `test-1406` counts `_sigPack` references at exactly 2; my
+`SIG_ZERO_KEYS` comment said *"(see _sigPack)"* and made it 3 — a pin defeated by prose, by the person who
+has now written that trap into this file a dozen times. The comment says "the emitter" instead. Two pins
+moved (1406 ×2 — the rig gained the new const lifted from source, and the row pin's `s.vtrack=1` was
+quoting the defect).
+
+## The save always worked; the confirmation was tab-local (build 1500)
+
+Reported from play: *"Can there be a small on-screen toast after saving via 'ctrl-s'? Right now it only
+shows if you have the Save tab open, and even then it's a little buried."* Verified: Ctrl+S clicks
+`#edSave` and the panel HTML is static, so the BUTTON exists from every tab and the save always fired —
+but the only confirmation was the `#edCopied` note, which renders on the Save tab alone. A save whose
+feedback is invisible reads as a save that did not happen, which is how creators end up pressing it five
+times or losing trust in it entirely.
+
+The handler now computes **one `_msg`** and hands it to both surfaces — the note and `flashToast` — so the
+two can never disagree (build 1402's one-syntax rule, applied to a string). Build 1497's dual-destination
+message rides along for free: while attached to a campaign level the toast reads *"Saved — campaign level
+"Booth 1" updated too ✓"*. **A failed save toasts too** — the failure string is part of `_msg`, not a
+separate literal, and a silent failure is worse than a missed confirmation (build 1359's lesson).
+
+Measured live (`tools/probe/save-toast.mjs`): on the Build tab the note is provably invisible
+(`offsetParent` null) while the toast shows the message at opacity 1; attached names the campaign level;
+a real failure toasts *"Save failed"*; and Ctrl+S inside a text field fires nothing — the control.
+
+**The failure fixture was wrong twice, and the second miss was the engine being RIGHT.** Overriding
+`Storage.prototype.setItem`, then the instance, both produced a *successful* save — because `saveLevel`'s
+catch returns true when IndexedDB is alive (build 1359's quota fallback): a blocked localStorage is not a
+failure, by design. The one failure it cannot route around is serialization, and that is what the fixture
+breaks now. *A fixture that cannot produce the failure it tests is measuring the fallback, not the
+feature.*
+
+**And the probe's first run read stale toasts.** `flashToast` queues behind `_toastBusy` while a toast is
+live, so rows 2 and 3 were reading row 1's text — every row now resets the toast state first. A probe that
+reads a deduplicating UI must isolate its rows or it measures the dedup.
+
+`test-1500` slices the real handler between asserted anchors and EXECUTES it: attached, detached, failure
+and no-`flashToast`-in-scope, asserting toast === note byte-identically and that no second toast literal
+exists to drift.
+
+## The zone outlines rode into play, on two different roads (build 1499)
+
+Reported from play: *"The editor visual for event triggers, and a few others show their outlines/radius
+markers in the game if you click 'p' to play directly from the editor or select 'play campaign' from the
+editor."* Probed before reasoning (`tools/probe/marker-leak.mjs` — place ONE of every zone type, then read
+which marker groups are still effectively visible after each path):
+
+```
+in editor   trigger 1  audio 1  death 1  jump 1  ladder 1  fx 1     <- the control
+P key       ALL SIX still visible — toggleEditor's close branch hid NO zones at all
+campaign    trigger 1, the rest 0 — startGame's list covered audio/death/jump/ladder and not triggers
+```
+
+**Three hand-kept hide lists existed — toggleEditor close, startGame, endGame — each incomplete
+differently**, which is build 1280's defect shape in visibility form. And it was really FIVE lists:
+startGame and endGame each carried the zone-setter chain TWICE (build 859 had appended a second copy to the
+long direct-close line). Triggers were in none of them; the P-key path (KeyP → `toggleEditor()` while
+`gameOn`, straight back into play) had none of any kind.
+
+The fix is ONE sweep, `_edZoneMarkersVisible(v)`, derived from build 1326's `ZONE_EDIT` table — the table
+that exists precisely so the ninth zone type cannot reach some lists and miss others. Declared beside the
+table, called at all three doors: toggleEditor close (+ the spawn-region marker, which was also absent
+there), and the four chain sites in startGame/endGame, which it REPLACES — the per-type setters survive as
+functions, but no hand-kept hide call remains for the sweep to drift against. `test-1499` asserts that
+count is zero.
+
+Two exemptions and one symmetry, each a defect the other way:
+- **`firezones`/`waterzones` are SKIPPED.** Their `markers()` rows resolve to `fireZoneFx`/`waterZoneFx` —
+  the PLAY visuals (the flames, the water surface). Sweeping those would delete the effect in play, a worse
+  failure than the leak. The probe proves it: `fireVis 1 / waterVis 1` in every condition, editor and play.
+- **The fx zone cues ARE swept**, even though `updateFxZones` re-syncs them per frame — the first frame of
+  play must not flash authoring cues either.
+- **toggleEditor's OPEN branch shows them back.** Without it the fix would trade the reported bug for a
+  worse one: build 1293 skips building panels that are not on screen, so reopening the editor on the Build
+  tab would run no zone refresh and the markers would simply be GONE for the rest of the session. The open
+  branch was itself an incomplete hand-list (it refreshed audio/death/jump/fire and not
+  triggers/ladders/water/fx), which is how close to shipping that trap was. Measured: P-hide → reopen →
+  all six back at 1.
+
+`test-1499` executes the real sweep over the real `ZONE_EDIT` literal with sentinel-valued play visuals (a
+write to them fails the test, in both directions), tolerates a null hole in a marker list (1167's class),
+pins the for-in derivation, the two exempt keys as real table keys, and the source order of the three doors.
+
 ## The campaign is in the menu bar, and the menu is a door (build 1498)
 
 The other half of the same report: *"it's buried under the save tab and is hard to find. Can we add some
