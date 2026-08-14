@@ -6,7 +6,9 @@ const src = gameSource();
 // --- (1) the real fix: updateGizmo() only HIDES when called, and nothing called it after editorOpen
 //         flipped on the Play-level path, so the gizmo froze visible. Now forced at the flip (both sites). ---
 assert((src.match(/editorOpen=false; _editorOpenFlag=false; editorAimPreview=false; editorFreeFly=false; editorTopView=false;\s*\n(?:\s*if\(typeof _edMenuSync==='function'\)[^\n]*\n)?\s*if\(typeof updateGizmo==='function'\) updateGizmo\(\);/g)||[]).length === 2, 'both deploy paths force updateGizmo() once editorOpen is false');
-assert(/if\(typeof setSpawnMarkersVisible==='function'\) setSpawnMarkersVisible\(false\);[\s\S]{0,400}if\(typeof setAudioZoneMarkersVisible==='function'\) setAudioZoneMarkersVisible\(false\);/.test(src), 'spawn + pickup + audio markers hidden at the flip');
+/* build 1499: the per-type audio call became the table-derived zone sweep (_edZoneMarkersVisible), which
+   hides audio rings and every other zone type at once — same intent, one derivation. */
+assert(/if\(typeof setSpawnMarkersVisible==='function'\) setSpawnMarkersVisible\(false\);[\s\S]{0,400}if\(typeof _edZoneMarkersVisible==='function'\) _edZoneMarkersVisible\(false\);/.test(src), 'spawn + pickup + zone markers hidden at the flip');
 // updateGizmo genuinely hides when not in the editor (the mechanism the fix relies on)
 const ug = extractFunction('updateGizmo');
 assert(/const movable = editorOpen &&/.test(ug) && /if\(!pos\)\{ gr\.translate\.visible=gr\.scale\.visible=gr\.rotate\.visible=false; gizmo\.visible = false; return; \}/.test(ug), 'updateGizmo hides everything when editorOpen is false');

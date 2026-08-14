@@ -7,8 +7,10 @@ const page = readFileSync(new URL('../breach.html', import.meta.url), 'utf8');
 // build 364: Play level reads primary; the two "exit/main menu" buttons read as a distinct caution color.
 
 // --- 363: the shared play-transition block hides every marker family ---
-const playHide = 'if(typeof setSpawnMarkersVisible===\'function\') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible===\'function\') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible===\'function\') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible===\'function\') setAudioZoneMarkersVisible(false);';
-assert((src.split(playHide).length - 1) === 2, 'both editor->play transitions hide spawn/pickup/loot/audio markers');
+// build 1499: the per-type audio call became the table-derived zone sweep, which covers audio zones and
+// every other zone type at once — the intent (audio rings hidden on both transitions) is unchanged.
+const playHide = 'if(typeof setSpawnMarkersVisible===\'function\') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible===\'function\') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible===\'function\') setLootMarkersVisible(false); if(typeof _edZoneMarkersVisible===\'function\') _edZoneMarkersVisible(false);';
+assert((src.split(playHide).length - 1) === 2, 'both editor->play transitions hide spawn/pickup/loot + every zone marker');
 assert(/function setAudioZoneMarkersVisible\(v\)\{ for\(const g of audioZoneMarkers\) g\.visible=v; \}/.test(src), 'audio-zone rings get a visibility toggle (no rebuild)');
 assert(/if\(typeof gr!=='undefined' && gr\)\{ gr\.translate\.visible=gr\.scale\.visible=gr\.rotate\.visible=false; \}/.test(src), 'gizmo rig handles hidden on play');
 assert(/if\(typeof selBox!=='undefined' && selBox\) selBox\.visible=false;/.test(src), 'selection box hidden on play');

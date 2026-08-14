@@ -490,6 +490,49 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The zone outlines rode into play, on two different roads (build 1499)
+
+Reported from play: *"The editor visual for event triggers, and a few others show their outlines/radius
+markers in the game if you click 'p' to play directly from the editor or select 'play campaign' from the
+editor."* Probed before reasoning (`tools/probe/marker-leak.mjs` — place ONE of every zone type, then read
+which marker groups are still effectively visible after each path):
+
+```
+in editor   trigger 1  audio 1  death 1  jump 1  ladder 1  fx 1     <- the control
+P key       ALL SIX still visible — toggleEditor's close branch hid NO zones at all
+campaign    trigger 1, the rest 0 — startGame's list covered audio/death/jump/ladder and not triggers
+```
+
+**Three hand-kept hide lists existed — toggleEditor close, startGame, endGame — each incomplete
+differently**, which is build 1280's defect shape in visibility form. And it was really FIVE lists:
+startGame and endGame each carried the zone-setter chain TWICE (build 859 had appended a second copy to the
+long direct-close line). Triggers were in none of them; the P-key path (KeyP → `toggleEditor()` while
+`gameOn`, straight back into play) had none of any kind.
+
+The fix is ONE sweep, `_edZoneMarkersVisible(v)`, derived from build 1326's `ZONE_EDIT` table — the table
+that exists precisely so the ninth zone type cannot reach some lists and miss others. Declared beside the
+table, called at all three doors: toggleEditor close (+ the spawn-region marker, which was also absent
+there), and the four chain sites in startGame/endGame, which it REPLACES — the per-type setters survive as
+functions, but no hand-kept hide call remains for the sweep to drift against. `test-1499` asserts that
+count is zero.
+
+Two exemptions and one symmetry, each a defect the other way:
+- **`firezones`/`waterzones` are SKIPPED.** Their `markers()` rows resolve to `fireZoneFx`/`waterZoneFx` —
+  the PLAY visuals (the flames, the water surface). Sweeping those would delete the effect in play, a worse
+  failure than the leak. The probe proves it: `fireVis 1 / waterVis 1` in every condition, editor and play.
+- **The fx zone cues ARE swept**, even though `updateFxZones` re-syncs them per frame — the first frame of
+  play must not flash authoring cues either.
+- **toggleEditor's OPEN branch shows them back.** Without it the fix would trade the reported bug for a
+  worse one: build 1293 skips building panels that are not on screen, so reopening the editor on the Build
+  tab would run no zone refresh and the markers would simply be GONE for the rest of the session. The open
+  branch was itself an incomplete hand-list (it refreshed audio/death/jump/fire and not
+  triggers/ladders/water/fx), which is how close to shipping that trap was. Measured: P-hide → reopen →
+  all six back at 1.
+
+`test-1499` executes the real sweep over the real `ZONE_EDIT` literal with sentinel-valued play visuals (a
+write to them fails the test, in both directions), tolerates a null hole in a marker list (1167's class),
+pins the for-in derivation, the two exempt keys as real table keys, and the source order of the three doors.
+
 ## The campaign is in the menu bar, and the menu is a door (build 1498)
 
 The other half of the same report: *"it's buried under the save tab and is hard to find. Can we add some
