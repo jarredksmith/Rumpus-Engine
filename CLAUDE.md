@@ -490,6 +490,103 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The campaign is in the menu bar, and the menu is a door (build 1498)
+
+The other half of the same report: *"it's buried under the save tab and is hard to find. Can we add some
+sort of better system or nav for it in the top file menu?"* True twice over — the collapsed fold in the
+least-visited tab was the ONLY surface in the product that mentioned campaigns.
+
+A **Campaign** menu sits in the top bar between Tools and Help. Its items are a **FUNCTION, evaluated at
+open** — `_edMenuToggle` learned `def.items()` — because the menu's job is to show the LIVE campaign: the
+levels by name (click one = the panel's Edit button, one click from anywhere), the attached level marked
+`✎`, and while attached, the state leads: *"✎ Editing "Intro" — Save updates it — Ctrl+S"* with **Done**
+beside it. Twelve level rows is a menu; past that the tail collapses into the panel, which scrolls.
+
+**Every item is a DOOR to the panel's own actions, never a second implementation** — the bar's own hint has
+said *"EVERY ACTION IS ALSO IN THE PANEL"* since build 1083, and this menu keeps that true. Add routes
+through the same push + `_campTrack` the panel button uses; a level row is `pushUndoSnapshot` +
+`restoreLevel` + `_campTrack`, exactly the Edit button; *Manage campaign…* is `setEditorMode('files')` +
+`_edRevealHost('edCampaign')` — reveal, don't teleport (1320/1348).
+
+**And the always-visible state:** the bar's hint area reads `CAMPAIGN: EDITING "INTRO" — SAVE UPDATES IT`
+while attached. The text is written by `renderCampaignPanel` — the chokepoint every campaign mutation
+already ends in via `_campTrack` — on its FIRST line, **before** the `#edCampaign` host early-return,
+because the state mostly changes while the Save tab is not built. `_edMenuSync` pokes it when the bar
+(re)appears; one writer, one poke.
+
+**The invented mode key, third sighting.** *Manage…* first called `setEditorMode('save')` — silently a
+no-op, because the Save tab's internal key is **`files`** (`MODE_LABEL` maps it to "Save"; the keys never
+renamed so saved prefs keep working). Same trap as `'gameplay'` vs `'rules'`. The live probe caught it by
+reading `mode: "build"` after the click, and `test-1498` now asserts the key against the real
+`EDITOR_MODES` list rather than trusting a label.
+
+Measured live through the real bar (the probe widens `window.innerWidth` past the 760 gate): Campaign sits
+between Tools and Help; an empty campaign offers Add/Play/Manage and **no phantom level rows**; Add through
+the menu attaches and the hint names the level; the menu shows `✎ 1. Intro` marked with Done detaching;
+clicking `1. Intro` loads-and-attaches; Manage lands on `mode:"files"` with the fold open; and the File
+menu still opens with its 7 rows — the function-items change touched nothing static.
+
+**The manual guard earned its keep on my own edit**: rewriting the chaining section wrapped a line in the
+middle of "Export campaign", and `test-1488`'s claim check failed until the label was whole again.
+
+One pin moved (1083 — the bar's menu list gained Campaign; the assertion names the new list and why).
+
+## The campaign gets the library's save model (build 1497)
+
+Reported from play: the campaign is *"fairly confusing on how to add levels, save the level you're working
+on, etc."* — and the confusion was ONE ASYMMETRY. Build 1262 taught `saveLevel()` to write through to the
+library entry being worked on (`_libCurrent` → `libCommit`) and build 1359 made that attachment survive a
+reload. The campaign's `campaignEditIdx` is the **same concept** and got neither: press Edit on a campaign
+level, work on it, press Ctrl+S — and the save went to the browser slot while the campaign kept the OLD
+copy, silently, until you found the one *"Save changes to"* button inside a fold. Two save targets, one
+Save key, nothing saying which one you were feeding.
+
+So the campaign gets exactly what the library got:
+
+- **`_campTrack(i)` is the ONE writer** of `campaignEditIdx` and the persisted `breach_campaign_edit` key
+  (1262's stated rule for `_libTrack`: memory and storage can never disagree). The declaration's
+  initializer reads the key back, **validated** against the campaign that actually exists, and a foreign
+  level marked during boot outranks a stale attachment.
+- **`saveLevel()` writes through**, one line below the `libCommit` it mirrors: the already-serialized
+  string is parsed into the attached slot (one serialization, two destinations), keeping the entry's NAME
+  because the campaign owns the name. Autosave flows through too, which is the point — while attached, the
+  campaign copy structurally cannot go stale.
+- **Add and Replace ATTACH.** The old `campaignEditIdx=-1` after Add meant the copy started going stale on
+  the very next edit — adding a level to the campaign means you are now working on that campaign level.
+- **Reorder REMAPS the attachment; delete shifts or detaches.** With write-through, a silent detach means
+  saves silently stop flowing to the level you believe you are editing — the exact bug being fixed,
+  reintroduced by tidying the list.
+- **Foreign loads detach**, one line beside `_libStopTracking` in `markForeignLevel` — ONE site covering
+  build 1254's five entry points — because Save overwriting a campaign slot with an unrelated level is
+  worse than the confusion being fixed. `_edNewLevel` clears the PERSISTED key (the page reloads, so the
+  key is the half that matters).
+- **The state says itself**: the save note reads *"Saved — campaign level "Intro" updated too ✓"*, and the
+  panel shows an Editing banner naming what Ctrl+S now does. The explicit *"Save changes to"* button stays,
+  labelled as the same action.
+
+Measured live through the real panel buttons: Add attaches (key `"0"` persisted); a prop moved to x=77 and
+plain-Saved appears in the campaign copy **with the control asking the same question before** (the first
+draft grepped the whole JSON for '77', which any coordinate can contain — the control discriminated
+nothing); Done detaches and a later save leaves the campaign alone; reorder carries the attachment and
+saves follow it while the other level is untouched; delete shifts then detaches; `markForeignLevel`
+detaches and clears the key.
+
+**Counting bare assignments found a real stray**: a foreign-campaign loader (build 1462's adopt) assigned
+`campaignEditIdx = -1` directly, leaving the persisted key behind to re-attach on the next reload — routed
+through the tracker. The count-pin also matched my own comment quoting the removed code (prose trap, fifth
+sighting) and my over-cautious `else` fallback (dead — function declarations hoist).
+
+**Three pins moved (182, 189, 1462), and half of 182's was pinning the defect.** Its *"adding a level
+names it and clears any edit pointer"* — the clear IS the staleness trap — was inverted; its *"reorder +
+delete + clear release the pointer so save-back can't target the wrong slot"* was a COUNT of
+`campaignEditIdx=-1;`, and what it always meant is served better by the remap, so it asserts the routing
+now. 189's *"the Edit handler re-renders the panel"* (build 278) is now guaranteed by the ONE writer
+rather than remembered per caller, and asserts that. 1462's rig executes `_adoptSharedCampaign` in an
+isolated scope, so the tracker is genuinely missing there — supplied from source, never restated; the
+`try/catch` around the routed call is what made that failure SILENT in the rig (the pointer just stayed
+put), which is worth remembering about catch-wrapped wiring: a rig missing the dependency reads exactly
+like the wiring being absent.
+
 ## The field could not answer the question it was opened to ask (build 1496)
 
 Reported from play with four screenshots — a trigger firing `newLevel`, an `On event` node catching it, a
