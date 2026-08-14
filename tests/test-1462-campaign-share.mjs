@@ -86,6 +86,10 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     let campaign = { levels: MINE };
     let _foreignCampaign = false;
     let campaignEditIdx = 7;
+    /* build 1497 routed the pointer clear through _campTrack (so the PERSISTED key clears too) — supplied
+       from source, never restated, with the storage it writes stubbed */
+    const CAMP_CUR_KEY='k'; const localStorage={ setItem(){}, removeItem(){}, getItem(){ return null; } };
+    ${extractFunction('_campTrack', src)}
     ${extractFunction('_adoptSharedCampaign', src)}
     const took = _adoptSharedCampaign(LVL);
     return { took, foreign: _foreignCampaign, editIdx: campaignEditIdx,

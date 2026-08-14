@@ -35986,7 +35986,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1496 · 2026-08-12';
+const BUILD_VERSION = 'build 1498 · 2026-08-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45919,6 +45919,7 @@ let _edRescueRefresh = null;   // the Save panel registers its row refresher her
 let _edLibraryRefresh = null;  // build 1262: ...and the library list its own
 function markForeignLevel(what){
   if(typeof _libStopTracking==='function') _libStopTracking();   /* build 1262: a shared level is not the library entry you had open */
+  try{ if(typeof _campTrack==='function') _campTrack(-1); }catch(e){}   /* build 1497: ...and not the campaign level either — without this, Save would overwrite a campaign slot with an unrelated level */
   try{
     if(_levelDirty && typeof serializeLevel==='function'){
       localStorage.setItem(RESCUE_KEY, JSON.stringify({ t: Date.now(), level: serializeLevel() }));
@@ -45957,6 +45958,16 @@ function saveLevel(){
   let str; try{ str = JSON.stringify(serializeLevel()); }catch(e){ return false; }
   if(typeof _levelDBPut==='function') _levelDBPut(str);   // durable copy (large quota, survives localStorage eviction)
   if(_libCurrent && typeof libCommit==='function'){ try{ libCommit(); }catch(e){} }   // build 1262: ...and back into the library entry being worked on
+  /* build 1497: ...and into the CAMPAIGN slot being worked on — the same rule for the same reason. The
+     entry keeps ITS name (the campaign owns the name; the working level does not carry one), and the
+     already-serialized string is reused rather than serializing twice. Autosave flows through here too,
+     which is the point: while attached, the campaign copy can never go stale. */
+  try{
+    if(campaignEditIdx>=0 && campaign.levels && campaign.levels[campaignEditIdx]){
+      const lv = JSON.parse(str); lv.name = campaign.levels[campaignEditIdx].name || lv.name;
+      campaign.levels[campaignEditIdx] = lv; saveCampaign();
+    }
+  }catch(e){}
   try{ localStorage.setItem(SAVE_KEY, str); return localStorage.getItem(SAVE_KEY)===str; }   // verify it actually persisted (not silently dropped by quota)
   catch(e){ return (typeof _levelDB==='function'); }      // localStorage full -> still saved to IndexedDB
 }
@@ -46130,7 +46141,7 @@ function _importCampaignFile(file, onDone){
     if(!levels || !levels.length){ if(typeof flashToast==='function') flashToast('Import failed: no levels in that file'); return; }
     const _doImport = ()=>{   // build 815: themed dialog (was a native browser popup)
       campaign.levels = levels.map((lv,i)=> Object.assign({}, lv, { name: (lv && lv.name!=null) ? lv.name : ('Level '+(i+1)) }));
-      campaignEditIdx = -1; saveCampaign();
+      saveCampaign(); _campTrack(-1);
       if(typeof onDone==='function'){ onDone(); return; }
       if(typeof renderCampaignPanel==='function') renderCampaignPanel();
       if(typeof flashToast==='function') flashToast('Imported ' + campaign.levels.length + ' level' + (campaign.levels.length>1?'s':'') + ' - hit Play campaign');
@@ -46185,12 +46196,45 @@ function _adoptSharedCampaign(lvl){
   if(rooms.length < 2) return false;
   campaign = { levels: rooms };
   _foreignCampaign = true;
-  campaignEditIdx = -1;
+  /* build 1497: through the tracker, or the PERSISTED attachment key survives and re-attaches to whatever
+     level of the foreign campaign sits at that index on the next reload */
+  try{ _campTrack(-1); }catch(e){}   /* hoisted, so it exists; the catch covers a boot-time TDZ, where the
+     initializer below runs afterwards and re-validates the persisted index against THIS foreign campaign */
   if(typeof renderCampaignPanel === 'function'){ try{ renderCampaignPanel(); }catch(e){} }
   return true;
 }
 let campaignActive=false, campaignIdx=0, _campaignComplete=false;
-let campaignEditIdx=-1;   // campaign slot currently loaded in the editor for re-editing (-1 = none)
+/* build 1497 — THE CAMPAIGN GETS THE LIBRARY'S SAVE MODEL.
+   Reported from play: the campaign is "fairly confusing on how to add levels, save the level you're working
+   on, etc." — and the confusion is one asymmetry. Build 1262 taught saveLevel() to write through to the
+   library entry being worked on (`_libCurrent` -> libCommit), and build 1359 made that attachment survive a
+   reload. The campaign's `campaignEditIdx` is the SAME CONCEPT and got neither: press Edit on a campaign
+   level, work on it, press Ctrl+S — and the save went to the browser slot while the campaign kept the OLD
+   copy, silently, until you found the one "Save changes to" button inside a fold in the Save tab. Two save
+   targets, one Save key, no indication which one you were feeding.
+
+   So: ONE writer of the attachment (persisted, like _libTrack), Save writes through to the attached
+   campaign slot (like libCommit), Add/Replace ATTACH (adding a level to the campaign means you are now
+   working on that campaign level), and every path that replaces the working level with something else
+   detaches. */
+const CAMP_CUR_KEY = 'breach_campaign_edit';
+function _campTrack(i){   /* the ONE writer, so the memory and the storage can never disagree (1262's rule) */
+  campaignEditIdx = (typeof i==='number' && i>=0) ? i : -1;
+  try{ if(campaignEditIdx>=0) localStorage.setItem(CAMP_CUR_KEY, String(campaignEditIdx)); else localStorage.removeItem(CAMP_CUR_KEY); }catch(e){}
+  try{ if(typeof renderCampaignPanel==='function') renderCampaignPanel(); }catch(e){}
+}
+let campaignEditIdx = (function(){   // campaign slot currently loaded in the editor (-1 = none)
+  try{
+    /* a FOREIGN level marked during boot (a share link) outranks a stale attachment — the level being
+       loaded is not the campaign level the key remembers */
+    if(typeof _foreignLevel!=='undefined' && _foreignLevel){ localStorage.removeItem(CAMP_CUR_KEY); return -1; }
+    const i = parseInt(localStorage.getItem(CAMP_CUR_KEY), 10);
+    /* validated against the campaign that actually exists: an index into a shorter list is a stale key */
+    if(Number.isInteger(i) && i>=0 && campaign.levels && i<campaign.levels.length) return i;
+    localStorage.removeItem(CAMP_CUR_KEY);
+  }catch(e){}
+  return -1;
+})();
 function _campaignLoad(i){ const lv=campaign.levels[i]; if(!lv) return; loadLevelFromNet(lv); startGame(); }
 function startCampaign(){ _arrivePending=null; _loaderTitle=''; _loadCover=false;   /* build 1394: a fresh run never inherits a transition left armed by a previous one */
   if(!campaign.levels.length){ if(typeof flashToast==='function') flashToast('No campaign yet \u2014 build one in the editor under Files > Campaign'); return; } campaignActive=true; campaignIdx=0; _campaignComplete=false; campaignVars={}; _campaignLoad(0); }   // build 1075: a new run starts from zero — a level that opts into saving re-seeds from the store as it loads
@@ -46827,10 +46871,20 @@ function renderAudioZonesPanel(){
   refreshAudioZoneMarkers();
 }
 function renderCampaignPanel(){
+  /* build 1498: the menu bar's hint mirrors the attachment — the one always-visible surface (desktop) that
+     says which campaign level Save is feeding. BEFORE the host check: this function is the chokepoint every
+     campaign mutation already ends in (via _campTrack), and it early-returns when the Save tab is not
+     built, which is most of the time the state changes. */
+  try{
+    const _mh=document.getElementById('mbCampHint');
+    if(_mh) _mh.textContent = (campaignEditIdx>=0 && campaign.levels[campaignEditIdx])
+      ? ('CAMPAIGN: EDITING \u201c'+((campaign.levels[campaignEditIdx].name||('Level '+(campaignEditIdx+1))).toUpperCase())+'\u201d \u2014 SAVE UPDATES IT')
+      : 'EVERY ACTION IS ALSO IN THE PANEL';
+  }catch(e){}
   const host = editorEl && editorEl.querySelector('#edCampaign'); if(!host) return;
   host.innerHTML='';
   const info=document.createElement('div'); info.className='hint'; info.style.margin='2px 0 6px';
-  info.innerHTML='Chain levels into a solo campaign. Build a level, <b>Add</b> it, repeat, then <b>Play</b>. Each level ends on its win condition (set <b>Extraction</b> as the exit) and loads the next \u2014 weapons + health carry over.';
+  info.innerHTML='Chain levels into a solo campaign. Build a level, <b>Add</b> it, repeat, then <b>Play</b>. Each level ends on its win condition (or a <b>Go to level</b> door) and loads the next \u2014 weapons + health carry over. Adding or opening a campaign level ATTACHES it: plain <b>Save</b> keeps that campaign copy current until you press <b>Done</b>.';
   host.appendChild(info);
   /* build 1462: a campaign that arrived from a link is FOREIGN until adopted — `saveCampaign` refuses
      while it is, so nothing the visitor does in this panel can quietly overwrite the campaign they
@@ -46844,12 +46898,15 @@ function renderCampaignPanel(){
     b.appendChild(ad); host.appendChild(b);
   }
   const row=document.createElement('div'); row.className='row2';
-  const addB=document.createElement('button'); addB.textContent='\u2795 Add current level'; addB.onclick=()=>{ const lv=serializeLevel(); lv.name='Level '+(campaign.levels.length+1); campaign.levels.push(lv); campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); };
+  /* build 1497: Add ATTACHES. "Add current level" means this level is now part of the campaign and you are
+     still working on it — so Save keeps the campaign copy current from that moment. The old behaviour
+     DETACHED here, so the copy started going stale on the very next edit, which is the trap. */
+  const addB=document.createElement('button'); addB.textContent='\u2795 Add current level'; addB.onclick=()=>{ const lv=serializeLevel(); lv.name='Level '+(campaign.levels.length+1); campaign.levels.push(lv); saveCampaign(); _campTrack(campaign.levels.length-1); if(typeof flashToast==='function') flashToast('Added as "'+lv.name+'" \u2014 you are editing it: Save keeps it current'); };
   const playB=document.createElement('button'); playB.textContent='\u25b6 Play campaign'; playB.style.cssText='background:rgba(var(--accent-rgb),0.22);color:#eafff7;font-weight:600'; playB.onclick=()=>{ startCampaign(); };
   row.appendChild(addB); row.appendChild(playB); host.appendChild(row);
   const r2=document.createElement('div'); r2.className='row2'; r2.style.marginTop='6px';
-  const repB=document.createElement('button'); repB.textContent='\u27f3 Replace last'; repB.onclick=()=>{ if(campaign.levels.length){ campaign.levels[campaign.levels.length-1]=serializeLevel(); saveCampaign(); renderCampaignPanel(); } };
-  const clrB=document.createElement('button'); clrB.textContent='Clear all'; clrB.onclick=()=>{ campaign.levels=[]; campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); };
+  const repB=document.createElement('button'); repB.textContent='\u27f3 Replace last'; repB.onclick=()=>{ if(campaign.levels.length){ const _i=campaign.levels.length-1, _nm=campaign.levels[_i].name; const lv=serializeLevel(); lv.name=_nm||('Level '+(_i+1)); campaign.levels[_i]=lv; saveCampaign(); _campTrack(_i); } };
+  const clrB=document.createElement('button'); clrB.textContent='Clear all'; clrB.onclick=()=>{ campaign.levels=[]; saveCampaign(); _campTrack(-1); };
   r2.appendChild(repB); r2.appendChild(clrB); host.appendChild(r2);
   const r3=document.createElement('div'); r3.className='row2'; r3.style.marginTop='6px';
   const expB=document.createElement('button'); expB.textContent='Export campaign'; expB.title='Download all levels as one .json file to share'; expB.onclick=()=>{ _exportCampaign(); };
@@ -46858,19 +46915,27 @@ function renderCampaignPanel(){
   const _campImp=document.createElement('input'); _campImp.type='file'; _campImp.accept='.rumpus,.breach,.json,application/json'; _campImp.style.display='none'; _campImp.onchange=()=>{ _importCampaignFile(_campImp.files && _campImp.files[0]); }; host.appendChild(_campImp);
   if(campaignEditIdx>=0 && campaign.levels[campaignEditIdx]){
     const _enm=campaign.levels[campaignEditIdx].name||('Level '+(campaignEditIdx+1));
+    const bnr=document.createElement('div'); bnr.className='hint'; bnr.style.cssText='margin:6px 0 0;color:var(--accent);';
+    bnr.innerHTML='<b>Editing campaign level \u201c'+_enm.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'\u201d</b> \u2014 Save (Ctrl+S) keeps the campaign copy current automatically. <b>Done</b> detaches.';
+    host.appendChild(bnr);
     const er=document.createElement('div'); er.className='row2'; er.style.marginTop='6px';
-    const saveB=document.createElement('button'); saveB.textContent='Save changes to "'+_enm+'"'; saveB.style.cssText='flex:1;background:rgba(var(--accent-rgb),0.22);color:#eafff7;font-weight:600;'; saveB.onclick=()=>{ const lv=serializeLevel(); lv.name=_enm; campaign.levels[campaignEditIdx]=lv; saveCampaign(); if(typeof flashToast==='function') flashToast('Saved to "'+_enm+'"'); renderCampaignPanel(); };
-    const cancelB=document.createElement('button'); cancelB.textContent='Done'; cancelB.title='Stop editing this campaign level'; cancelB.onclick=()=>{ campaignEditIdx=-1; renderCampaignPanel(); };
+    const saveB=document.createElement('button'); saveB.textContent='Save changes to "'+_enm+'"'; saveB.title='The same thing Save does while attached \u2014 here as an explicit button'; saveB.style.cssText='flex:1;background:rgba(var(--accent-rgb),0.22);color:#eafff7;font-weight:600;'; saveB.onclick=()=>{ const lv=serializeLevel(); lv.name=_enm; campaign.levels[campaignEditIdx]=lv; saveCampaign(); if(typeof flashToast==='function') flashToast('Saved to "'+_enm+'"'); renderCampaignPanel(); };
+    const cancelB=document.createElement('button'); cancelB.textContent='Done'; cancelB.title='Stop editing this campaign level \u2014 Save goes back to being just the browser save'; cancelB.onclick=()=>{ _campTrack(-1); };
     er.appendChild(saveB); er.appendChild(cancelB); host.appendChild(er);
   }
   const st=document.createElement('div'); st.className='hint'; st.style.margin='6px 0 2px'; st.textContent = campaign.levels.length ? (campaign.levels.length+' level'+(campaign.levels.length>1?'s':'')+':') : 'No levels yet.';
   host.appendChild(st);
   campaign.levels.forEach((lv,i)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:5px;font-size:12px;color:#cfeee2;margin:2px 0;'+((i===campaignEditIdx)?'outline:1px solid var(--accent);border-radius:5px;padding:2px 3px;':'');
     const nm=document.createElement('input'); nm.type='text'; nm.value=(lv.name!=null?lv.name:('Level '+(i+1))); nm.title=((lv.game&&lv.game.objective)||'eliminate')+' · '+((lv.props&&lv.props.length)||0)+' props'; nm.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 6px;font-size:12px;'; nm.onchange=()=>{ lv.name=nm.value.trim()||('Level '+(i+1)); saveCampaign(); };
-    const ed=document.createElement('button'); ed.textContent='Edit'; ed.title='Load this level back into the editor to change it'; ed.style.cssText='padding:1px 7px;font-size:11px;'; ed.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); restoreLevel(campaign.levels[i]); campaignEditIdx=i; if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof renderCampaignPanel==='function') renderCampaignPanel(); if(typeof flashToast==='function') flashToast('Editing "'+(lv.name||('Level '+(i+1)))+'" - Save to campaign when done'); };
-    const up=document.createElement('button'); up.textContent='▲'; up.title='Move up'; up.setAttribute('aria-label','Move level up'); up.style.cssText='padding:1px 6px'; up.onclick=()=>{ if(i>0){ const t=campaign.levels[i-1]; campaign.levels[i-1]=campaign.levels[i]; campaign.levels[i]=t; campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); } };
-    const dn=document.createElement('button'); dn.textContent='▼'; dn.title='Move down'; dn.setAttribute('aria-label','Move level down'); dn.style.cssText='padding:1px 6px'; dn.onclick=()=>{ if(i<campaign.levels.length-1){ const t=campaign.levels[i+1]; campaign.levels[i+1]=campaign.levels[i]; campaign.levels[i]=t; campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); } };
-    const del=document.createElement('button'); del.textContent='✕'; del.title='Remove level'; del.setAttribute('aria-label','Remove level'); del.style.cssText='padding:1px 7px'; del.onclick=()=>{ campaign.levels.splice(i,1); campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); };
+    const ed=document.createElement('button'); ed.textContent='Edit'; ed.title='Load this level back into the editor to change it'; ed.style.cssText='padding:1px 7px;font-size:11px;'; ed.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); restoreLevel(campaign.levels[i]); _campTrack(i); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof flashToast==='function') flashToast('Editing "'+(lv.name||('Level '+(i+1)))+'" \u2014 Save (Ctrl+S) keeps it current'); };
+    /* build 1497: reorder REMAPS the attachment rather than dropping it. With Save writing through, a
+       silent detach means saves silently stop reaching the level you believe you are editing — the exact
+       bug this build removes, reintroduced by tidying the list. Delete of the attached one detaches;
+       delete above it shifts the index down. */
+    const _remap=(from,to)=>{ if(campaignEditIdx===from) _campTrack(to); else if(campaignEditIdx===to) _campTrack(from); else _campTrack(campaignEditIdx); };
+    const up=document.createElement('button'); up.textContent='▲'; up.title='Move up'; up.setAttribute('aria-label','Move level up'); up.style.cssText='padding:1px 6px'; up.onclick=()=>{ if(i>0){ const t=campaign.levels[i-1]; campaign.levels[i-1]=campaign.levels[i]; campaign.levels[i]=t; saveCampaign(); _remap(i, i-1); } };
+    const dn=document.createElement('button'); dn.textContent='▼'; dn.title='Move down'; dn.setAttribute('aria-label','Move down'); dn.style.cssText='padding:1px 6px'; dn.onclick=()=>{ if(i<campaign.levels.length-1){ const t=campaign.levels[i+1]; campaign.levels[i+1]=campaign.levels[i]; campaign.levels[i]=t; saveCampaign(); _remap(i, i+1); } };
+    const del=document.createElement('button'); del.textContent='✕'; del.title='Remove level'; del.setAttribute('aria-label','Remove level'); del.style.cssText='padding:1px 7px'; del.onclick=()=>{ campaign.levels.splice(i,1); saveCampaign(); _campTrack(campaignEditIdx===i ? -1 : (campaignEditIdx>i ? campaignEditIdx-1 : campaignEditIdx)); };
     r.appendChild(nm); r.appendChild(ed); r.appendChild(up); r.appendChild(dn); r.appendChild(del); host.appendChild(r); });
 }
 
@@ -48272,7 +48337,10 @@ function buildEditorPanel(){
   p.querySelector('#edSave').onclick = ()=>{
     const note = editorEl.querySelector('#edCopied');
     const _ok = saveLevel(); if(_ok) _foreignLevel = false;   // build 1254: an explicit Save adopts a shared/imported level as yours — autosave resumes
-    note.textContent = _ok ? 'Level saved — it will auto-load next time ✓' : 'Save failed (storage blocked here)';
+    /* build 1497: while attached to a campaign level, Save feeds BOTH destinations and the note says so —
+       a save whose second destination is invisible is how the old two-target confusion started */
+    const _cn = (typeof campaignEditIdx!=='undefined' && campaignEditIdx>=0 && campaign.levels[campaignEditIdx]) ? (campaign.levels[campaignEditIdx].name||('Level '+(campaignEditIdx+1))) : null;
+    note.textContent = _ok ? (_cn ? ('Saved — campaign level \u201c'+_cn+'\u201d updated too ✓') : 'Level saved — it will auto-load next time ✓') : 'Save failed (storage blocked here)';
     clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 2800);
   };
   p.querySelector('#edShare').onclick = async ()=>{
@@ -54579,6 +54647,44 @@ const ED_MENUS = [
     { sep:1 },
     { label:'Settings',             run:()=>{ if(typeof setEditorMode==='function') setEditorMode('settings'); } },
   ]},
+  /* build 1498 — THE CAMPAIGN GETS A MENU. Reported from play: "it's buried under the save tab and is
+     hard to find." True twice over — the panel fold is the ONLY surface that mentions campaigns, and it is
+     collapsed inside the least-visited tab. The menu is a DOOR, not a second implementation: every item
+     routes to the panel's own actions (the bar's own hint says every action is also in the panel), and the
+     level list is built fresh at open so it always shows the live campaign. */
+  { id:'campaign', label:'Campaign', items:()=>{
+    const items=[];
+    const N=(typeof campaign!=='undefined' && campaign.levels) ? campaign.levels.length : 0;
+    const cur=(typeof campaignEditIdx!=='undefined') ? campaignEditIdx : -1;
+    const nameOf=(i)=> (campaign.levels[i] && campaign.levels[i].name) || ('Level '+(i+1));
+    if(cur>=0 && cur<N){
+      items.push({ label:'\u270e Editing \u201c'+nameOf(cur)+'\u201d \u2014 Save updates it', key:'Ctrl+S', run:()=>_edClick('edSave') });
+      items.push({ label:'Done \u2014 stop editing \u201c'+nameOf(cur)+'\u201d', run:()=>{ if(typeof _campTrack==='function') _campTrack(-1); if(typeof flashToast==='function') flashToast('Detached \u2014 Save is just the browser save again'); } });
+      items.push({ sep:1 });
+    }
+    items.push({ label:'\u2795 Add current level to campaign', run:()=>{
+      const lv=serializeLevel(); lv.name='Level '+(campaign.levels.length+1); campaign.levels.push(lv); saveCampaign();
+      if(typeof _campTrack==='function') _campTrack(campaign.levels.length-1);
+      if(typeof flashToast==='function') flashToast('Added as "'+lv.name+'" \u2014 you are editing it: Save keeps it current'); } });
+    items.push({ label:'\u25b6 Play campaign'+(N?' ('+N+' level'+(N>1?'s':'')+')':''), run:()=>{ if(typeof startCampaign==='function') startCampaign(); } });
+    if(N){
+      items.push({ sep:1 });
+      /* the campaign itself, so "which levels are there" is answered where the question is asked. Twelve is
+         a menu; past that the tail collapses into the panel, which scrolls. */
+      const cap=12;
+      for(let i=0;i<Math.min(N,cap);i++){ const _i=i;
+        items.push({ label:(_i===cur ? '\u270e ' : '')+(_i+1)+'. '+nameOf(_i), run:()=>{
+          if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+          restoreLevel(campaign.levels[_i]); if(typeof _campTrack==='function') _campTrack(_i);
+          if(typeof renderEditorFields==='function') renderEditorFields();
+          if(typeof flashToast==='function') flashToast('Editing "'+nameOf(_i)+'" \u2014 Save (Ctrl+S) keeps it current'); } });
+      }
+      if(N>cap) items.push({ label:'\u2026 '+(N-cap)+' more in the panel', run:()=>{ if(typeof setEditorMode==='function') setEditorMode('files'); if(typeof _edRevealHost==='function') _edRevealHost('edCampaign'); } });
+    }
+    items.push({ sep:1 });
+    items.push({ label:'Manage campaign\u2026', run:()=>{ if(typeof setEditorMode==='function') setEditorMode('files'); if(typeof _edRevealHost==='function') _edRevealHost('edCampaign'); } });
+    return items;
+  }},
   { id:'help', label:'Help', items:[
     { label:'Field manual',         run:()=>_edClick('edHelp') },
     { label:'Inline help',          run:()=>_edClick('edHelpTxt') },
@@ -54598,7 +54704,7 @@ function _edMenuBuild(){
     bar.appendChild(b);
   }
   const sp=document.createElement('div'); sp.className='mbSpacer'; bar.appendChild(sp);
-  const h=document.createElement('div'); h.className='mbHint'; h.textContent='EVERY ACTION IS ALSO IN THE PANEL'; bar.appendChild(h);
+  const h=document.createElement('div'); h.className='mbHint'; h.id='mbCampHint'; h.textContent='EVERY ACTION IS ALSO IN THE PANEL'; bar.appendChild(h);
   document.body.appendChild(bar);
   const pop=document.createElement('div'); pop.id='edMenuPop'; document.body.appendChild(pop);
   pop.onclick=(e)=>e.stopPropagation();
@@ -54619,7 +54725,11 @@ function _edMenuToggle(id, force){
   _mbOpen=id;
   const btn=bar.querySelector('.mbBtn[data-menu="'+id+'"]'); if(btn) btn.classList.add('on');
   pop.innerHTML='';
-  for(const it of def.items){
+  /* build 1498: a menu's items may be a FUNCTION, evaluated at open — the Campaign menu shows the live
+     campaign (its levels by name, the attached one marked), which a static list cannot. The pop is rebuilt
+     on every open anyway, so this costs nothing and no other menu changes. */
+  const _items = (typeof def.items==='function') ? (def.items()||[]) : def.items;
+  for(const it of _items){
     if(it.sep){ const d=document.createElement('div'); d.className='mbSep'; pop.appendChild(d); continue; }
     const b=document.createElement('button'); b.className='mbItem'+(it.danger?' danger':'');
     b.appendChild(document.createTextNode(it.label));
@@ -54638,6 +54748,9 @@ function _edMenuSync(){
   if(want) _edMenuBuild();
   document.body.classList.toggle('edMenuBar', want);
   if(!want) _edMenuClose();
+  /* build 1498: the hint reflects the live attachment whenever the bar (re)appears — renderCampaignPanel
+     owns the text, so this is a poke, not a second writer */
+  if(want && typeof renderCampaignPanel==='function'){ try{ renderCampaignPanel(); }catch(e){} }
 }
 try{ window.addEventListener('resize', ()=>{ try{ _edMenuSync(); }catch(e){} }); }catch(e){}
 // build 1083: a genuinely fresh start. Rather than reset forty subsystems by hand (and quietly miss the
@@ -54649,6 +54762,7 @@ function _edNewLevel(){
     _newLevelPending=true;                         // stop autosave + beforeunload writing the old level back
     try{ if(typeof stopAutoSave==='function') stopAutoSave(); }catch(e){}
     try{ if(typeof clearSave==='function') clearSave(); }catch(e){}
+    try{ localStorage.removeItem(CAMP_CUR_KEY); }catch(e){}   /* build 1497: New = not editing a campaign level; the page reloads, so the persisted key is the one that matters */
     try{ location.replace(location.origin + location.pathname); }catch(e){ try{ location.reload(); }catch(e2){} }
   };
   const msg='Start a NEW level?\n\nThis clears EVERYTHING \u2014 every object, the terrain and sky, gameplay rules, '

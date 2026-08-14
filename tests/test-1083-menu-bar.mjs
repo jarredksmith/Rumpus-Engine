@@ -94,7 +94,7 @@ assert(body.classList.contains('edMenuBar'), 'editing on a desktop puts the bar 
 const bar = byId.edMenuBar;
 assert(bar, 'the bar element is built');
 const labels = bar.children.filter(c => c.className === 'mbBtn').map(c => c.textContent);
-eq(labels.join('|'), 'File|Edit|Tools|Help', 'and it reads File | Edit | Tools | Help');
+eq(labels.join('|'), 'File|Edit|Tools|Campaign|Help', 'and it reads File | Edit | Tools | Campaign | Help (Campaign joined in build 1498)');
 
 // ...and not on a phone, where 30px of chrome costs more than it gives
 t = mk(true, 600); t.api.sync(); t.idx();
