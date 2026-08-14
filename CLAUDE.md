@@ -490,6 +490,59 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The console stops crying wolf (build 1503)
+
+Reported as a pasted play-session console. Each class was measured before anything was touched
+(`tools/probe/console-noise.mjs` — a census probe counting warning classes per step), because a console
+full of noise is where the next REAL error goes to die.
+
+**12× `THREE.Texture: Unable to serialize Texture`, all at DEPLOY.** A `Texture.toJSON` hook captured the
+stack in one run: `buildInstancing → material.clone() → Material.copy → JSON.stringify(userData)` —
+**r149 deep-copies `userData` through JSON**, and two fields carried live GPU objects: `procSurf` (build
+1139's remembered detail set — canvas textures) and `_odU` (build 1379's kept `shader.uniforms` — sampler
+textures and the shared rung-fade objects). So every material clone anywhere (the instancing batch, the
+corpse fade, thumbnails) serialized canvas textures, warned per texture, and handed the clone a
+JSON-mangled POJO where a texture belonged. Two fixes, one per shape:
+- the detail set carries `toJSON → undefined`, so `JSON.stringify` DROPS the key — one line in
+  `_procSet`, covering every material that shares the set;
+- `_odU` is stored **non-enumerable** instead, because a `toJSON` key there would be wrong: three
+  iterates `shader.uniforms` BY KEY to upload, and would read it as a uniform. Reads and the batch
+  scrub's `_odU = null` still work (writable), executed in the test.
+
+Clones never needed either field — `buildInstancing` already scrubs and re-applies detail itself.
+Measured after: **+12 → 0** at every step, the sandbox's unrelated CDN failures unchanged as the control.
+
+**A 404 for `vfx/fire.png`, for every player of every deployment.** The VFX table has always listed a fire
+sheet url — and `vfx/` has never shipped one (explosion/smoke/muzzle only). The procedural sheet was
+always the real fire; the url now sits empty with the pointer for a self-hoster who bakes one.
+`test-1503` closes the CLASS: every non-empty VFX url must resolve to a file that exists in the repo.
+
+**4× "The CSP directive 'frame-ancestors' is ignored when delivered via a `<meta>` element."** The
+browser was stating a fact: the spec ignores that directive in `<meta>`, so build 1332's clickjacking
+line was never enforced anywhere — a static Pages host cannot send the HTTP header it actually needs.
+Removed from the meta; the comment says why. **test-1332's pin had spent its whole life asserting a
+protection the browser provably never enforced** — it now asserts the absence, with the reason.
+
+**The two D3D shader warnings (X3595/X4000 on `getShadowPCSS`) are documented, deliberately NOT chased.**
+They are ANGLE HLSL-transpile warnings that cannot even be reproduced on the GL backends the headless rig
+runs — restructuring the one shader class this file has twice lost to a silent compile failure, blind, to
+silence a warning, is the wrong trade. The comment at the GLSL says where to start if a Windows artifact
+is ever *reported* at shadow edges.
+
+**Not reproduced, stated rather than guessed:** the report's 16× "Texture marked for update but no image
+data". Every same-origin loader in the tree marks textures only on a landed load; the census showed zero.
+Most likely the reporter's own level carries texture URLs that fail (the console names them right above
+that warning). "Multiple instances of Three.js" is the esm.sh loaders importing module-three beside the
+UMD build — known, wasteful, harmless; vendoring the module build is its own build. The reporter's console
+also shows line numbers from a deploy ~70 builds behind this tree.
+
+Two pins moved: test-1332's (above) and test-1379's `_odU` line, which now asserts the non-enumerable
+form with its intent (the pointer survives for `retileProcSurface`) unchanged.
+
+**Container rollback #36** landed between writing the edit script and running it — the script's own
+`assert "build 1502"` caught it atomically, and recovery was the documented fetch + reset, free because
+every build is pushed the moment it lands.
+
 ## A level can decline the build menu (build 1502)
 
 Requested from use: *"Make the in-game 'build menu' an option with a toggle. Some games won't need or use

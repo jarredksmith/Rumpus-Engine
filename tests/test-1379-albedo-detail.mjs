@@ -94,7 +94,10 @@ assert(ALB > 0 && ALB < 0.5, 'the albedo swing is a modest fraction (' + ALB + '
   // distinct programs, which is what this always meant.
   assert(/\(albOnly \? 'objDetailA' : 'objDetail'\)/.test(f),
     'two modes are TWO programs, never one per material (build 1145\'s reason for the key)');
-  assert(/mat\.userData\._odU = shader\.uniforms;/.test(f), 'the uniforms are kept so a resize can move the density without a recompile');
+  /* build 1503: kept NON-ENUMERABLY now, so Material.copy's JSON walk never serializes a compiled
+     shader's uniforms (sampler textures inside). Same intent: the pointer survives for retileProcSurface. */
+  assert(/Object\.defineProperty\(mat\.userData, '_odU', \{ value: shader\.uniforms, enumerable: false/.test(f),
+    'the uniforms are kept so a resize can move the density without a recompile');
   // THE FREQUENCY MUST NOT LIVE ONLY IN THE UNIFORM. onBeforeCompile does not run until the material is
   // first RENDERED, and a prop's real span is set at SPAWN — so a write to shader.uniforms before that is
   // a write to nothing, silently. Probed on the stock level before this was fixed: all 57 prop materials
