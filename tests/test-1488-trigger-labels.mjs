@@ -104,6 +104,8 @@ eq(label.clicked, 'click', "and build 1479's reads as `click`, the verb, rather 
     'Go to level', 'arrive at tag', 'keep gear', 'Add current level', 'Export campaign',
     'Values that carry over', 'Also keep them between sessions', 'Carry the inventory too',
     'Resume at the last checkpoint', 'carrying now',
+    /* build 1502: the optional build menu */
+    'Players can open the build menu',
     /* props, and the recipes that use them — these are the strings the step-by-steps tell a creator to
        click, so an engine rename that does not reach the manual sends them hunting */
     'Parent to this prop', 'Set prop value', 'No collision',

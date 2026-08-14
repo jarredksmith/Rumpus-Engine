@@ -13,7 +13,11 @@ assert(/const ENEMY_TYPE_KEYS = \['grunt','runner','brute','gunner','sapper','sh
 
 // cadence config round-trips
 assert(/bossWave: \(savedLevel && savedLevel\.game && savedLevel\.game\.bossWave!=null\) \? savedLevel\.game\.bossWave : 5/.test(src), 'bossWave defaults to 5');
-assert(/bossWave: gameCfg\.bossWave, wavesText: \(gameCfg\.wavesText\|\|''\)\.slice\(0,2000\) \|\| undefined, enemyMods: _sanitizeEnemyMods\(gameCfg\.enemyMods\) \|\| undefined, noRespawn: !!gameCfg\.noRespawn, unarmed: !!gameCfg\.unarmed, startWeapon: _canStartWith\(gameCfg\.startWeapon\) \? gameCfg\.startWeapon : 'rifle', allowPickup: gameCfg\.allowPickup!==false, flashlight: !!gameCfg\.flashlight, flash: \{ intensity:\+gameCfg\.flashCfg\.intensity, angle:\+gameCfg\.flashCfg\.angle, penumbra:\+gameCfg\.flashCfg\.penumbra, distance:\+gameCfg\.flashCfg\.distance, color:gameCfg\.flashCfg\.color \}, goalText: \(gameCfg\.goalText\|\|''\)\.slice\(0,160\), respawnOnDeath: !!gameCfg\.respawnOnDeath, winText: \(gameCfg\.winText\|\|''\)\.slice\(0,240\), loseText: \(gameCfg\.loseText\|\|''\)\.slice\(0,240\), spawnRegion:/.test(src), 'bossWave is serialized with the level');
+/* build 1502: this used to quote the WHOLE game literal, so every field that joined broke it with
+   its assertion still true (the whole-literal trap). It asserts its member inside the real block now. */
+const _gmBlk = src.slice(src.indexOf('game:    { mode: gameCfg.mode,'), src.indexOf('spawnRegion:', src.indexOf('game:    { mode: gameCfg.mode,')));
+assert(_gmBlk.length > 100 && /bossWave: gameCfg\.bossWave,/.test(_gmBlk),
+  'bossWave is serialized with the level');
 assert((src.match(/gameCfg\.bossWave = g\.bossWave!=null \? g\.bossWave : 5/g)||[]).length === 1, 'bossWave restored in both restore paths');
 
 // random waves add a boss on the cadence (runnable, isolated)

@@ -490,6 +490,46 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## A level can decline the build menu (build 1502)
+
+Requested from use: *"Make the in-game 'build menu' an option with a toggle. Some games won't need or use
+that mechanic."* Verified first: the radial existed in every level unconditionally, and the only off was
+emptying the slot list — **which the panel itself refuses** (✕ is disabled at one slot). So "off" was
+unreachable, and a horror level or a puzzle room shipped with a Fortnite mechanic on Tab whether it wanted
+one or not.
+
+`gameCfg.buildMenu`, defaulting ON, wired the way build 1400 demands:
+- **Boot default, always-assigned applier, only-when-off serializer.** `_applyGameCfg` assigns it
+  unconditionally (an if-present field LEAKS from the previous level — 1400's own words), and the
+  serializer emits `buildMenu:false` or nothing, so every level ever saved is byte-identical.
+- **ONE gate at the chokepoint.** All three input doors — Tab, the touch BUILD button, the pad's
+  hold-View — end in `openRadial()`, so the opt-out is its first line rather than three hand-kept guards
+  that would drift (this file's most-recorded defect, avoided rather than repaired this time).
+- **The button and the coach follow.** `_touchCtxTick` hides BUILD, and the tutorial's step filter —
+  which already skips fire/wep on an unarmed level — gains the same term, so a disabled level never
+  coaches *"hold Tab"* for fifteen dead seconds.
+- **The slots survive the off state.** The toggle lives at the top of the Build menu panel with its
+  consequence named (1348's rule), and turning it back on restores exactly what was authored — an off
+  that deleted the slots would make the toggle a trap.
+
+Measured live (`tools/probe/build-menu-toggle.mjs`), control first:
+
+```
+control    default ON, Tab opens, keyup closes            <- nothing moved for existing levels
+opted out  Tab dead, openRadial() dead, BUILD hidden      <- all three doors through the one gate
+the file   buildMenu:false emitted and round-trips; an absent key restores ON (the legacy case)
+back on    the radial reopens — the control returns
+```
+
+`test-1502` executes the real `openRadial` head (false → never opens, true and ABSENT → exactly the old
+behaviour), and pins the applier/serializer/boot trio, the three doors, the coach filter and the panel.
+The manual, REFERENCE.md and the 1488 claims guard gained the new control's name.
+
+Three pins moved (33, 62, 969), and two of them were the whole-literal trap yet again: tests 33 and 62
+each quoted the ENTIRE serialized game literal to assert one member (`upgrades`, `bossWave`), so the new
+field broke both with their assertions still true. Both now slice the real block by anchors and assert
+their member. 969's tBuild pin gained the opt-out term it was really about.
+
 ## The untick that could not exist (build 1501)
 
 Reported from play, about the fixed camera's *follows the player* box: *"No matter what, I'm not able to
