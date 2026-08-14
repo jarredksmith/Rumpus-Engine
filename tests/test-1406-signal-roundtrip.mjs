@@ -48,6 +48,8 @@ const mk = () => new Function(
   'const SIG_KEYS = ' + extractConst('SIG_KEYS') + ';\n' +
   'const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();\n' +
   'const SIG_STR_MAX = ' + extractConst('SIG_STR_MAX') + ';\n' +
+  // build 1501: _sigPack gained the zero-meaningful exemption — lifted from source, never restated
+  'const SIG_ZERO_KEYS = ' + extractConst('SIG_ZERO_KEYS') + ';\n' +
   extractFunction('_sigPack') + '\n' + extractFunction('_sigUnpack') + '\n' +
   'return { _sigPack, _sigUnpack, KEYS: SIG_KEYS };')();
 
@@ -176,7 +178,9 @@ const mk = () => new Function(
   assert(i > 0, 'view has a row at all — build 1404 put it in the dropdown and never gave it one');
   const branch = row.slice(i, row.indexOf("s.do==='command'", i));
   assert(/s\.vmode=v/.test(branch), '...that sets the mode');
-  assert(/s\.vtag=v/.test(branch) && /s\.vtrack=1/.test(branch),
+  /* build 1501: the follow flag's untick is an EXPLICIT 0 now — the old `=1`/delete pair made the
+     untick vanish (absent reads as the default, which is ON). Same intent: the row configures it. */
+  assert(/s\.vtag=v/.test(branch) && /s\.vtrack=0/.test(branch),
     '...and the tag and the follow flag, both only when the mode is fixed');
   assert(/if\(s\.vmode==='fixed'\)/.test(branch),
     'the tag row appears only for the fixed camera, exactly as the graph node gates it');

@@ -490,6 +490,45 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The untick that could not exist (build 1501)
+
+Reported from play, about the fixed camera's *follows the player* box: *"No matter what, I'm not able to
+untick this toggle."* Three sites conspired, and any ONE of them alone keeps the bug:
+
+- **The graph node's checkbox DELETED the key on untick** — and its own onchange ends in `_lgRender()`,
+  which redraws an absent value as `!!pm.def`. For the engine's single `def:1` field the box snapped back
+  checked under the cursor, which is the report verbatim. Build 1407 created this shape honestly: it fixed
+  the DISPLAY to show the default the runtime uses, and in doing so made the default-ON untick
+  inexpressible — the fix for one lie enabled the other.
+- **The signal editor's row deleted too** — the sneakier half: the box *looked* unticked while the runtime
+  read absent as ON, so the camera kept following and the creator kept clicking.
+- **`_sigPack` drops falsy**, so even an explicit 0 died on the next save. That rule's own rationale —
+  *"nothing in the engine can tell an amount of 0 from an unset one"* — is FALSE for exactly this field:
+  the runtime read has always distinguished absent (default: follow) from an authored 0 (hold the prop's
+  facing). `vtrack` is the one place "falsy is absent" was wrong, and it took the one default-ON checkbox
+  to prove it.
+
+The rule replacing all three: **store what DIFFERS from the default, delete what equals it.** The node
+onchange writes 0 on untick and deletes on tick; the signal row displays the default when unset (1407's
+display rule, finally applied to both doors) and writes the 0; `SIG_ZERO_KEYS` exempts `vtrack` from the
+pack's falsy-drop. A def-less checkbox (`once`, `mfrz`) produces byte-identical files to before, and an
+unset `vtrack` still serializes as nothing — every existing level is untouched.
+
+Measured live (`tools/probe/vtrack-untick.mjs`), clicking the REAL checkbox in the REAL board:
+
+```
+untick     before:true -> afterChecked:false, stored:0     <- was: snapped back checked, stored nothing
+reloaded   serialized:0, restored:0                        <- the 0 survives the file
+retick     afterChecked:true, keyPresent:false             <- absent again = the default, old bytes
+signal     vk:0 on the wire, round-trips, unset absent     <- the pack exemption, with its control
+```
+
+**And the count pin caught my own comment.** `test-1406` counts `_sigPack` references at exactly 2; my
+`SIG_ZERO_KEYS` comment said *"(see _sigPack)"* and made it 3 — a pin defeated by prose, by the person who
+has now written that trap into this file a dozen times. The comment says "the emitter" instead. Two pins
+moved (1406 ×2 — the rig gained the new const lifted from source, and the row pin's `s.vtrack=1` was
+quoting the defect).
+
 ## The save always worked; the confirmation was tab-local (build 1500)
 
 Reported from play: *"Can there be a small on-screen toast after saving via 'ctrl-s'? Right now it only

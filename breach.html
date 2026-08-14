@@ -14546,7 +14546,7 @@ function _lgRenderNode(n){
       for(const o of pm.sel){ const ov=Array.isArray(o)?o[0]:o, ot=Array.isArray(o)?o[1]:o;
         const op=document.createElement('option'); op.value=ov; op.textContent=ot; if(cur===ov) op.selected=true; inp.appendChild(op); }
       inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
-    else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=(n.p[pm.k]!=null)?!!n.p[pm.k]:!!pm.def;   /* build 1407: an unset box shows the default the runtime will use, rather than contradicting it */ inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
+    else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=(n.p[pm.k]!=null)?!!n.p[pm.k]:!!pm.def;   /* build 1407: an unset box shows the default the runtime will use, rather than contradicting it */ inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ /* build 1501: store what DIFFERS from the default, delete what equals it. The old shape deleted on untick — for a default-ON box (vtrack) the re-render then redrew the default and the box snapped back ticked, so the untick was inexpressible. A field with no def keeps its old bytes exactly (tick 1, untick absent). */ const _dv=pm.def?1:0, _nv=inp.checked?1:0; if(_nv===_dv) delete n.p[pm.k]; else n.p[pm.k]=_nv; _lgDirty(); _lgRender(); }; }
     else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); if(pm.ph) inp.placeholder=pm.ph; inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList' || pm.listId==='lgVarList' || pm.listId==='lgListList') _lgRefreshDatalists(); }; }
     if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:'+(pm.w||100)+'px;';
     inp.onpointerdown=(e)=>e.stopPropagation();
@@ -21821,6 +21821,7 @@ const SIG_KEYS = {
 };
 const SIG_UNKEYS = (function(){ const o={}; for(const k in SIG_KEYS) o[SIG_KEYS[k]]=k; return o; })();
 const SIG_STR_MAX = 300;   // a signal can carry a sound URL; the consumers keep their own tighter caps
+const SIG_ZERO_KEYS = { vtrack:1 };   // build 1501: the keys whose 0 must survive the pack (rationale at the emitter)
 function _sigPack(s){
   const x={};
   if(!s) return x;
@@ -21828,8 +21829,12 @@ function _sigPack(s){
      engine can tell an amount of 0 from an unset one — every consumer reads `+s.amt||25` — so emitting it
      would grow every saved level for a value that means nothing, and would break the byte-identical
      round trip that makes this safe over existing content. */
+  /* build 1501: ...with ONE exemption, SIG_ZERO_KEYS. vtrack is the single field whose ZERO is
+     meaningful -- the runtime read distinguishes absent (follow, the default) from an authored 0 (hold
+     the prop own facing) -- so dropping its 0 made the untick vanish on every save. Absent still means
+     default, so every level authored before this build is byte-identical. */
   for(const k in SIG_KEYS){ const v=s[k];
-    if(!v) continue;
+    if(!v && !(v===0 && SIG_ZERO_KEYS[k])) continue;
     x[SIG_KEYS[k]] = (v===true) ? 1 : v; }
   return x;
 }
@@ -35986,7 +35991,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1500 · 2026-08-14';
+const BUILD_VERSION = 'build 1501 · 2026-08-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -49089,7 +49094,7 @@ function _sigWorldRow(s, rerender){
     sel([['normal','Back to normal'],['fps','First person'],['chase','Third person'],['top','Top-down'],['side','Side-scroll'],['fixed','Fixed camera on a tag\u2026']], s.vmode||'normal', v=>{ s.vmode=v; });
     if(s.vmode==='fixed'){
       lab('tag'); txt('camera prop tag', s.vtag, v=>{ if(v) s.vtag=v; else delete s.vtag; }, 110, 'lgTagList');
-      chk('follows the player', s.vtrack, v=>{ if(v) s.vtrack=1; else delete s.vtrack; });
+      chk('follows the player', (s.vtrack!=null)?!!s.vtrack:true, v=>{ if(v) delete s.vtrack; else s.vtrack=0; });   /* build 1501: unset shows the ON the runtime will use (1407's display rule, applied here too), and an untick is an EXPLICIT 0 — deleting it read back as the default and the camera kept following */
       /* build 1410: several props under one tag are a BANK. Blank holds on the first — the 1404 behaviour. */
       lab('cut every'); txt('0 = hold', s.vdwell, v=>{ if(v) s.vdwell=v; else delete s.vdwell; }, 46);
       /* build 1348's rule: a capability nobody can find is, for most creators, a capability that does
