@@ -490,6 +490,40 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The save always worked; the confirmation was tab-local (build 1500)
+
+Reported from play: *"Can there be a small on-screen toast after saving via 'ctrl-s'? Right now it only
+shows if you have the Save tab open, and even then it's a little buried."* Verified: Ctrl+S clicks
+`#edSave` and the panel HTML is static, so the BUTTON exists from every tab and the save always fired —
+but the only confirmation was the `#edCopied` note, which renders on the Save tab alone. A save whose
+feedback is invisible reads as a save that did not happen, which is how creators end up pressing it five
+times or losing trust in it entirely.
+
+The handler now computes **one `_msg`** and hands it to both surfaces — the note and `flashToast` — so the
+two can never disagree (build 1402's one-syntax rule, applied to a string). Build 1497's dual-destination
+message rides along for free: while attached to a campaign level the toast reads *"Saved — campaign level
+"Booth 1" updated too ✓"*. **A failed save toasts too** — the failure string is part of `_msg`, not a
+separate literal, and a silent failure is worse than a missed confirmation (build 1359's lesson).
+
+Measured live (`tools/probe/save-toast.mjs`): on the Build tab the note is provably invisible
+(`offsetParent` null) while the toast shows the message at opacity 1; attached names the campaign level;
+a real failure toasts *"Save failed"*; and Ctrl+S inside a text field fires nothing — the control.
+
+**The failure fixture was wrong twice, and the second miss was the engine being RIGHT.** Overriding
+`Storage.prototype.setItem`, then the instance, both produced a *successful* save — because `saveLevel`'s
+catch returns true when IndexedDB is alive (build 1359's quota fallback): a blocked localStorage is not a
+failure, by design. The one failure it cannot route around is serialization, and that is what the fixture
+breaks now. *A fixture that cannot produce the failure it tests is measuring the fallback, not the
+feature.*
+
+**And the probe's first run read stale toasts.** `flashToast` queues behind `_toastBusy` while a toast is
+live, so rows 2 and 3 were reading row 1's text — every row now resets the toast state first. A probe that
+reads a deduplicating UI must isolate its rows or it measures the dedup.
+
+`test-1500` slices the real handler between asserted anchors and EXECUTES it: attached, detached, failure
+and no-`flashToast`-in-scope, asserting toast === note byte-identically and that no second toast literal
+exists to drift.
+
 ## The zone outlines rode into play, on two different roads (build 1499)
 
 Reported from play: *"The editor visual for event triggers, and a few others show their outlines/radius

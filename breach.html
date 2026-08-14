@@ -35986,7 +35986,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1499 · 2026-08-14';
+const BUILD_VERSION = 'build 1500 · 2026-08-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -48357,7 +48357,13 @@ function buildEditorPanel(){
     /* build 1497: while attached to a campaign level, Save feeds BOTH destinations and the note says so —
        a save whose second destination is invisible is how the old two-target confusion started */
     const _cn = (typeof campaignEditIdx!=='undefined' && campaignEditIdx>=0 && campaign.levels[campaignEditIdx]) ? (campaign.levels[campaignEditIdx].name||('Level '+(campaignEditIdx+1))) : null;
-    note.textContent = _ok ? (_cn ? ('Saved — campaign level \u201c'+_cn+'\u201d updated too ✓') : 'Level saved — it will auto-load next time ✓') : 'Save failed (storage blocked here)';
+    const _msg = _ok ? (_cn ? ('Saved — campaign level \u201c'+_cn+'\u201d updated too ✓') : 'Level saved — it will auto-load next time ✓') : 'Save failed (storage blocked here)';
+    note.textContent = _msg;
+    /* build 1500: Ctrl+S works from ANY tab (the panel HTML is static, so #edSave always exists) but
+       the note above renders only on the Save tab, and even there it is small. The toast is the
+       visible answer, and it carries the SAME string, so the two can never disagree. A failed save
+       toasts as well: a silent failure is worse than a missed confirmation (build 1359). */
+    if(typeof flashToast==='function') flashToast(_msg);
     clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 2800);
   };
   p.querySelector('#edShare').onclick = async ()=>{
