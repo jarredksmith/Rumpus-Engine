@@ -8,8 +8,10 @@
                               Nothing here ever needs a <base>, so it costs nothing to forbid.
        object-src 'none'    — no <object>/<embed> is used anywhere; this closes a legacy script vector.
        form-action 'none'   — the engine posts no forms; an injected one cannot exfiltrate to an attacker.
-       frame-ancestors      — clickjacking. The game takes pointer lock and mouse input, which is exactly
-                              what an invisible cross-origin frame wants.
+       frame-ancestors      — REMOVED in build 1503: the spec says the directive is IGNORED when delivered
+                              via a <meta> element, and the browser logged an error saying so on every load.
+                              It was never enforced here. Real clickjacking protection needs the HTTP header
+                              (a static GitHub Pages host cannot send one; a self-hoster's server can).
      A full script-src is deliberately NOT here: the engine is ~47,000 lines of INLINE script, so any policy
      it could satisfy today would need 'unsafe-inline', which buys nothing while pretending to. Vendoring
      three.js and PeerJS locally is the change that makes a real script-src possible, and that is its own
@@ -26,7 +28,7 @@
      they ship a fix. The honest mitigation is that it is the only script here nobody can hash, and removing
      it is a product decision rather than an engineering one. -->
 <meta http-equiv="Content-Security-Policy"
-      content="base-uri 'self'; object-src 'none'; form-action 'none'; frame-ancestors 'self'">
+      content="base-uri 'self'; object-src 'none'; form-action 'none'">
 <script>
 /* build 1335 (platform audit 2.5): THE OPT-IN THIRD-PARTY BLOCK.
    A level can point the browser at any http(s) URL — prop models, textures, sounds, the HDRI sky, HUD
@@ -9695,6 +9697,14 @@ THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fra
     '\t\tbool inF = sc.x >= 0.0 && sc.x <= 1.0 && sc.y >= 0.0 && sc.y <= 1.0;',
     '\t\tif ( !( inF && sc.z <= 1.0 ) ) return 1.0;',
     '\t\tvec2 tsz = vec2( 1.0 ) / shadowMapSize;',
+    /* build 1503: on Windows, ANGLE's HLSL transpile logs two warnings per program against this function
+       -- X3595 (gradient instruction in a loop with varying iteration) and X4000 (potentially
+       uninitialized variable). Both are judged benign and deliberately NOT chased: the loops are
+       fixed-count, the shadow map has no mips so implicit derivatives are irrelevant to its sampling, and
+       every path through the function returns a value. Restructuring the one shader class this file has
+       twice lost to a SILENT compile failure, to silence a warning that cannot even be reproduced on the
+       GL backends the headless rig runs, is the wrong trade. If a Windows artifact is ever REPORTED at
+       shadow edges, start here. */
     '\t\tfloat bSum = 0.0; float bN = 0.0;',
     '\t\tfor ( int i = 0; i < 12; i ++ ) {',
     '\t\t\tfloat fi = float( i );',
@@ -10226,7 +10236,13 @@ function _procSet(repeat){
   const key = String(repeat);
   let set = _surfClones[key];
   if(!set){
-    set = {};
+    /* build 1503: r149's Material.copy deep-copies userData via JSON.stringify, and every material that
+       remembers this set (userData.procSurf) therefore serialized LIVE CANVAS TEXTURES on every clone --
+       three warned "Unable to serialize Texture" per texture per clone (measured: 12 warns on one stock
+       deploy, all from buildInstancing's clones), and the clone inherited a JSON-mangled POJO where a
+       texture belonged. toJSON -> undefined makes JSON.stringify DROP the key: no warn, no mangled copy.
+       The batch already re-applies the detail set itself, so a clone never needed the inherited one. */
+    set = { toJSON: function(){ return undefined; } };
     for(const k of PROC_SLOTS){
       const t = S[k].clone(); t.needsUpdate = true;
       t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat);
@@ -10558,8 +10574,11 @@ function applyObjDetail(mat, freq, albOnly){
       shader.uniforms.uOdTexF = { value: mat.userData._odTexF > 0 ? mat.userData._odTexF : PROP_TEX_PER_M };
       shader.uniforms.uOdTexN = _odTexNU;                        /* BY REFERENCE, like uOdBump — the rung fade is one CPU write */
     }
-    // kept so a later resize can move the density without recompiling anything (retileProcSurface)
-    mat.userData._odU = shader.uniforms;
+    // kept so a later resize can move the density without recompiling anything (retileProcSurface).
+    // build 1503: NON-ENUMERABLE, so Material.copy's JSON walk never serializes a compiled shader's whole
+    // uniforms object (it holds sampler TEXTURES and the shared rung-fade arrays). A toJSON key here would
+    // be wrong instead: three iterates shader.uniforms BY KEY to upload, and would read it as a uniform.
+    Object.defineProperty(mat.userData, '_odU', { value: shader.uniforms, enumerable: false, writable: true, configurable: true });
     /* build 1492: `vOdMet` is the object-space position IN METRES — `position` times the object's own world
        scale, taken from the model matrix's column lengths so nothing has to be told when a prop is resized.
        `vOdPos` is deliberately UNTOUCHED: builds 1379/1388 tune their noise against a unit box and re-derive
@@ -32661,7 +32680,7 @@ const VFX_BASE = 'vfx/';   // relative to breach.html on your host
 const VFX = {
   explosion: { url:VFX_BASE+'explosion.png', cols:5, rows:5, frames:25, dur:0.75, size:6,  blend:'add',    grow:1.15, fade:false, soft:true },
   smoke:     { url:VFX_BASE+'smoke.png',     cols:8, rows:8, frames:64, dur:1.8,  size:5,  blend:'normal', grow:2.4,  fade:true,  soft:true, lit:true },
-  fire:      { url:VFX_BASE+'fire.png',      cols:6, rows:6, frames:36, dur:0.9,  size:3,  blend:'add',    grow:1.1,  fade:true  },
+  fire:      { url:'',                       cols:6, rows:6, frames:36, dur:0.9,  size:3,  blend:'add',    grow:1.1,  fade:true  },   /* build 1503: vfx/ has NEVER shipped a fire sheet, so this url 404ed on every deployment for every player while the procedural sheet did the real work. A self-hoster who bakes one can point this back at VFX_BASE+'fire.png'. */
   muzzle:    { url:VFX_BASE+'muzzle.png',    cols:4, rows:4, frames:16, dur:0.10, size:1.1,blend:'add',    grow:1.0,  fade:false },
 };
 const _vfxTex = {};         // kind -> {tex} | 'loading' | 'fail'
@@ -35993,7 +36012,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1502 · 2026-08-14';
+const BUILD_VERSION = 'build 1503 · 2026-08-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

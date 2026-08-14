@@ -49,8 +49,13 @@ const PEER_SRI  = 'sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76E
   const m = html.match(/<meta http-equiv="Content-Security-Policy"\s*\n?\s*content="([^"]+)"/);
   assert(m, 'a CSP meta is present');
   const p = m[1];
-  for (const d of ["base-uri 'self'", "object-src 'none'", "form-action 'none'", "frame-ancestors 'self'"])
+  for (const d of ["base-uri 'self'", "object-src 'none'", "form-action 'none'"])
     assert(p.includes(d), 'CSP carries ' + d);
+  /* build 1503: frame-ancestors is GONE from this list, and its absence is asserted — the spec ignores
+     the directive when delivered via <meta>, so this pin spent its whole life asserting a protection the
+     browser provably never enforced (it logged an error saying so on every page load). Real clickjacking
+     protection is an HTTP header, which a static Pages host cannot send. */
+  assert(!/frame-ancestors/.test(p), 'frame-ancestors must not return via <meta> — it is ignored there and only logs errors');
 
   // A `script-src` is deliberately ABSENT and that has to stay deliberate: the engine is ~47,000 lines of
   // INLINE script, so any policy it could satisfy today needs 'unsafe-inline', which buys nothing while
