@@ -36017,7 +36017,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1504 · 2026-08-14';
+const BUILD_VERSION = 'build 1505 · 2026-08-15';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42036,7 +42036,14 @@ function loop(){
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
   if(_cineAvatar && _cineAvatar.visible && !editorOpen && !_cineActive){ _hideCineAvatar(); }   // editor authoring body never lingers into play
-  { const v = gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused;   // show ❚❚ only during live play
+  { // show ❚❚ only during live play, and only where something can PRESS it: a finger (touch has no
+    // Esc, so the button is its one pause control), or a real unlocked OS pointer (build 1467's free
+    // cursor, or a modal that released the lock). Pointer-locked desktop play — the common case — has
+    // no cursor to click with, so the button was unpressable decoration there; Esc is the pause key and
+    // the button's own title has said so all along. The twin-stick views' VIRTUAL cursor keeps the lock
+    // and cannot click DOM, so they correctly hide it too. Build 1363's rule: pointer lock always wins.
+    const v = gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused
+              && (isTouch || !document.pointerLockElement);
     if(v!==_pbShow){ _pbShow=v; const pb=document.getElementById('pauseBtn'); if(pb) pb.style.display = v?'flex':'none'; } }
   /* build 1313: the impact freeze eases toward normal speed as the player turns it down — at 0 the clock
      never slows at all, which is what "no sudden time distortion" has to mean. The countdown still runs, so
