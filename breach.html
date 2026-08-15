@@ -449,7 +449,12 @@
   body.hud-shape-rounded #hud .panel, body.hud-shape-rounded #prompt, body.hud-shape-rounded #grabHint, body.hud-shape-rounded #goalBanner, body.hud-shape-rounded #dialogue { border-radius: 12px; }
   body.hud-shape-square #hud .panel, body.hud-shape-square #prompt, body.hud-shape-square #grabHint, body.hud-shape-square #goalBanner, body.hud-shape-square #dialogue { border-radius: 0; }
   body.hud-noborder #hud .panel, body.hud-noborder #prompt, body.hud-noborder #grabHint, body.hud-noborder #goalBanner, body.hud-noborder #dialogue { border-color: transparent !important; }
-  body.hud-hide-minimap #minimap, body.hud-hide-score #score, body.hud-hide-wave #wavePanel,
+  /* build 1504: this line was a DANGLING FRAGMENT — build 1467 inserted its rules into the middle of the
+     hide rule's comma list, so these three selectors were absorbed into `body.freeCursor #hud
+     { cursor: default; }` and the minimap/score/wave toggles silently went dead while every other one
+     kept working. A comma list is ONE rule; the line now terminates itself. test-1504 walks every
+     hud-hide selector to the rule that actually contains it, so an orphan cannot ship again. */
+  body.hud-hide-minimap #minimap, body.hud-hide-score #score, body.hud-hide-wave #wavePanel { display: none !important; }
   /* build 1467: free-cursor play. A real pointer over the canvas, and a default arrow over the HUD.
      Nothing here makes widgets clickable — build 1255's buttons already opt into `pointerEvents:auto`
      themselves; what they never had was a pointer to be clicked WITH. The world still receives clicks
@@ -36012,7 +36017,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1503 · 2026-08-14';
+const BUILD_VERSION = 'build 1504 · 2026-08-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
