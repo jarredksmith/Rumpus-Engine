@@ -490,6 +490,39 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## Three toggles were stowaways in a cursor rule (build 1504)
+
+Reported from play: *"if you toggle the minimap, wave counter, and score off, they still show up on the
+HUD no matter what."* Exactly those three — and the exactness was the diagnosis. The hide mechanism is one
+CSS rule (`body.hud-hide-X #x { display:none !important; }`) whose selector list spans several source
+lines, and **build 1467 inserted its free-cursor rules into the MIDDLE of that comma list.** The parser
+read the first three selectors as part of the next rule it found:
+
+```css
+body.hud-hide-minimap #minimap, body.hud-hide-score #score, body.hud-hide-wave #wavePanel,
+body.freeCursor #hud { cursor: default; }
+```
+
+So minimap/score/wave silently set `cursor: default` (an invisible no-op) instead of hiding, while every
+selector BELOW the insertion still reached the `display:none` — which is why the other thirteen toggles
+kept working and the report names precisely these three. Dead since build 1467, found by reading the raw
+block: the fragment is visible to the eye once you know a comma list is one rule.
+
+The fix terminates the line as its own rule. The guard is the general form: **`test-1504` parses the
+stylesheet into rules and walks EVERY `hud-hide` selector to the declaration of the rule that actually
+contains it** — an orphaned selector lands in a neighbour's declaration and fails by name. Run against the
+pre-fix tree as its own positive control: 10 failures, naming the three reported toggles and their
+absorption into the cursor rule; the free-cursor and click-cue rules are asserted to survive the fix.
+
+Measured live (`tools/probe/hud-hide-toggles.mjs`) on real computed styles: all four shown → the three
+toggle to `display:none` with ammo untouched → the ammo sibling still works (shared mechanism) → all
+restore → and the off state round-trips the level file with the body class re-applied.
+
+**The lesson is the whole-literal trap's CSS twin: a comma-separated selector list is ONE statement, and
+an insertion in its middle re-parents everything above the insertion point — silently, because CSS has no
+syntax error to report.** The same class as a mid-line `//` comment swallowing a tail (1168) and the
+character-budget slice (1149): an edit that lands INSIDE a structure it did not read to the end of.
+
 ## The console stops crying wolf (build 1503)
 
 Reported as a pasted play-session console. Each class was measured before anything was touched
