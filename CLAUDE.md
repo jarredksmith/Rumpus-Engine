@@ -490,6 +490,45 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## The pause button shows only where something can press it (build 1505)
+
+Reported from play: *"on desktop, can we hide the pause button thats in the top right corner during
+gameplay? There's no way to actually click it on a computer as you access the pause screen by clicking
+esc."* Correct by construction: pointer-locked play has NO OS cursor, so the ❚❚ button was unpressable
+decoration in the commonest desktop state — while its own tooltip has said *"Pause (Esc)"* all along.
+
+One term on the existing per-frame visibility expression: `&& (isTouch || !document.pointerLockElement)`.
+The rule is **show it only where something can press it** — a finger (touch has no Esc, so the button is
+its ONE pause control, and a stray lock must never strand a phone, hence `isTouch` short-circuits first),
+or a real unlocked OS pointer (build 1467's free-cursor levels, and any modal that released the lock —
+places where the button genuinely IS clickable and stays). The twin-stick views' VIRTUAL cursor keeps the
+pointer lock and cannot click DOM, so they correctly hide it too. Build 1363's `_uiMenuCtx` rule, applied
+to a button: **pointer lock always wins.** The `_pbShow` latch, the one style writer, the CSS positioning
+(test-262) and the `openPause` wiring (test-60) are all untouched, and every pre-1505 gate
+(gameOver/shop/editor/upgrade/paused) still hides it in both pointer states — executed across all of them.
+
+Measured live on real computed styles (`tools/probe/pause-btn-pointer.mjs`):
+
+```
+boot (headless holds the lock)   display none   <- the report's state, before any fixture
+LOCKED desktop play              none           <- the report, fixed
+FREE pointer (freeCursor level)  flex           <- clickable there, so it stays
+paused, free pointer             none           <- the menu owns the screen
+resumed                          flex
+TOUCH with the lock held         flex           <- a finger can always press it
+control: desktop + lock          none           <- returns
+```
+
+**The paused row was wrong twice, and both faults were the instrument.** `__drive` clears the UI gates
+at its head — that is its documented job — so `openPause()` followed by a drive measured an unpaused
+frame. Then polling REAL frames read a stale `_pbShow`: the drive rig holds `_tabHidden` between probe
+calls, and `loop()` returns at that check BEFORE the visibility block, so forty real frames passed
+without the writer ever running. The row is a manual mini-drive now — neutralise draw + the rAF re-arm,
+drop `_tabHidden`, run the real `loop()` with `paused` held true. **A probe row that needs a UI gate the
+rig exists to clear cannot go through the rig.**
+
+Zero pins moved.
+
 ## Three toggles were stowaways in a cursor rule (build 1504)
 
 Reported from play: *"if you toggle the minimap, wave counter, and score off, they still show up on the
