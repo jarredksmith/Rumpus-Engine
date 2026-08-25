@@ -490,6 +490,70 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
+## Painted dirt stops wearing the cobblestone's bump (build 1506)
+
+Reported from play: *"I have the floor's main material set to a cobblestone texture. I want to paint
+areas of dirt, but when I do, the dirt shows up as expected, but it also overlays the cobblestone line
+texture on top."* Exactly right: build 875's splat patch blends only the ALBEDO (`diffuseColor.rgb`),
+while the floor's `normalMap` and `roughnessMap` — the authored `floorTexN` (the stock level ships
+`floor-concrete-n.png`; a Poly Haven set ships all three maps), or 1139's procedural fallback — are
+sampled by three's OWN chunks across the whole surface. So the dirt's colour landed and the cobble's
+relief and gloss pattern kept rendering through it.
+
+The map patch now records the total paint weight into a **shader global** (`float _pwPaint` — the
+1145/1388 `_odBase` pattern), and the two relief chunks fade back to the un-perturbed base by it:
+
+```glsl
+#include <roughnessmap_fragment>
+roughnessFactor = mix(roughnessFactor, roughness, _pwPaint);
+#include <normal_fragment_maps>
+normal = normalize(mix(normal, geometryNormal, _pwPaint));
+```
+
+Four things carry the correctness:
+- **The order premise is pinned against the real r149**, not assumed: `map_fragment` (2293) <
+  `roughnessmap_fragment` (2406) < `normal_fragment_begin` (2474, which declares
+  `vec3 geometryNormal = normal;`) < `normal_fragment_maps` (2508) — so the global is written before
+  either reader runs. An upgrade that reorders them makes this read-before-write, which is silent
+  garbage rather than an error (1388's lesson), so it must fail a test instead.
+- **The weight is written UNCONDITIONALLY from the splat sample**, before the per-layer `if`s — three
+  layers each under their own 0.004 gate can still sum to real coverage.
+- **Both fade targets are the un-perturbed state, not a magic value**: `roughness` is the uniform the
+  chunk itself starts from, `geometryNormal` is the normal before the map perturbed it. Where nothing
+  is painted `_pwPaint` is 0 and both mixes are identities — the unpainted floor is byte-identical.
+- **Flat is the honest surface.** The paint layers are albedo urls with no relief companions, so the
+  painted patch gets no bump rather than a wrong one — and a soft brush edge fades the cobble's bump
+  out WITH the paint, since the weight is the same one the albedo mix reads.
+
+**Measured as a true A/B across the two trees with one instrument** (`tools/probe/paint-relief.mjs`):
+paint the whole splat full-weight with the default WHITE layer, so the albedo is uniform and every
+remaining pixel gradient is the relief maps talking. FloatType readback, own render (no post, no
+grain), same camera, same sun:
+
+```
+                     PAINTED grad   PAINTED mean   BARE grad   BARE mean
+pre-fix  (1505)         0.01100        0.8419       0.01001      0.0911
+post-fix (1506)         0.00000        0.8424       0.01000      0.0910
+```
+
+The painted window's relief shading collapses to exactly zero while the BARE control is stable to the
+fourth decimal across the trees — the fix reaches only what the brush covered. `shaderDiagnostics: 0`
+both runs, and `rgh: true` in the state line is what widened the fix: the floor carries a roughness
+map even with `floorTexR` empty (the 1139 procedural fallback), so the gloss pattern needed fading
+beside the bump.
+
+**The pre-fix measurement was taken BEFORE applying the edit** — stage, measure, apply, restage,
+re-measure — which is what made the A/B honest, and it survived **container rollback #37**, which
+landed between the two: the tree reverted to build 1503 and `b1506.py`'s `assert "build 1505"`
+aborted atomically before writing a byte. The probe's numbers stand because the staging guard would
+have refused a stale staging at run time, and the splat region is byte-identical across 1503–1505.
+Recovery was the documented fetch + reset; the paint probe, being untracked, survived on its own.
+
+`test-1506` executes the REAL patch (lifted from source, never restated) against the real
+`ShaderLib.physical` text and asserts both replaces LANDED — a `.replace` that misses is a silent
+no-op rendering a plausible frame (1381/1286) — plus the write-before-read order in the emitted
+source, brace/paren balance, and that build 875's albedo lines are verbatim. Zero pins moved.
+
 ## The pause button shows only where something can press it (build 1505)
 
 Reported from play: *"on desktop, can we hide the pause button thats in the top right corner during

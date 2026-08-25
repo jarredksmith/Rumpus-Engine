@@ -11285,16 +11285,28 @@ floorMat.onBeforeCompile = (shader)=>{
   Object.assign(shader.uniforms, _paintU);
   // raw uv varying of our own: material.map's vUv carries the floor texture's tiling transform, ours must not
   shader.vertexShader = 'varying vec2 vPaintUv;\n' + shader.vertexShader.replace('#include <begin_vertex>', 'vPaintUv = uv;\n#include <begin_vertex>');
-  shader.fragmentShader = 'varying vec2 vPaintUv;\nuniform sampler2D uSplat; uniform sampler2D uPL0; uniform sampler2D uPL1; uniform sampler2D uPL2; uniform vec3 uPHas; uniform vec3 uPRep;\n'
+  shader.fragmentShader = 'varying vec2 vPaintUv;\nuniform sampler2D uSplat; uniform sampler2D uPL0; uniform sampler2D uPL1; uniform sampler2D uPL2; uniform vec3 uPHas; uniform vec3 uPRep;\nfloat _pwPaint = 0.0;\n'
     + shader.fragmentShader.replace('#include <map_fragment>', [
       '#include <map_fragment>',
       '{',
       '  vec3 pw = texture2D(uSplat, vPaintUv).rgb * uPHas;',
+      '  _pwPaint = clamp(pw.r + pw.g + pw.b, 0.0, 1.0);',
       '  if(pw.r>0.004) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPL0, vPaintUv*uPRep.x).rgb, pw.r);',
       '  if(pw.g>0.004) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPL1, vPaintUv*uPRep.y).rgb, pw.g);',
       '  if(pw.b>0.004) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPL2, vPaintUv*uPRep.z).rgb, pw.b);',
       '}',
-    ].join('\n'));
+    ].join('\n'))
+    /* build 1506: painted areas must not wear the BASE texture's relief — a dirt patch over cobblestone
+       showed the cobble lines as bump and gloss. The weight recorded above fades the roughness map back
+       to the material's own base value and the perturbed normal back to the geometric one. The paint
+       layers carry no relief of their own (they are albedo urls), so flat is the honest surface — and a
+       soft brush edge fades the bump out with the paint. roughnessmap_fragment runs BEFORE
+       normal_fragment_maps in r149 and both run after map_fragment, so the global is written first
+       (order pinned against the real build in test-1506). */
+    .replace('#include <roughnessmap_fragment>',
+      '#include <roughnessmap_fragment>\n\troughnessFactor = mix(roughnessFactor, roughness, _pwPaint);')
+    .replace('#include <normal_fragment_maps>',
+      '#include <normal_fragment_maps>\n\tnormal = normalize(mix(normal, geometryNormal, _pwPaint));');
 };
 // build 1382: the floor's macro layer is applied HERE, not beside applyProcSurface 500 lines above, because
 // the paint splat is assigned directly above and a plain assignment wins over whatever came before it.
@@ -36017,7 +36029,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1505 · 2026-08-15';
+const BUILD_VERSION = 'build 1506 · 2026-08-15';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
